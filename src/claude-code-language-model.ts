@@ -3,6 +3,7 @@ import type {
   LanguageModelV1CallWarning,
   LanguageModelV1FinishReason,
   LanguageModelV1StreamPart,
+  JSONValue,
 } from '@ai-sdk/provider';
 import { NoSuchModelError, APICallError, LoadAPIKeyError } from '@ai-sdk/provider';
 import { generateId } from '@ai-sdk/provider-utils';
@@ -111,7 +112,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
   }
 
   private handleClaudeCodeError(
-    error: any,
+    error: unknown,
     messagesPrompt: string
   ): APICallError | LoadAPIKeyError {
     // Handle AbortError from the SDK
@@ -119,6 +120,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
       // Return the abort reason if available, otherwise the error itself
       throw error;
     }
+
+    // Type guard for error with properties
+    const isErrorWithMessage = (err: unknown): err is { message?: string } => {
+      return typeof err === 'object' && err !== null && 'message' in err;
+    };
+
+    const isErrorWithCode = (err: unknown): err is { code?: string; exitCode?: number; stderr?: string } => {
+      return typeof err === 'object' && err !== null;
+    };
 
     // Check for authentication errors with improved detection
     const authErrorPatterns = [
@@ -130,36 +140,55 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
       'claude login'
     ];
     
-    const errorMessage = error.message?.toLowerCase() || '';
+    const errorMessage = isErrorWithMessage(error) && error.message 
+      ? error.message.toLowerCase() 
+      : '';
+    
+    const exitCode = isErrorWithCode(error) && typeof error.exitCode === 'number' 
+      ? error.exitCode 
+      : undefined;
+      
     const isAuthError = authErrorPatterns.some(pattern => errorMessage.includes(pattern)) ||
-                       error.exitCode === 401;
+                       exitCode === 401;
 
     if (isAuthError) {
       return createAuthenticationError({
-        message: error.message || 'Authentication failed. Please ensure Claude Code CLI is properly authenticated.',
+        message: isErrorWithMessage(error) && error.message 
+          ? error.message 
+          : 'Authentication failed. Please ensure Claude Code CLI is properly authenticated.',
       });
     }
 
     // Check for timeout errors
-    if (error.code === 'ETIMEDOUT' || errorMessage.includes('timeout')) {
+    const errorCode = isErrorWithCode(error) && typeof error.code === 'string' 
+      ? error.code 
+      : '';
+      
+    if (errorCode === 'ETIMEDOUT' || errorMessage.includes('timeout')) {
       return createTimeoutError({
-        message: error.message || 'Request timed out',
+        message: isErrorWithMessage(error) && error.message 
+          ? error.message 
+          : 'Request timed out',
         promptExcerpt: messagesPrompt.substring(0, 200),
         timeoutMs: 120000, // Default timeout, could be made configurable
       });
     }
 
     // Create general API call error with appropriate retry flag
-    const isRetryable = error.code === 'ENOENT' || 
-                       error.code === 'ECONNREFUSED' ||
-                       error.code === 'ETIMEDOUT' ||
-                       error.code === 'ECONNRESET';
+    const isRetryable = errorCode === 'ENOENT' || 
+                       errorCode === 'ECONNREFUSED' ||
+                       errorCode === 'ETIMEDOUT' ||
+                       errorCode === 'ECONNRESET';
 
     return createAPICallError({
-      message: error.message || 'Claude Code CLI error',
-      code: error.code,
-      exitCode: error.exitCode,
-      stderr: error.stderr,
+      message: isErrorWithMessage(error) && error.message 
+        ? error.message 
+        : 'Claude Code CLI error',
+      code: errorCode || undefined,
+      exitCode: exitCode,
+      stderr: isErrorWithCode(error) && typeof error.stderr === 'string' 
+        ? error.stderr 
+        : undefined,
       promptExcerpt: messagesPrompt.substring(0, 200),
       isRetryable,
     });
@@ -184,7 +213,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
     try {
       JSON.parse(extractedJson);
       return { valid: true };
-    } catch (e) {
+    } catch {
       return {
         valid: false,
         warning: {
@@ -212,7 +241,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
     let finishReason: LanguageModelV1FinishReason = 'stop';
     let costUsd: number | undefined;
     let durationMs: number | undefined;
-    let rawUsage: any | undefined;
+    let rawUsage: unknown | undefined;
     const warnings: LanguageModelV1CallWarning[] = this.generateUnsupportedWarnings(options);
 
     try {
@@ -223,7 +252,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
 
       for await (const message of response) {
         if (message.type === 'assistant') {
-          text += message.message.content.map((c: any) => 
+          text += message.message.content.map((c: { type: string; text?: string }) => 
             c.type === 'text' ? c.text : ''
           ).join('');
         } else if (message.type === 'result') {
@@ -250,7 +279,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
           this.sessionId = message.session_id;
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Special handling for AbortError to preserve abort signal reason
       if (error instanceof AbortError) {
         throw options.abortSignal?.aborted ? options.abortSignal.reason : error;
@@ -294,7 +323,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
           ...(this.sessionId !== undefined && { sessionId: this.sessionId }),
           ...(costUsd !== undefined && { costUsd }),
           ...(durationMs !== undefined && { durationMs }),
-          ...(rawUsage !== undefined && { rawUsage }),
+          ...(rawUsage !== undefined && { rawUsage: rawUsage as JSONValue }),
         },
       },
     };
@@ -328,7 +357,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
           for await (const message of response) {
             if (message.type === 'assistant') {
               const text = message.message.content
-                .map((c: any) => (c.type === 'text' ? c.text : ''))
+                .map((c: { type: string; text?: string }) => (c.type === 'text' ? c.text : ''))
                 .join('');
               
               if (text) {
@@ -344,7 +373,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
                 }
               }
             } else if (message.type === 'result') {
-              let rawUsage: any | undefined;
+              let rawUsage: unknown | undefined;
               if ('usage' in message) {
                 rawUsage = message.usage;
                 usage = {
@@ -368,7 +397,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
               // In object-json mode, extract JSON and send the full text at once
               if (options.mode?.type === 'object-json' && accumulatedText) {
                 const extractedJson = extractJson(accumulatedText);
-                const validation = this.validateJsonExtraction(accumulatedText, extractedJson);
+                this.validateJsonExtraction(accumulatedText, extractedJson);
                 
                 // If validation failed, we should add a warning but we can't modify warnings array in stream
                 // So we'll just send the extracted JSON anyway
@@ -389,7 +418,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
                     sessionId: message.session_id,
                     ...(message.total_cost_usd !== undefined && { costUsd: message.total_cost_usd }),
                     ...(message.duration_ms !== undefined && { durationMs: message.duration_ms }),
-                    ...(rawUsage !== undefined && { rawUsage }),
+                    ...(rawUsage !== undefined && { rawUsage: rawUsage as JSONValue }),
                   },
                 },
               });
@@ -408,7 +437,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
           }
 
           controller.close();
-        } catch (error: any) {
+        } catch (error: unknown) {
           let errorToEmit: unknown;
           
           // Special handling for AbortError to preserve abort signal reason

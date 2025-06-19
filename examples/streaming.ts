@@ -4,7 +4,7 @@ import { claudeCode } from '../dist/index.js';
 async function main() {
   try {
     // Streaming response
-    const result = await streamText({
+    const result = streamText({
       model: claudeCode('sonnet'),
       prompt: 'Write a haiku about programming',
     });
@@ -20,4 +20,4 @@ async function main() {
   }
 }
 
-main();
+main().catch(console.error);
