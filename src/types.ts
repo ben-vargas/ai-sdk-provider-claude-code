@@ -1,3 +1,6 @@
+// Import types from the SDK
+import type { PermissionMode, McpServerConfig } from '@anthropic-ai/claude-code';
+
 // Provider settings
 export interface ClaudeCodeSettings {
   /**
@@ -46,7 +49,7 @@ export interface ClaudeCodeSettings {
    * Permission mode for tool usage
    * @default 'default'
    */
-  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
+  permissionMode?: PermissionMode;
 
   /**
    * Custom tool name for permission prompts
@@ -78,16 +81,7 @@ export interface ClaudeCodeSettings {
   /**
    * MCP server configuration
    */
-  mcpServers?: Record<string, {
-    type?: 'stdio';
-    command: string;
-    args?: string[];
-    env?: Record<string, string>;
-  } | {
-    type: 'sse';
-    url: string;
-    headers?: Record<string, string>;
-  }>;
+  mcpServers?: Record<string, McpServerConfig>;
 
   /**
    * Enable verbose logging for debugging

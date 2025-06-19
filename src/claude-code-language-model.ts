@@ -88,17 +88,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
     return warnings;
   }
 
-  async doGenerate(
-    options: Parameters<LanguageModelV1['doGenerate']>[0],
-  ): Promise<Awaited<ReturnType<LanguageModelV1['doGenerate']>>> {
-    const { messagesPrompt } = convertToClaudeCodeMessages(options.prompt, options.mode);
-
-    const abortController = new AbortController();
-    if (options.abortSignal) {
-      options.abortSignal.addEventListener('abort', () => abortController.abort());
-    }
-
-    const queryOptions: Options = {
+  private createQueryOptions(abortController: AbortController): Options {
+    return {
       model: this.getModel(),
       abortController,
       resume: this.sessionId,
@@ -110,13 +101,26 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
       cwd: this.settings.cwd,
       executable: this.settings.executable,
       executableArgs: this.settings.executableArgs,
-      permissionMode: this.settings.permissionMode as any, // SDK expects specific string type
+      permissionMode: this.settings.permissionMode,
       permissionPromptToolName: this.settings.permissionPromptToolName,
       continue: this.settings.continue,
       allowedTools: this.settings.allowedTools,
       disallowedTools: this.settings.disallowedTools,
-      mcpServers: this.settings.mcpServers as any, // SDK has specific type for this
+      mcpServers: this.settings.mcpServers,
     };
+  }
+
+  async doGenerate(
+    options: Parameters<LanguageModelV1['doGenerate']>[0],
+  ): Promise<Awaited<ReturnType<LanguageModelV1['doGenerate']>>> {
+    const { messagesPrompt } = convertToClaudeCodeMessages(options.prompt, options.mode);
+
+    const abortController = new AbortController();
+    if (options.abortSignal) {
+      options.abortSignal.addEventListener('abort', () => abortController.abort());
+    }
+
+    const queryOptions = this.createQueryOptions(abortController);
 
     let text = '';
     let usage = { promptTokens: 0, completionTokens: 0 };
@@ -227,25 +231,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
       options.abortSignal.addEventListener('abort', () => abortController.abort());
     }
 
-    const queryOptions: Options = {
-      model: this.getModel(),
-      abortController,
-      resume: this.sessionId,
-      pathToClaudeCodeExecutable: this.settings.pathToClaudeCodeExecutable,
-      customSystemPrompt: this.settings.customSystemPrompt,
-      appendSystemPrompt: this.settings.appendSystemPrompt,
-      maxTurns: this.settings.maxTurns,
-      maxThinkingTokens: this.settings.maxThinkingTokens,
-      cwd: this.settings.cwd,
-      executable: this.settings.executable,
-      executableArgs: this.settings.executableArgs,
-      permissionMode: this.settings.permissionMode as any, // SDK expects specific string type
-      permissionPromptToolName: this.settings.permissionPromptToolName,
-      continue: this.settings.continue,
-      allowedTools: this.settings.allowedTools,
-      disallowedTools: this.settings.disallowedTools,
-      mcpServers: this.settings.mcpServers as any, // SDK has specific type for this
-    };
+    const queryOptions = this.createQueryOptions(abortController);
 
     const warnings: LanguageModelV1CallWarning[] = this.generateUnsupportedWarnings(options);
 
