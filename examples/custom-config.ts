@@ -15,8 +15,6 @@ async function main() {
     // Example 1: Provider with default settings for all models
     const customProvider = createClaudeCode({
       defaultSettings: {
-        // Use 'opus' as the default model
-        model: 'opus',
         // Skip permission prompts for all operations
         permissionMode: 'bypassPermissions',
         // Set working directory for file operations
