@@ -1,9 +1,10 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig, defineWorkspace } from 'vitest/config';
 
+// Define workspace with multiple environments
 export default defineConfig({
   test: {
-    environment: 'node',
     globals: true,
+    include: ['**/*.test.ts', '**/*.test.tsx'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
@@ -15,5 +16,22 @@ export default defineConfig({
         '**/*.d.ts',
       ],
     },
+    // Define projects for different environments
+    projects: [
+      {
+        test: {
+          name: 'node',
+          environment: 'node',
+          include: ['**/*.test.ts', '**/*.test.tsx'],
+        },
+      },
+      {
+        test: {
+          name: 'edge',
+          environment: 'edge-runtime',
+          include: ['**/*.test.ts', '**/*.test.tsx'],
+        },
+      },
+    ],
   },
 });

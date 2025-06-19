@@ -11,6 +11,7 @@ import type { ClaudeCodeSettings } from './types.js';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
 import { extractJson } from './extract-json.js';
 import { createAPICallError, createAuthenticationError, createTimeoutError } from './errors.js';
+import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
 import { validateModelId, validatePrompt, validateSessionId } from './validation.js';
 
 import { query, AbortError, type Options } from '@anthropic-ai/claude-code';
@@ -384,11 +385,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
             };
           }
 
-          if (message.subtype === 'error_max_turns') {
-            finishReason = 'length';
-          } else if (message.subtype === 'error_during_execution') {
-            finishReason = 'error';
-          }
+          finishReason = mapClaudeCodeFinishReason(message.subtype);
         } else if (message.type === 'system' && message.subtype === 'init') {
           this.setSessionId(message.session_id);
         }
@@ -498,12 +495,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
                 };
               }
 
-              let finishReason: LanguageModelV1FinishReason = 'stop';
-              if (message.subtype === 'error_max_turns') {
-                finishReason = 'length';
-              } else if (message.subtype === 'error_during_execution') {
-                finishReason = 'error';
-              }
+              let finishReason: LanguageModelV1FinishReason = mapClaudeCodeFinishReason(message.subtype);
 
               // Store session ID in the model instance
               this.setSessionId(message.session_id);
