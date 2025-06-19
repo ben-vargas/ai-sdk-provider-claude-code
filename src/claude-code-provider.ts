@@ -2,6 +2,7 @@ import type { LanguageModelV1, ProviderV1 } from '@ai-sdk/provider';
 import { NoSuchModelError } from '@ai-sdk/provider';
 import { ClaudeCodeLanguageModel, type ClaudeCodeModelId } from './claude-code-language-model.js';
 import type { ClaudeCodeSettings } from './types.js';
+import { validateSettings } from './validation.js';
 
 /**
  * Claude Code provider interface that extends the AI SDK's ProviderV1.
@@ -99,16 +100,36 @@ export interface ClaudeCodeProviderSettings {
 export function createClaudeCode(
   options: ClaudeCodeProviderSettings = {},
 ): ClaudeCodeProvider {
+  // Validate default settings if provided
+  if (options.defaultSettings) {
+    const validation = validateSettings(options.defaultSettings);
+    if (!validation.valid) {
+      throw new Error(`Invalid default settings: ${validation.errors.join(', ')}`);
+    }
+    if (validation.warnings.length > 0) {
+      validation.warnings.forEach(warning => console.warn(`Claude Code Provider: ${warning}`));
+    }
+  }
+
   const createModel = (
     modelId: ClaudeCodeModelId,
     settings: ClaudeCodeSettings = {},
   ): LanguageModelV1 => {
+    const mergedSettings = {
+      ...options.defaultSettings,
+      ...settings,
+    };
+    
+    // Validate merged settings
+    const validation = validateSettings(mergedSettings);
+    if (!validation.valid) {
+      throw new Error(`Invalid settings: ${validation.errors.join(', ')}`);
+    }
+    
     return new ClaudeCodeLanguageModel({
       id: modelId,
-      settings: {
-        ...options.defaultSettings,
-        ...settings,
-      },
+      settings: mergedSettings,
+      settingsValidationWarnings: validation.warnings,
     });
   };
 

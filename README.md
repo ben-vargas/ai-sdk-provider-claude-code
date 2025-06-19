@@ -887,6 +887,16 @@ Contributions are welcome! Please read our [contributing guidelines](CONTRIBUTIN
 - TypeScript type improvements
 - Additional example use cases
 
+### Dependency Management
+
+This project uses exact dependency versions to ensure consistent behavior across all installations. When updating dependencies:
+
+1. Update the exact version in `package.json`
+2. Run `npm install` to update the lock file
+3. Test thoroughly before committing
+
+Note: Peer dependencies (like `zod`) use version ranges as per npm best practices.
+
 ## License
 
 MIT - see [LICENSE](LICENSE) for details.

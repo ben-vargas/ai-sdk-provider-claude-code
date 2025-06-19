@@ -11,6 +11,7 @@ import type { ClaudeCodeSettings } from './types.js';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
 import { extractJson } from './extract-json.js';
 import { createAPICallError, createAuthenticationError, createTimeoutError } from './errors.js';
+import { validateModelId, validatePrompt, validateSessionId } from './validation.js';
 
 import { query, AbortError, type Options } from '@anthropic-ai/claude-code';
 
@@ -39,6 +40,12 @@ export interface ClaudeCodeLanguageModelOptions {
    * Optional settings to configure the model behavior.
    */
   settings?: ClaudeCodeSettings;
+  
+  /**
+   * Validation warnings from settings validation.
+   * Used internally to pass warnings from provider.
+   */
+  settingsValidationWarnings?: string[];
 }
 
 /**
@@ -100,10 +107,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
   readonly settings: ClaudeCodeSettings;
   
   private sessionId?: string;
+  private modelValidationWarning?: string;
+  private settingsValidationWarnings: string[];
 
   constructor(options: ClaudeCodeLanguageModelOptions) {
     this.modelId = options.id;
     this.settings = options.settings ?? {};
+    this.settingsValidationWarnings = options.settingsValidationWarnings ?? [];
     
     // Validate model ID format
     if (!this.modelId || typeof this.modelId !== 'string' || this.modelId.trim() === '') {
@@ -111,6 +121,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
         modelId: this.modelId,
         modelType: 'languageModel',
       });
+    }
+    
+    // Additional model ID validation
+    this.modelValidationWarning = validateModelId(this.modelId);
+    if (this.modelValidationWarning) {
+      console.warn(`Claude Code Model: ${this.modelValidationWarning}`);
     }
   }
 
@@ -123,8 +139,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
     return mapped ?? this.modelId;
   }
 
-  private generateUnsupportedWarnings(
-    options: Parameters<LanguageModelV1['doGenerate']>[0] | Parameters<LanguageModelV1['doStream']>[0]
+  private generateAllWarnings(
+    options: Parameters<LanguageModelV1['doGenerate']>[0] | Parameters<LanguageModelV1['doStream']>[0],
+    prompt: string
   ): LanguageModelV1CallWarning[] {
     const warnings: LanguageModelV1CallWarning[] = [];
     const unsupportedParams: string[] = [];
@@ -148,6 +165,31 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
           details: `Claude Code CLI does not support the ${param} parameter. It will be ignored.`,
         });
       }
+    }
+    
+    // Add model validation warning if present
+    if (this.modelValidationWarning) {
+      warnings.push({
+        type: 'other',
+        message: this.modelValidationWarning,
+      });
+    }
+    
+    // Add settings validation warnings
+    this.settingsValidationWarnings.forEach(warning => {
+      warnings.push({
+        type: 'other',
+        message: warning,
+      });
+    });
+    
+    // Validate prompt
+    const promptWarning = validatePrompt(prompt);
+    if (promptWarning) {
+      warnings.push({
+        type: 'other',
+        message: promptWarning,
+      });
     }
     
     return warnings;
@@ -258,6 +300,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
     });
   }
 
+  private setSessionId(sessionId: string): void {
+    this.sessionId = sessionId;
+    const warning = validateSessionId(sessionId);
+    if (warning) {
+      console.warn(`Claude Code Session: ${warning}`);
+    }
+  }
+
   private validateJsonExtraction(
     originalText: string,
     extractedJson: string
@@ -306,7 +356,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
     let costUsd: number | undefined;
     let durationMs: number | undefined;
     let rawUsage: unknown | undefined;
-    const warnings: LanguageModelV1CallWarning[] = this.generateUnsupportedWarnings(options);
+    const warnings: LanguageModelV1CallWarning[] = this.generateAllWarnings(options, messagesPrompt);
 
     try {
       const response = query({
@@ -320,7 +370,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
             c.type === 'text' ? c.text : ''
           ).join('');
         } else if (message.type === 'result') {
-          this.sessionId = message.session_id;
+          this.setSessionId(message.session_id);
           costUsd = message.total_cost_usd;
           durationMs = message.duration_ms;
           
@@ -340,7 +390,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
             finishReason = 'error';
           }
         } else if (message.type === 'system' && message.subtype === 'init') {
-          this.sessionId = message.session_id;
+          this.setSessionId(message.session_id);
         }
       }
     } catch (error: unknown) {
@@ -405,7 +455,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
 
     const queryOptions = this.createQueryOptions(abortController);
 
-    const warnings: LanguageModelV1CallWarning[] = this.generateUnsupportedWarnings(options);
+    const warnings: LanguageModelV1CallWarning[] = this.generateAllWarnings(options, messagesPrompt);
 
     const stream = new ReadableStream<LanguageModelV1StreamPart>({
       start: async (controller) => {
@@ -456,7 +506,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
               }
 
               // Store session ID in the model instance
-              this.sessionId = message.session_id;
+              this.setSessionId(message.session_id);
               
               // In object-json mode, extract JSON and send the full text at once
               if (options.mode?.type === 'object-json' && accumulatedText) {
@@ -488,7 +538,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
               });
             } else if (message.type === 'system' && message.subtype === 'init') {
               // Store session ID for future use
-              this.sessionId = message.session_id;
+              this.setSessionId(message.session_id);
               
               // Emit response metadata when session is initialized
               controller.enqueue({

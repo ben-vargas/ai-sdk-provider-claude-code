@@ -279,8 +279,8 @@ Code was refactored but file wasn't removed.
 - [x] 4.1 Claude Version Inconsistency [COMPLETED]
 - [x] 4.2 Missing API Documentation [COMPLETED]
 - [ ] 5.1 Minimal Test Coverage
-- [ ] 6.1 Missing Input Validation
-- [ ] 6.2 Dependency Version Inconsistency
+- [x] 6.1 Missing Input Validation [COMPLETED]
+- [x] 6.2 Dependency Version Inconsistency [COMPLETED]
 - [ ] 7.1 Unused map-claude-code-finish-reason.ts
 
 ## Priority Order
