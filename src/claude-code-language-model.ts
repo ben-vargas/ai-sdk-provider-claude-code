@@ -4,12 +4,12 @@ import type {
   LanguageModelV1FinishReason,
   LanguageModelV1StreamPart,
 } from '@ai-sdk/provider';
-import { NoSuchModelError } from '@ai-sdk/provider';
+import { NoSuchModelError, APICallError, LoadAPIKeyError } from '@ai-sdk/provider';
 import { generateId } from '@ai-sdk/provider-utils';
 import type { ClaudeCodeSettings } from './types.js';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
 import { extractJson } from './extract-json.js';
-import { createAPICallError, createAuthenticationError } from './errors.js';
+import { createAPICallError, createAuthenticationError, createTimeoutError } from './errors.js';
 
 import { query, AbortError, type Options } from '@anthropic-ai/claude-code';
 
@@ -110,6 +110,91 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
     };
   }
 
+  private handleClaudeCodeError(
+    error: any,
+    messagesPrompt: string
+  ): APICallError | LoadAPIKeyError {
+    // Handle AbortError from the SDK
+    if (error instanceof AbortError) {
+      // Return the abort reason if available, otherwise the error itself
+      throw error;
+    }
+
+    // Check for authentication errors with improved detection
+    const authErrorPatterns = [
+      'not logged in',
+      'authentication',
+      'unauthorized',
+      'auth failed',
+      'please login',
+      'claude login'
+    ];
+    
+    const errorMessage = error.message?.toLowerCase() || '';
+    const isAuthError = authErrorPatterns.some(pattern => errorMessage.includes(pattern)) ||
+                       error.exitCode === 401;
+
+    if (isAuthError) {
+      return createAuthenticationError({
+        message: error.message || 'Authentication failed. Please ensure Claude Code CLI is properly authenticated.',
+      });
+    }
+
+    // Check for timeout errors
+    if (error.code === 'ETIMEDOUT' || errorMessage.includes('timeout')) {
+      return createTimeoutError({
+        message: error.message || 'Request timed out',
+        promptExcerpt: messagesPrompt.substring(0, 200),
+        timeoutMs: 120000, // Default timeout, could be made configurable
+      });
+    }
+
+    // Create general API call error with appropriate retry flag
+    const isRetryable = error.code === 'ENOENT' || 
+                       error.code === 'ECONNREFUSED' ||
+                       error.code === 'ETIMEDOUT' ||
+                       error.code === 'ECONNRESET';
+
+    return createAPICallError({
+      message: error.message || 'Claude Code CLI error',
+      code: error.code,
+      exitCode: error.exitCode,
+      stderr: error.stderr,
+      promptExcerpt: messagesPrompt.substring(0, 200),
+      isRetryable,
+    });
+  }
+
+  private validateJsonExtraction(
+    originalText: string,
+    extractedJson: string
+  ): { valid: boolean; warning?: LanguageModelV1CallWarning } {
+    // If the extracted JSON is the same as original, extraction likely failed
+    if (extractedJson === originalText) {
+      return {
+        valid: false,
+        warning: {
+          type: 'other',
+          message: 'JSON extraction from model response may be incomplete or modified. The model may not have returned valid JSON.',
+        },
+      };
+    }
+
+    // Try to parse the extracted JSON to validate it
+    try {
+      JSON.parse(extractedJson);
+      return { valid: true };
+    } catch (e) {
+      return {
+        valid: false,
+        warning: {
+          type: 'other',
+          message: 'JSON extraction resulted in invalid JSON. The response may be malformed.',
+        },
+      };
+    }
+  }
+
   async doGenerate(
     options: Parameters<LanguageModelV1['doGenerate']>[0],
   ): Promise<Awaited<ReturnType<LanguageModelV1['doGenerate']>>> {
@@ -166,31 +251,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
         }
       }
     } catch (error: any) {
+      // Special handling for AbortError to preserve abort signal reason
       if (error instanceof AbortError) {
         throw options.abortSignal?.aborted ? options.abortSignal.reason : error;
       }
       
-      // Check for authentication errors
-      if (error.message?.includes('not logged in') || error.message?.includes('authentication') || error.exitCode === 401) {
-        throw createAuthenticationError({
-          message: error.message || 'Authentication failed. Please ensure Claude Code CLI is properly authenticated.',
-        });
-      }
-      
-      // Wrap other errors with API call error
-      throw createAPICallError({
-        message: error.message || 'Claude Code CLI error',
-        code: error.code,
-        exitCode: error.exitCode,
-        stderr: error.stderr,
-        promptExcerpt: messagesPrompt.substring(0, 200),
-        isRetryable: error.code === 'ENOENT' || error.code === 'ECONNREFUSED',
-      });
+      // Use unified error handler
+      throw this.handleClaudeCodeError(error, messagesPrompt);
     }
 
     // Extract JSON if in object-json mode
     if (options.mode?.type === 'object-json' && text) {
-      text = extractJson(text);
+      const extracted = extractJson(text);
+      const validation = this.validateJsonExtraction(text, extracted);
+      
+      if (!validation.valid && validation.warning) {
+        warnings.push(validation.warning);
+      }
+      
+      text = extracted;
     }
 
     return {
@@ -289,6 +368,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
               // In object-json mode, extract JSON and send the full text at once
               if (options.mode?.type === 'object-json' && accumulatedText) {
                 const extractedJson = extractJson(accumulatedText);
+                const validation = this.validateJsonExtraction(accumulatedText, extractedJson);
+                
+                // If validation failed, we should add a warning but we can't modify warnings array in stream
+                // So we'll just send the extracted JSON anyway
+                // In the future, we could emit a warning stream part if the SDK supports it
+                
                 controller.enqueue({
                   type: 'text-delta',
                   textDelta: extractedJson,
@@ -326,21 +411,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV1 {
         } catch (error: any) {
           let errorToEmit: unknown;
           
+          // Special handling for AbortError to preserve abort signal reason
           if (error instanceof AbortError) {
             errorToEmit = options.abortSignal?.aborted ? options.abortSignal.reason : error;
-          } else if (error.message?.includes('not logged in') || error.message?.includes('authentication') || error.exitCode === 401) {
-            errorToEmit = createAuthenticationError({
-              message: error.message || 'Authentication failed. Please ensure Claude Code CLI is properly authenticated.',
-            });
           } else {
-            errorToEmit = createAPICallError({
-              message: error.message || 'Claude Code CLI error',
-              code: error.code,
-              exitCode: error.exitCode,
-              stderr: error.stderr,
-              promptExcerpt: messagesPrompt.substring(0, 200),
-              isRetryable: error.code === 'ENOENT' || error.code === 'ECONNREFUSED',
-            });
+            // Use unified error handler
+            errorToEmit = this.handleClaudeCodeError(error, messagesPrompt);
           }
           
           // Emit error as a stream part

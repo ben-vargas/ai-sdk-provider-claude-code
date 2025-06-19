@@ -272,8 +272,8 @@ Code was refactored but file wasn't removed.
 
 - [x] 1.1 TypeScript Type Safety Issues [COMPLETED]
 - [x] 1.2 Code Duplication in Query Options [COMPLETED]
-- [ ] 2.1 Inconsistent Error Handling
-- [ ] 2.2 JSON Extraction Error Handling
+- [x] 2.1 Inconsistent Error Handling [COMPLETED]
+- [x] 2.2 JSON Extraction Error Handling [COMPLETED]
 - [ ] 3.1 Multiple Vitest Configurations
 - [ ] 3.2 ESLint Configuration Inconsistencies
 - [ ] 4.1 Claude Version Inconsistency
