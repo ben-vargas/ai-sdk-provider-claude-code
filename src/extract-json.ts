@@ -1,5 +1,24 @@
 /**
- * Extract JSON from Claude's response, handling markdown blocks and other formatting
+ * Extracts JSON from Claude's response, handling various formatting patterns.
+ * Attempts to parse and clean the response to extract valid JSON for object generation.
+ * 
+ * @param text - The raw text response from Claude that may contain JSON
+ * @returns The extracted JSON string, or the original text if extraction fails
+ * 
+ * @example
+ * ```typescript
+ * const response = '```json\n{"name": "Alice", "age": 30}\n```';
+ * const json = extractJson(response);
+ * // Returns: '{"name": "Alice", "age": 30}'
+ * ```
+ * 
+ * @remarks
+ * This function handles:
+ * - Markdown code blocks (```json and ```)
+ * - JavaScript variable declarations (const, let, var)
+ * - Trailing semicolons
+ * - Unquoted object keys (basic conversion)
+ * - Single quotes to double quotes conversion
  */
 export function extractJson(text: string): string {
   // Remove markdown code blocks if present

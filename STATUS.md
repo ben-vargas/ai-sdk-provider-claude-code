@@ -189,8 +189,8 @@ import { claudeCode } from 'ai-sdk-provider-claude-code';
 
 The Claude Code provider supports the following models:
 
-- `sonnet` - Claude 3 Sonnet (balanced speed and capability)
-- `opus` - Claude 3 Opus (most capable)
+- `sonnet` - Claude 4 Sonnet (balanced speed and capability)
+- `opus` - Claude 4 Opus (most capable)
 
 ```ts
 import { generateText } from 'ai';

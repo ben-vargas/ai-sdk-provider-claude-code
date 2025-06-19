@@ -64,7 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Initial Release
 - Initial implementation of AI SDK provider for Claude Code CLI
-- Support for Claude 3 Opus and Sonnet models
+- Support for Claude 4 Opus and Sonnet models
 - Text generation (streaming and non-streaming)
 - Basic object generation support
 - Multi-turn conversations

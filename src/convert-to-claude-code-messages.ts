@@ -1,5 +1,26 @@
 import type { LanguageModelV1Prompt } from '@ai-sdk/provider';
 
+/**
+ * Converts AI SDK prompt format to Claude Code CLI message format.
+ * Handles system prompts, user messages, assistant responses, and tool interactions.
+ * 
+ * @param prompt - The AI SDK prompt containing messages
+ * @param mode - Optional mode for specialized output formats (e.g., JSON generation)
+ * @returns An object containing the formatted message prompt and optional system prompt
+ * 
+ * @example
+ * ```typescript
+ * const { messagesPrompt } = convertToClaudeCodeMessages(
+ *   [{ role: 'user', content: 'Hello!' }],
+ *   { type: 'regular' }
+ * );
+ * ```
+ * 
+ * @remarks
+ * - Image inputs are not supported and will be ignored with a warning
+ * - Tool calls are simplified to "[Tool calls made]" notation
+ * - In 'object-json' mode, explicit JSON instructions are appended
+ */
 export function convertToClaudeCodeMessages(
   prompt: LanguageModelV1Prompt,
   mode?: { type: 'regular' | 'object-json' | 'object-tool' }

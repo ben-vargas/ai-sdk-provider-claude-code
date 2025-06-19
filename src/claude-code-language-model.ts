@@ -14,11 +14,46 @@ import { createAPICallError, createAuthenticationError, createTimeoutError } fro
 
 import { query, AbortError, type Options } from '@anthropic-ai/claude-code';
 
+/**
+ * Options for creating a Claude Code language model instance.
+ * 
+ * @example
+ * ```typescript
+ * const model = new ClaudeCodeLanguageModel({
+ *   id: 'opus',
+ *   settings: {
+ *     maxTurns: 10,
+ *     permissionMode: 'auto'
+ *   }
+ * });
+ * ```
+ */
 export interface ClaudeCodeLanguageModelOptions {
+  /**
+   * The model identifier to use.
+   * Can be 'opus', 'sonnet', or a custom model string.
+   */
   id: ClaudeCodeModelId;
+  
+  /**
+   * Optional settings to configure the model behavior.
+   */
   settings?: ClaudeCodeSettings;
 }
 
+/**
+ * Supported Claude model identifiers.
+ * - 'opus': Claude 4 Opus model (most capable)
+ * - 'sonnet': Claude 4 Sonnet model (balanced performance)
+ * - Custom string: Any other model identifier supported by the CLI
+ * 
+ * @example
+ * ```typescript
+ * const opusModel = claudeCode('opus');
+ * const sonnetModel = claudeCode('sonnet');
+ * const customModel = claudeCode('claude-3-opus-20240229');
+ * ```
+ */
 export type ClaudeCodeModelId = 'opus' | 'sonnet' | (string & {});
 
 const modelMap: Record<string, string> = {
@@ -26,6 +61,35 @@ const modelMap: Record<string, string> = {
   'sonnet': 'sonnet',
 };
 
+/**
+ * Language model implementation for Claude Code CLI.
+ * This class implements the AI SDK's LanguageModelV1 interface to provide
+ * integration with Claude models through the Claude Code CLI.
+ * 
+ * Features:
+ * - Supports streaming and non-streaming generation
+ * - Handles JSON object generation mode
+ * - Manages CLI sessions for conversation continuity
+ * - Provides detailed error handling and retry logic
+ * 
+ * Limitations:
+ * - Does not support image inputs
+ * - Does not support structured outputs (tool mode)
+ * - Some parameters like temperature and max tokens are not supported by the CLI
+ * 
+ * @example
+ * ```typescript
+ * const model = new ClaudeCodeLanguageModel({
+ *   id: 'opus',
+ *   settings: { maxTurns: 5 }
+ * });
+ * 
+ * const result = await model.doGenerate({
+ *   prompt: [{ role: 'user', content: 'Hello!' }],
+ *   mode: { type: 'regular' }
+ * });
+ * ```
+ */
 export class ClaudeCodeLanguageModel implements LanguageModelV1 {
   readonly specificationVersion = 'v1' as const;
   readonly defaultObjectGenerationMode = 'json' as const;
