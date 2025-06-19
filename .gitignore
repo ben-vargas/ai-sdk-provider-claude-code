@@ -74,3 +74,4 @@ claude-sessions/
 # Reference materials (not for version control)
 .reference/
 CLAUDE.md
+CODE_REVIEW_PLAN.md
