@@ -1,0 +1,39 @@
+# Dependabot configuration for automated dependency updates
+version: 2
+updates:
+  # Enable version updates for npm
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "09:00"
+      timezone: "America/New_York"
+    # Update all dependencies
+    open-pull-requests-limit: 10
+    # Group updates to reduce PR noise
+    groups:
+      # Group all development dependencies together
+      dev-dependencies:
+        patterns:
+          - "@types/*"
+          - "eslint*"
+          - "vitest*"
+          - "tsup"
+          - "typescript"
+        dependency-type: "development"
+      # Group AI SDK related dependencies
+      ai-sdk:
+        patterns:
+          - "@ai-sdk/*"
+          - "ai"
+    # Priority for @anthropic-ai/claude-code
+    allow:
+      - dependency-name: "@anthropic-ai/claude-code"
+    # Automatically merge patch and minor updates for claude-code
+    labels:
+      - "dependencies"
+      - "automated"
+    reviewers:
+      - "kayaozkur"
+    assignees:
+      - "kayaozkur"

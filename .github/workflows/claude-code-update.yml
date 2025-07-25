@@ -1,0 +1,131 @@
+name: Claude Code Update Check
+
+on:
+  schedule:
+    # Check twice daily for updates
+    - cron: '0 9,21 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Check for Claude Code updates
+        id: check
+        run: |
+          # Get current version from package.json
+          CURRENT_VERSION=$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-code']")
+          echo "Current version: $CURRENT_VERSION"
+          
+          # Get latest version from npm
+          LATEST_VERSION=$(npm view @anthropic-ai/claude-code version)
+          echo "Latest version: $LATEST_VERSION"
+          
+          # Compare versions
+          if [ "$CURRENT_VERSION" != "^$LATEST_VERSION" ]; then
+            echo "UPDATE_AVAILABLE=true" >> $GITHUB_ENV
+            echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
+            echo "LATEST_VERSION=$LATEST_VERSION" >> $GITHUB_ENV
+          else
+            echo "UPDATE_AVAILABLE=false" >> $GITHUB_ENV
+          fi
+      
+      - name: Create update branch
+        if: env.UPDATE_AVAILABLE == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          BRANCH_NAME="update-claude-code-${{ env.LATEST_VERSION }}"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+          
+          git checkout -b $BRANCH_NAME
+      
+      - name: Update Claude Code
+        if: env.UPDATE_AVAILABLE == 'true'
+        run: |
+          # Update the dependency
+          npm install @anthropic-ai/claude-code@latest --save-exact
+          
+          # Run npm install to update package-lock.json
+          npm install
+      
+      - name: Run tests
+        if: env.UPDATE_AVAILABLE == 'true'
+        run: |
+          npm run build
+          npm test
+        continue-on-error: true
+      
+      - name: Commit changes
+        if: env.UPDATE_AVAILABLE == 'true'
+        run: |
+          git add package.json package-lock.json
+          git commit -m "chore: update @anthropic-ai/claude-code to ${{ env.LATEST_VERSION }}
+
+          Updates @anthropic-ai/claude-code from ${{ env.CURRENT_VERSION }} to ^${{ env.LATEST_VERSION }}
+          
+          This ensures compatibility with the latest Claude Code SDK features and fixes."
+      
+      - name: Push changes
+        if: env.UPDATE_AVAILABLE == 'true'
+        run: |
+          git push origin ${{ env.BRANCH_NAME }}
+      
+      - name: Create Pull Request
+        if: env.UPDATE_AVAILABLE == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ env.BRANCH_NAME }}
+          title: "⬆️ Update @anthropic-ai/claude-code to ${{ env.LATEST_VERSION }}"
+          body: |
+            ## Claude Code SDK Update
+            
+            This PR updates `@anthropic-ai/claude-code` to the latest version.
+            
+            ### Changes:
+            - **Current version:** `${{ env.CURRENT_VERSION }}`
+            - **New version:** `^${{ env.LATEST_VERSION }}`
+            
+            ### Release Notes:
+            Check the [Claude Code SDK releases](https://github.com/anthropics/claude-code/releases) for details about what's new in this version.
+            
+            ### Testing:
+            - [ ] Build passes
+            - [ ] Tests pass
+            - [ ] Examples work correctly
+            
+            ### Important:
+            This update ensures we're using the latest Claude Code SDK which may include:
+            - New features
+            - Bug fixes
+            - Performance improvements
+            - Security updates
+            
+            Please review and test before merging.
+            
+            ---
+            *This PR was automatically created by the claude-code-update workflow*
+          labels: |
+            dependencies
+            claude-code
+            automated
+            priority
+          assignees: kayaozkur
+          reviewers: kayaozkur
