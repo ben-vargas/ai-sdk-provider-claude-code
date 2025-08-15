@@ -9,7 +9,7 @@
 
 # AI SDK Provider for Claude Code SDK
 
-> **Stable Release**: Version 1.x is now stable and compatible with AI SDK v5. For AI SDK v4 support, use the `v4` tag or version 0.2.x.
+> **Stable Release**: Version 1.x is now stable and compatible with AI SDK v5. For AI SDK v4 support, use the `ai-sdk-v4` tag or version 0.2.x.
 
 **ai-sdk-provider-claude-code** lets you use Claude via the [Vercel AI SDK](https://sdk.vercel.ai/docs) through the official `@anthropic-ai/claude-code` SDK/CLI.
 
@@ -18,7 +18,7 @@
 | Provider Version | AI SDK Version | NPM Tag | Status | Branch |
 |-----------------|----------------|---------|---------|--------|
 | 1.x | v5 | `latest` | Stable | `main` |
-| 0.x | v4 | `v4` | Maintenance | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
+| 0.x | v4 | `ai-sdk-v4` | Maintenance | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
 
 ### Installing the Right Version
 
@@ -30,7 +30,7 @@ npm install ai-sdk-provider-claude-code ai
 
 **For AI SDK v4 (legacy):**
 ```bash
-npm install ai-sdk-provider-claude-code@v4 ai@^4.3.16
+npm install ai-sdk-provider-claude-code@ai-sdk-v4 ai@^4.3.16
 # or use specific version: npm install ai-sdk-provider-claude-code@^0.2.2
 
 ## Installation
@@ -47,7 +47,7 @@ claude login
 npm install ai-sdk-provider-claude-code ai
 
 # For v4 (legacy)
-npm install ai-sdk-provider-claude-code@v4 ai@^4.3.16
+npm install ai-sdk-provider-claude-code@ai-sdk-v4 ai@^4.3.16
 ```
 
 ## Disclaimer
