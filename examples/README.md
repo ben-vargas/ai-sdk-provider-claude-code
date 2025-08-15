@@ -2,7 +2,7 @@
 
 This directory contains curated examples demonstrating the most important features of the Claude Code AI SDK Provider. Each example serves a specific purpose and demonstrates a key pattern or capability.
 
-> **Note**: These examples are written for Vercel AI SDK v5-beta. If you're using AI SDK v4, please refer to the v4 branch.
+> **Note**: These examples are written for Vercel AI SDK v5. If you're using AI SDK v4, please refer to the v4 branch.
 
 ## Prerequisites
 

@@ -1,7 +1,7 @@
-# Community Provider Status Analysis (v5-beta)
+# Community Provider Status Analysis (v5)
 
 ## Overview
-This document analyzes the requirements for ai-sdk-provider-claude-code to achieve community provider status in the Vercel AI SDK v5-beta ecosystem.
+This document analyzes the requirements for ai-sdk-provider-claude-code to achieve community provider status in the Vercel AI SDK v5 ecosystem.
 
 ## Current Implementation Status
 
@@ -16,7 +16,7 @@ This document analyzes the requirements for ai-sdk-provider-claude-code to achie
 - **Error Handling**: Comprehensive error handling with authentication detection
 - **AbortSignal Support**: Standard AI SDK pattern for timeouts and cancellation
 
-#### v5-Beta Specific Features
+#### v5 Specific Features
 - **LanguageModelV2 Implementation**: Fully compliant with `specificationVersion: 'v2'`
 - **Stream-Start Event**: Properly emits initial stream event with warnings
 - **Token Usage Naming**: Uses v5 convention (inputTokens, outputTokens, totalTokens)
@@ -43,9 +43,9 @@ This document analyzes the requirements for ai-sdk-provider-claude-code to achie
 - **API Documentation**: Clear documentation of all configuration options
 - **Migration Guide**: Comprehensive v4 to v5 migration documentation
 
-### 🚀 Meeting AI SDK v5-Beta Standards
+### 🚀 Meeting AI SDK v5 Standards
 
-Based on analysis of official v5-beta providers, we now meet all requirements:
+Based on analysis of official v5 providers, we now meet all requirements:
 
 1. **Provider Pattern** ✅
    - Factory function with provider instance
@@ -94,7 +94,7 @@ ai-sdk-provider-claude-code/
 │   │   ├── GUIDE.md
 │   │   ├── TROUBLESHOOTING.md
 │   │   └── DEVELOPMENT-STATUS.md
-│   └── ai-sdk-v5/                        # v5-beta documentation
+│   └── ai-sdk-v5/                        # v5 documentation
 │       ├── GUIDE.md                      # v5-specific usage guide
 │       ├── TROUBLESHOOTING.md            # v5-specific troubleshooting
 │       ├── DEVELOPMENT-STATUS.md         # This document
@@ -126,7 +126,7 @@ ai-sdk-provider-claude-code/
 
 ## 🎯 Ready for Community Status
 
-The provider now meets all requirements for v5-beta community provider status:
+The provider now meets all requirements for v5 community provider status:
 
 ### Technical Requirements ✅
 - Implements LanguageModelV2 specification
@@ -155,7 +155,7 @@ The provider now meets all requirements for v5-beta community provider status:
 ## Version Strategy
 
 - **0.x versions**: AI SDK v4 compatibility (maintained on `ai-sdk-v4` branch)
-- **1.x-beta versions**: AI SDK v5-beta compatibility (maintained on `main` branch)
+- **1.x versions**: AI SDK v5 compatibility (maintained on `main` branch)
 
 ## Next Steps for Community Submission
 
@@ -165,29 +165,29 @@ The provider now meets all requirements for v5-beta community provider status:
    ```
 
 2. **Prepare MDX Documentation**
-   Create a documentation file following the v5-beta community provider format (see example below)
+   Create a documentation file following the v5 community provider format (see example below)
 
 3. **Submit PR to AI SDK Repository**
-   - Add provider to v5-beta community providers list
+   - Add provider to v5 community providers list
    - Include MDX documentation
    - Reference npm package with beta tag
 
-## Example Community Provider MDX (v5-beta)
+## Example Community Provider MDX (v5)
 
 ```mdx
 ---
-title: Claude Code (v5-beta)
+title: Claude Code (v5)
 description: Use Claude via the official Claude Code SDK with your Pro/Max subscription
 ---
 
-# Claude Code Provider (v5-beta)
+# Claude Code Provider (v5)
 
 [ben-vargas/ai-sdk-provider-claude-code](https://github.com/ben-vargas/ai-sdk-provider-claude-code) 
 is a community provider that uses the official [Claude Code SDK](https://www.npmjs.com/package/@anthropic-ai/claude-code) 
-to provide language model support for the AI SDK v5-beta.
+to provide language model support for the AI SDK v5.
 
 <Note type="warning">
-  This is the v5-beta compatible version. For AI SDK v4 support, use version 0.2.x.
+  This is the v5 compatible version. For AI SDK v4 support, use version 0.2.x.
 </Note>
 
 ## Setup
@@ -256,9 +256,9 @@ console.log(result.text);
   the Claude Code SDK.
 </Note>
 
-## v5-Beta Specific Features
+## v5 Specific Features
 
-This version includes full support for AI SDK v5-beta features:
+This version includes full support for AI SDK v5 features:
 
 - **New streaming API** with promise-based result objects
 - **Updated token usage** properties (inputTokens, outputTokens, totalTokens)

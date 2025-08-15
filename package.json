@@ -1,7 +1,7 @@
 {
     "name": "ai-sdk-provider-claude-code",
-    "version": "1.0.0-beta.1",
-    "description": "AI SDK v5-beta provider for Claude via Claude Code SDK (use Pro/Max subscription)",
+    "version": "1.0.1",
+    "description": "AI SDK v5 provider for Claude via Claude Code SDK (use Pro/Max subscription)",
     "keywords": [
         "ai-sdk",
         "claude-code",
@@ -64,9 +64,9 @@
         "example:all": "npm run build && npm run example:basic && npm run example:streaming && npm run example:conversation && npm run example:config && npm run example:object:basic && npm run example:object:nested && npm run example:object:constraints && npm run example:tools && npm run example:timeout"
     },
     "dependencies": {
-        "@ai-sdk/provider": "beta",
-        "@ai-sdk/provider-utils": "beta",
-        "@anthropic-ai/claude-code": "1.0.24",
+        "@ai-sdk/provider": "2.0.0",
+        "@ai-sdk/provider-utils": "3.0.3",
+        "@anthropic-ai/claude-code": "1.0.81",
         "jsonc-parser": "^3.3.1"
     },
     "devDependencies": {
@@ -76,7 +76,7 @@
         "@typescript-eslint/eslint-plugin": "8.34.0",
         "@typescript-eslint/parser": "8.34.0",
         "@vitest/coverage-v8": "^3.2.4",
-        "ai": "beta",
+        "ai": "5.0.14",
         "eslint": "9.28.0",
         "globals": "16.2.0",
         "tsup": "8.5.0",
@@ -91,7 +91,6 @@
         "node": ">=18"
     },
     "publishConfig": {
-        "access": "public",
-        "tag": "beta"
+        "access": "public"
     }
 }

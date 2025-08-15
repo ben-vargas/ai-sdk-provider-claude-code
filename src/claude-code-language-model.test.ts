@@ -175,20 +175,26 @@ describe('ClaudeCodeLanguageModel', () => {
         chunks.push(value);
       }
 
-      expect(chunks).toHaveLength(4);
+      expect(chunks).toHaveLength(6);
       expect(chunks[0]).toMatchObject({
         type: 'stream-start',
         warnings: [],
       });
       expect(chunks[1]).toMatchObject({
-        type: 'text-delta',
-        delta: 'Hello',
+        type: 'text-start',
       });
       expect(chunks[2]).toMatchObject({
         type: 'text-delta',
-        delta: ', world!',
+        delta: 'Hello',
       });
       expect(chunks[3]).toMatchObject({
+        type: 'text-delta',
+        delta: ', world!',
+      });
+      expect(chunks[4]).toMatchObject({
+        type: 'text-end',
+      });
+      expect(chunks[5]).toMatchObject({
         type: 'finish',
         finishReason: 'stop',
         usage: {
@@ -245,7 +251,7 @@ describe('ClaudeCodeLanguageModel', () => {
         chunks.push(value);
       }
 
-      expect(chunks).toHaveLength(3);
+      expect(chunks).toHaveLength(5);
       expect(chunks[0]).toMatchObject({
         type: 'stream-start',
         warnings: expect.arrayContaining([
@@ -256,10 +262,16 @@ describe('ClaudeCodeLanguageModel', () => {
         ]),
       });
       expect(chunks[1]).toMatchObject({
+        type: 'text-start',
+      });
+      expect(chunks[2]).toMatchObject({
         type: 'text-delta',
         delta: '{\n  "a": 1,\n  "b": 2\n}',
       });
-      expect(chunks[2]).toMatchObject({
+      expect(chunks[3]).toMatchObject({
+        type: 'text-end',
+      });
+      expect(chunks[4]).toMatchObject({
         type: 'finish',
         finishReason: 'stop',
         usage: {
@@ -327,17 +339,23 @@ describe('ClaudeCodeLanguageModel', () => {
         chunks.push(value);
       }
 
-      expect(chunks).toHaveLength(3);
+      expect(chunks).toHaveLength(5);
       expect(chunks[0]).toMatchObject({
         type: 'stream-start',
         warnings: [],
       });
-      // When JSON is malformed, extractJson returns the original text
       expect(chunks[1]).toMatchObject({
+        type: 'text-start',
+      });
+      // When JSON is malformed, extractJson returns the original text
+      expect(chunks[2]).toMatchObject({
         type: 'text-delta',
         delta: 'Here is the JSON: {"a": 1, "b": invalid}',
       });
-      expect(chunks[2]).toMatchObject({
+      expect(chunks[3]).toMatchObject({
+        type: 'text-end',
+      });
+      expect(chunks[4]).toMatchObject({
         type: 'finish',
         finishReason: 'stop',
         usage: {

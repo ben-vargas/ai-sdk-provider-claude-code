@@ -1,6 +1,6 @@
-# Troubleshooting Guide (AI SDK v5-beta)
+# Troubleshooting Guide (AI SDK v5)
 
-This guide documents common issues and solutions for the Claude Code AI SDK Provider with v5-beta.
+This guide documents common issues and solutions for the Claude Code AI SDK Provider with v5.
 
 ## Common Issues
 

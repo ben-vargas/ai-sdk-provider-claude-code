@@ -1,4 +1,4 @@
-# Usage Guide (AI SDK v5-beta)
+# Usage Guide (AI SDK v5)
 
 ## Essential Examples
 
@@ -130,7 +130,7 @@ const response = await generateText({
 
 ---
 
-## Key Changes in v5-beta
+## Key Changes in v5
 
 ### Message Format
 In v5, user messages must have content as an array of parts:
@@ -858,7 +858,7 @@ ai-sdk-provider-claude-code/
 │   └── tool-management.ts             # Tool access control (allow/disallow)
 ├── docs/                              # Documentation
 │   ├── ai-sdk-v4/                     # v4-specific documentation
-│   └── ai-sdk-v5/                     # v5-beta documentation
+│   └── ai-sdk-v5/                     # v5 documentation
 │       ├── GUIDE.md                   # This guide
 │       ├── TROUBLESHOOTING.md         # Common issues and solutions
 │       ├── DEVELOPMENT-STATUS.md      # Development status
@@ -886,8 +886,8 @@ ai-sdk-provider-claude-code/
 
 Contributions are welcome! Please read our contributing guidelines before submitting a PR.
 
-**Beta Focus Areas:**
-- v5-beta compatibility improvements
+**Focus Areas:**
+- v5 compatibility improvements
 - Performance optimizations
 - Better error handling patterns
 - TypeScript type improvements

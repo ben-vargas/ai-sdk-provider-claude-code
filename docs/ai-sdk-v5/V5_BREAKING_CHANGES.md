@@ -1,10 +1,10 @@
-# Breaking Changes: V4 to V5-Beta Migration
+# Breaking Changes: V4 to V5 Migration
 
-This document outlines the breaking changes users will encounter when upgrading from v4 to v5-beta of the ai-sdk-provider-claude-code.
+This document outlines the breaking changes users will encounter when upgrading from v4 to v5 of the ai-sdk-provider-claude-code.
 
-⚠️ **IMPORTANT**: This is a complete breaking change. The v5-beta version of this provider ONLY works with AI SDK v5-beta. You cannot use:
-- v5-beta provider with AI SDK v4 ❌
-- v4 provider with AI SDK v5-beta ❌
+⚠️ **IMPORTANT**: This is a complete breaking change. The v5 version of this provider ONLY works with AI SDK v5. You cannot use:
+- v5 provider with AI SDK v4 ❌
+- v4 provider with AI SDK v5 ❌
 
 You must upgrade both together.
 
@@ -154,4 +154,4 @@ const response = await result.text;
 
 - All Claude Code SDK-specific limitations still apply (no temperature control, no output length limits, etc.)
 - TypeScript users will get compile-time errors for most breaking changes
-- This is a complete rewrite for v5-beta compatibility - no v4 compatibility is maintained
+- This is a complete rewrite for v5 compatibility - no v4 compatibility is maintained
