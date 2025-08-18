@@ -122,7 +122,8 @@ async function example3_stringPatterns() {
           .optional(),
         linkedin: z.string()
           .url()
-          .regex(/linkedin\.com\/in\//, 'LinkedIn profile URL')
+          .regex(/^https:\/\/(?:www\.)?linkedin\.com\/in\//, 'LinkedIn profile URL must start with https://linkedin.com/in/')
+          .describe('Full LinkedIn profile URL including https:// protocol')
           .optional(),
       }),
       preferences: z.object({
@@ -140,7 +141,7 @@ async function example3_stringPatterns() {
   const { object } = await generateObject({
     model: claudeCode('sonnet'),
     schema: userRegistrationSchema,
-    prompt: 'Generate a complete user registration for a software developer from San Francisco with GitHub and LinkedIn profiles.',
+    prompt: 'Generate a complete user registration for a software developer from San Francisco. Include GitHub username (just the username) and a complete LinkedIn profile URL like https://www.linkedin.com/in/johndoe-developer',
   });
 
   console.log('Generated registration:');

@@ -1,6 +1,6 @@
 {
     "name": "ai-sdk-provider-claude-code",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "description": "AI SDK v5 provider for Claude via Claude Code SDK (use Pro/Max subscription)",
     "keywords": [
         "ai-sdk",
@@ -85,7 +85,7 @@
         "zod": "^3.25.76"
     },
     "peerDependencies": {
-        "zod": "^3.0.0"
+        "zod": "^3.0.0 || ^4.0.0"
     },
     "engines": {
         "node": ">=18"

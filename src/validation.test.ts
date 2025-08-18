@@ -38,7 +38,10 @@ describe('claudeCodeSettingsSchema', () => {
     const result = claudeCodeSettingsSchema.safeParse(settings);
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.errors[0].message).toContain('greater than or equal to 1');
+      // Support both Zod v3 (errors) and v4 (issues)
+      const issues = (result.error as any).errors || result.error.issues;
+      // Support both v3 and v4 error message formats
+      expect(issues[0].message).toMatch(/greater than or equal to 1|Too small.*>=1/);
     }
   });
 

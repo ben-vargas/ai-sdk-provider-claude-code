@@ -18,7 +18,6 @@ examples=(
   "long-running-tasks"
   "abort-signal"
   "check-cli"
-  "test-session"
   "integration-test"
   "limitations"
 )

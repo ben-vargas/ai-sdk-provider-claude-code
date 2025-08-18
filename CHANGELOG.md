@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2025-08-18
+
+### Added
+- Support for both Zod v3 and v4 (peer dependency now accepts `^3.0.0 || ^4.0.0`)
+- Compatibility layer for Zod API differences between versions
+
+### Fixed
+- Function schema validation now works with both Zod v3 and v4
+- Error handling supports both `error.errors` (v3) and `error.issues` (v4) formats
+- Updated `z.record()` calls to specify both key and value types for v4 compatibility
+- Improved URL validation hints in generate-object-constraints example
+- Removed non-existent test-session.ts from run-all-examples.sh script
+
 ## [1.0.1] - 2025-08-15
 
 ### Changed

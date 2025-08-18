@@ -6,6 +6,17 @@ import { existsSync } from 'fs';
  * Uses Zod for type-safe validation following AI SDK patterns.
  */
 
+// Helper for Zod v3/v4 compatibility
+// Use a simple z.any() for functions to work with both versions
+const loggerFunctionSchema = z.object({
+  warn: z.any().refine((val) => typeof val === 'function', {
+    message: 'warn must be a function'
+  }),
+  error: z.any().refine((val) => typeof val === 'function', {
+    message: 'error must be a function'
+  })
+});
+
 /**
  * Schema for validating Claude Code settings.
  * Ensures all settings are within acceptable ranges and formats.
@@ -40,22 +51,19 @@ export const claudeCodeSettingsSchema = z.object({
       type: z.literal('stdio').optional(),
       command: z.string(),
       args: z.array(z.string()).optional(),
-      env: z.record(z.string()).optional()
+      env: z.record(z.string(), z.string()).optional()
     }),
     // McpSSEServerConfig
     z.object({
       type: z.literal('sse'),
       url: z.string(),
-      headers: z.record(z.string()).optional()
+      headers: z.record(z.string(), z.string()).optional()
     })
   ])).optional(),
   verbose: z.boolean().optional(),
   logger: z.union([
     z.literal(false),
-    z.object({
-      warn: z.function().args(z.string()).returns(z.void()),
-      error: z.function().args(z.string()).returns(z.void())
-    })
+    loggerFunctionSchema
   ]).optional(),
 }).strict();
 
@@ -101,7 +109,10 @@ export function validateSettings(settings: unknown): {
     
     if (!result.success) {
       // Extract user-friendly error messages
-      result.error.errors.forEach(err => {
+      // Support both Zod v3 (errors) and v4 (issues)
+      const errorObject = result.error as { errors?: Array<{ path: string[]; message: string }>; issues?: Array<{ path: string[]; message: string }> };
+      const issues = errorObject.errors || errorObject.issues || [];
+      issues.forEach((err: { path: string[]; message: string }) => {
         const path = err.path.join('.');
         errors.push(`${path ? `${path}: ` : ''}${err.message}`);
       });
