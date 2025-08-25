@@ -58,6 +58,12 @@ export const claudeCodeSettingsSchema = z.object({
       type: z.literal('sse'),
       url: z.string(),
       headers: z.record(z.string(), z.string()).optional()
+    }),
+    // McpHttpServerConfig
+    z.object({
+      type: z.literal('http'),
+      url: z.string(),
+      headers: z.record(z.string(), z.string()).optional()
     })
   ])).optional(),
   verbose: z.boolean().optional(),

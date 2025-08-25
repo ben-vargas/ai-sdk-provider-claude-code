@@ -231,6 +231,18 @@ describe('validateSettings', () => {
     };
     expect(validateSettings(validSSE).valid).toBe(true);
 
+    // Valid HTTP server
+    const validHTTP = {
+      mcpServers: {
+        apiServer: {
+          type: 'http',
+          url: 'https://example.com/api',
+          headers: { 'Authorization': 'Bearer token' }
+        }
+      }
+    };
+    expect(validateSettings(validHTTP).valid).toBe(true);
+
     // Invalid - missing required fields
     const invalidMissingCommand = {
       mcpServers: {
@@ -255,6 +267,19 @@ describe('validateSettings', () => {
     const result2 = validateSettings(invalidSSEMissingUrl);
     expect(result2.valid).toBe(false);
     expect(result2.errors[0]).toContain('mcpServers');
+
+    // Invalid - HTTP missing url
+    const invalidHTTPMissingUrl = {
+      mcpServers: {
+        invalid: {
+          type: 'http',
+          headers: { 'test': 'value' }
+        }
+      }
+    };
+    const result3 = validateSettings(invalidHTTPMissingUrl);
+    expect(result3.valid).toBe(false);
+    expect(result3.errors[0]).toContain('mcpServers');
   });
 });
 
