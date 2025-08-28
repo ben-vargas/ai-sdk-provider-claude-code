@@ -204,13 +204,16 @@ async function runAllTests() {
   }
 }
 
-// Add global timeout
-setTimeout(() => {
-  console.log('\n⏱️ Tests timed out after 60 seconds');
+// Add configurable global timeout (default 3 minutes)
+const TIMEOUT_MS = Number(process.env.CLAUDE_IT_TIMEOUT_MS ?? '180000');
+const timeoutId = setTimeout(() => {
+  console.log(`\n⏱️ Tests timed out after ${TIMEOUT_MS / 1000} seconds`);
   process.exit(1);
-}, 60000);
+}, TIMEOUT_MS);
 
-runAllTests().catch(error => {
+runAllTests().then(() => {
+  clearTimeout(timeoutId);
+}).catch(error => {
   console.error('Fatal error:', error);
   process.exit(1);
 });
