@@ -88,37 +88,45 @@ ai-sdk-provider-claude-code/
 │   ├── convert-to-claude-code-messages.ts # Message formatting (v5 format)
 │   ├── extract-json.ts                   # JSON extraction (using jsonc-parser)
 │   ├── errors.ts                         # Error utilities
-│   └── types.ts                          # TypeScript definitions
+│   ├── logger.ts                         # Logger abstraction
+│   ├── map-claude-code-finish-reason.ts  # Finish reason mapping
+│   ├── mcp-helpers.ts                    # Helper for SDK MCP servers
+│   ├── types.ts                          # TypeScript definitions
+│   └── validation.ts                     # Settings validation (Zod)
 ├── docs/
 │   ├── ai-sdk-v4/                        # v4-specific documentation (archived)
+│   │   ├── DEVELOPMENT-STATUS.md
 │   │   ├── GUIDE.md
-│   │   ├── TROUBLESHOOTING.md
-│   │   └── DEVELOPMENT-STATUS.md
+│   │   └── TROUBLESHOOTING.md
 │   └── ai-sdk-v5/                        # v5 documentation
+│       ├── DEVELOPMENT-STATUS.md         # This document
 │       ├── GUIDE.md                      # v5-specific usage guide
 │       ├── TROUBLESHOOTING.md            # v5-specific troubleshooting
-│       ├── DEVELOPMENT-STATUS.md         # This document
 │       ├── V5_BREAKING_CHANGES.md        # User migration guide
 │       ├── V5_MIGRATION_PLAN.md          # Technical migration plan
 │       ├── V5_MIGRATION_SUMMARY.md       # Migration implementation summary
 │       └── V5_MIGRATION_TASKS.md         # Migration task tracking
 ├── examples/
 │   ├── README.md                         # Examples guide
+│   ├── abort-signal.ts                   # Cancellation
 │   ├── basic-usage.ts                    # Simple generation (v5 pattern)
-│   ├── streaming.ts                      # Streaming demo (v5 pattern)
+│   ├── check-cli.ts                      # Setup verification
 │   ├── conversation-history.ts           # Multi-turn conversations (v5 format)
 │   ├── custom-config.ts                  # Configuration options
-│   ├── generate-object-*.ts              # Object generation examples
-│   ├── tool-management.ts                # Tool access control
-│   ├── long-running-tasks.ts             # Timeout handling
-│   ├── abort-signal.ts                   # Cancellation
+│   ├── generate-object-basic.ts          # Object generation (basic)
+│   ├── generate-object-constraints.ts    # Object generation (constraints)
+│   ├── generate-object-nested.ts         # Object generation (nested)
+│   ├── generate-object.ts                # Object generation (general)
+│   ├── hooks-callbacks.ts                # Hooks example (PreToolUse/PostToolUse)
 │   ├── integration-test.ts               # Test suite
-│   └── check-cli.ts                      # Setup verification
-├── vitest.config.js                      # Test configuration
-├── vitest.edge.config.js                 # Edge runtime tests
-├── vitest.node.config.js                 # Node runtime tests
+│   ├── limitations.ts                    # Limitations walkthrough
+│   ├── long-running-tasks.ts             # Timeout handling
+│   ├── sdk-tools-callbacks.ts            # In-process SDK tools example
+│   ├── streaming.ts                      # Streaming demo (v5 pattern)
+│   └── tool-management.ts                # Tool access control
+├── vitest.config.ts                      # Test configuration
 ├── tsup.config.ts                        # Build configuration
-├── package.json                          # Package metadata (v1.0.0-beta.1)
+├── package.json                          # Package metadata
 ├── CHANGELOG.md                          # Version history
 ├── README.md                             # Main documentation with version matrix
 └── LICENSE                               # MIT license

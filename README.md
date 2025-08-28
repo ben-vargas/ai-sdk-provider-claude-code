@@ -17,8 +17,8 @@
 
 | Provider Version | AI SDK Version | NPM Tag | Status | Branch |
 |-----------------|----------------|---------|---------|--------|
-| 1.x | v5 | `latest` | Stable | `main` |
-| 0.x | v4 | `ai-sdk-v4` | Maintenance | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
+| 1.x.x | v5 | `latest` | Stable | `main` |
+| 0.x.x | v4 | `ai-sdk-v4` | Maintenance | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
 
 ### Installing the Right Version
 
