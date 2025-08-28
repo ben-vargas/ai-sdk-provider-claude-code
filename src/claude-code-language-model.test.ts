@@ -26,6 +26,66 @@ describe('ClaudeCodeLanguageModel', () => {
   });
 
   describe('doGenerate', () => {
+    it('uses AsyncIterable prompt when streamingInput auto and canUseTool provided', async () => {
+      const hooks = {} as any;
+      const canUseTool = async () => ({ behavior: 'allow', updatedInput: {} });
+      const modelWithStream = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { hooks, canUseTool, streamingInput: 'auto' } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'result', subtype: 'success', session_id: 's2', usage: { input_tokens: 0, output_tokens: 0 } };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithStream.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call).toBeDefined();
+      // AsyncIterable check
+      expect(typeof call.prompt?.[Symbol.asyncIterator]).toBe('function');
+    });
+
+    it('keeps string prompt when streamingInput off even if canUseTool provided', async () => {
+      const modelWithOff = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { canUseTool: async () => ({ behavior: 'allow', updatedInput: {} }), streamingInput: 'off' } as any,
+      });
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'result', subtype: 'success', session_id: 's3', usage: { input_tokens: 0, output_tokens: 0 } };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithOff.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+      expect(typeof call.prompt).toBe('string');
+    });
+
+    it('throws when canUseTool is combined with permissionPromptToolName', async () => {
+      const model = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          canUseTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+          permissionPromptToolName: 'stdio',
+          streamingInput: 'auto',
+        } as any,
+      });
+
+      const promise = model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+      await expect(promise).rejects.toThrow(/cannot be used with permissionPromptToolName/);
+    });
     it('should pass through hooks and canUseTool to SDK query options', async () => {
       const preToolHook = async () => ({ continue: true });
       const hooks = { PreToolUse: [{ hooks: [preToolHook] }] } as any;

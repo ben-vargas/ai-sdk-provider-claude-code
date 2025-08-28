@@ -1,6 +1,6 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-code';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-code';
-import { z, type ZodRawShape, type ZodObject } from 'zod';
+import { type ZodRawShape, type ZodObject } from 'zod';
 
 /**
  * Convenience helper to create an SDK MCP server from a simple tool map.
@@ -22,7 +22,12 @@ export function createCustomMcpServer<Tools extends Record<string, {
   tools: Tools;
 }): McpSdkServerConfigWithInstance {
   const defs = Object.entries(config.tools).map(([name, def]) =>
-    tool(name, def.description, def.inputSchema.shape as ZodRawShape, def.handler as any)
+    tool(
+      name,
+      def.description,
+      def.inputSchema.shape as ZodRawShape,
+      (args: unknown, extra: unknown) => def.handler(args as Record<string, unknown>, extra)
+    )
   );
   return createSdkMcpServer({ name: config.name, version: config.version, tools: defs });
 }

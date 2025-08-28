@@ -17,6 +17,7 @@ import { validateModelId, validatePrompt, validateSessionId } from './validation
 import { getLogger } from './logger.js';
 
 import { query, type Options } from '@anthropic-ai/claude-code';
+import type { SDKUserMessage } from '@anthropic-ai/claude-code';
 
 function isAbortError(err: unknown): boolean {
   if (err && typeof err === 'object') {
@@ -25,6 +26,23 @@ function isAbortError(err: unknown): boolean {
     if (typeof e.code === 'string' && e.code.toUpperCase() === 'ABORT_ERR') return true;
   }
   return false;
+}
+
+function toAsyncIterablePrompt(messagesPrompt: string, sessionId?: string): AsyncIterable<SDKUserMessage> {
+  const msg: SDKUserMessage = {
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: messagesPrompt }],
+    },
+    parent_tool_use_id: null,
+    session_id: sessionId ?? '',
+  };
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield msg;
+    },
+  };
 }
 
 /**
@@ -210,7 +228,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
   }
 
   private createQueryOptions(abortController: AbortController): Options {
-    const opts: any = {
+    const opts: Partial<Options> & Record<string, unknown> = {
       model: this.getModel(),
       abortController,
       resume: this.settings.resume ?? this.sessionId,
@@ -401,8 +419,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     }
 
     try {
+      const modeSetting = this.settings.streamingInput ?? 'auto';
+      const wantsStream = modeSetting === 'always' || (modeSetting === 'auto' && !!this.settings.canUseTool);
+      if (this.settings.canUseTool && this.settings.permissionPromptToolName) {
+        throw new Error('canUseTool requires streaming input mode and cannot be used with permissionPromptToolName (SDK constraint). Please use one or the other.');
+      }
+      const sdkPrompt = wantsStream ? toAsyncIterablePrompt(messagesPrompt, this.settings.resume ?? this.sessionId) : messagesPrompt;
       const response = query({
-        prompt: messagesPrompt,
+        prompt: sdkPrompt,
         options: queryOptions,
       });
 
@@ -526,8 +550,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           // Emit stream-start with warnings
           controller.enqueue({ type: 'stream-start', warnings });
           
+          const modeSetting = this.settings.streamingInput ?? 'auto';
+          const wantsStream = modeSetting === 'always' || (modeSetting === 'auto' && !!this.settings.canUseTool);
+          if (this.settings.canUseTool && this.settings.permissionPromptToolName) {
+            throw new Error('canUseTool requires streaming input mode and cannot be used with permissionPromptToolName (SDK constraint). Please use one or the other.');
+          }
+          const sdkPrompt = wantsStream ? toAsyncIterablePrompt(messagesPrompt, this.settings.resume ?? this.sessionId) : messagesPrompt;
           const response = query({
-            prompt: messagesPrompt,
+            prompt: sdkPrompt,
             options: queryOptions,
           });
 

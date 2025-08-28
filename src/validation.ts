@@ -45,6 +45,7 @@ export const claudeCodeSettingsSchema = z.object({
   resume: z.string().optional(),
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
+  streamingInput: z.enum(['auto', 'always', 'off']).optional(),
   // Hooks and tool-permission callback (permissive validation of shapes)
   canUseTool: z.any().refine((v) => v === undefined || typeof v === 'function', {
     message: 'canUseTool must be a function'

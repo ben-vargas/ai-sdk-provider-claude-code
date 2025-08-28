@@ -1,6 +1,8 @@
 // Import types from the SDK
 import type { PermissionMode, McpServerConfig, CanUseTool } from '@anthropic-ai/claude-code';
 
+export type StreamingInputMode = 'auto' | 'always' | 'off';
+
 /**
  * Logger interface for custom logging.
  * Allows consumers to provide their own logging implementation
@@ -127,13 +129,21 @@ export interface ClaudeCodeSettings {
    * Hook callbacks for lifecycle events (e.g., PreToolUse, PostToolUse).
    * Note: typed loosely to support multiple SDK versions.
    */
-  hooks?: Partial<Record<string, Array<{ matcher?: string; hooks: Array<(...args: any[]) => Promise<unknown>> }>>>;
+  hooks?: Partial<Record<string, Array<{ matcher?: string; hooks: Array<(...args: unknown[]) => Promise<unknown>> }>>>;
 
   /**
    * Dynamic permission callback invoked before a tool is executed.
    * Allows runtime approval/denial and optional input mutation.
    */
   canUseTool?: CanUseTool;
+
+  /**
+   * Controls whether to send streaming input to the SDK (enables canUseTool).
+   * - 'auto' (default): stream when canUseTool is provided
+   * - 'always': always stream
+   * - 'off': never stream (legacy behavior)
+   */
+  streamingInput?: StreamingInputMode;
 
   /**
    * Enable verbose logging for debugging
