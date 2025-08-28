@@ -16,7 +16,16 @@ import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
 import { validateModelId, validatePrompt, validateSessionId } from './validation.js';
 import { getLogger } from './logger.js';
 
-import { query, AbortError, type Options } from '@anthropic-ai/claude-code';
+import { query, type Options } from '@anthropic-ai/claude-code';
+
+function isAbortError(err: unknown): boolean {
+  if (err && typeof err === 'object') {
+    const e = err as { name?: unknown; code?: unknown };
+    if (typeof e.name === 'string' && e.name === 'AbortError') return true;
+    if (typeof e.code === 'string' && e.code.toUpperCase() === 'ABORT_ERR') return true;
+  }
+  return false;
+}
 
 /**
  * Options for creating a Claude Code language model instance.
@@ -201,7 +210,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
   }
 
   private createQueryOptions(abortController: AbortController): Options {
-    return {
+    const opts: any = {
       model: this.getModel(),
       abortController,
       resume: this.settings.resume ?? this.sessionId,
@@ -219,7 +228,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       allowedTools: this.settings.allowedTools,
       disallowedTools: this.settings.disallowedTools,
       mcpServers: this.settings.mcpServers,
+      canUseTool: this.settings.canUseTool,
     };
+    // hooks is supported in newer SDKs; include it if provided
+    if (this.settings.hooks) {
+      opts.hooks = this.settings.hooks;
+    }
+    return opts as Options;
   }
 
   private handleClaudeCodeError(
@@ -227,7 +242,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     messagesPrompt: string
   ): APICallError | LoadAPIKeyError {
     // Handle AbortError from the SDK
-    if (error instanceof AbortError) {
+    if (isAbortError(error)) {
       // Return the abort reason if available, otherwise the error itself
       throw error;
     }
@@ -422,7 +437,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       }
     } catch (error: unknown) {
       // Special handling for AbortError to preserve abort signal reason
-      if (error instanceof AbortError) {
+      if (isAbortError(error)) {
         throw options.abortSignal?.aborted ? options.abortSignal.reason : error;
       }
       
@@ -633,7 +648,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           let errorToEmit: unknown;
           
           // Special handling for AbortError to preserve abort signal reason
-          if (error instanceof AbortError) {
+          if (isAbortError(error)) {
             errorToEmit = options.abortSignal?.aborted ? options.abortSignal.reason : error;
           } else {
             // Use unified error handler

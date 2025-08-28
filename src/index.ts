@@ -36,6 +36,29 @@ export type { ClaudeCodeModelId, ClaudeCodeLanguageModelOptions } from './claude
  */
 export type { ClaudeCodeSettings, Logger } from './types.js';
 
+// Convenience re-exports from the SDK for custom tools and hooks
+export { createSdkMcpServer, tool } from '@anthropic-ai/claude-code';
+export { createCustomMcpServer } from './mcp-helpers.js';
+export type {
+  HookEvent,
+  HookCallback,
+  HookCallbackMatcher,
+  HookInput,
+  HookJSONOutput,
+  PreToolUseHookInput,
+  PostToolUseHookInput,
+  UserPromptSubmitHookInput,
+  SessionStartHookInput,
+  SessionEndHookInput,
+  CanUseTool,
+  PermissionResult,
+  PermissionUpdate,
+  PermissionBehavior,
+  PermissionRuleValue,
+  McpServerConfig,
+  McpSdkServerConfigWithInstance,
+} from '@anthropic-ai/claude-code';
+
 /**
  * Error handling utilities for Claude Code.
  * These functions help create and identify specific error types.

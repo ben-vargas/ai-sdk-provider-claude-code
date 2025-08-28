@@ -27,6 +27,12 @@ describe('index exports', () => {
     expect(typeof exports.createAuthenticationError).toBe('function');
     expect(exports.createTimeoutError).toBeDefined();
     expect(typeof exports.createTimeoutError).toBe('function');
+
+    // SDK passthroughs
+    expect(exports.createSdkMcpServer).toBeDefined();
+    expect(typeof exports.createSdkMcpServer).toBe('function');
+    expect(exports.tool).toBeDefined();
+    expect(typeof exports.tool).toBe('function');
   });
 
   it('should export correct modules', async () => {

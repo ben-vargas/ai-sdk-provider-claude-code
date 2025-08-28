@@ -119,12 +119,14 @@ Key changes:
 - 🎯 Object generation with JSON schemas
 - 🛑 AbortSignal support
 - 🔧 Tool management (MCP servers, permissions)
+ - 🧩 Callbacks (hooks, canUseTool)
 
 ## Limitations
 
 - Requires Node.js ≥ 18
 - No image support
 - Some AI SDK parameters unsupported (temperature, maxTokens, etc.)
+ - `canUseTool` requires streaming input at the SDK level (AsyncIterable prompt). The provider passes it through but most examples use string prompts; see GUIDE for details.
 
 ## Contributing
 

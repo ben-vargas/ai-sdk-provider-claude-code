@@ -5,12 +5,8 @@ import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
 vi.mock('@anthropic-ai/claude-code', () => {
   return {
     query: vi.fn(),
-    AbortError: class AbortError extends Error {
-      constructor(message?: string) {
-        super(message);
-        this.name = 'AbortError';
-      }
-    },
+    // Note: real SDK may not export AbortError at runtime; test mock provides it
+    AbortError: class AbortError extends Error { constructor(message?: string) { super(message); this.name = 'AbortError'; } },
   };
 });
 
@@ -30,6 +26,33 @@ describe('ClaudeCodeLanguageModel', () => {
   });
 
   describe('doGenerate', () => {
+    it('should pass through hooks and canUseTool to SDK query options', async () => {
+      const preToolHook = async () => ({ continue: true });
+      const hooks = { PreToolUse: [{ hooks: [preToolHook] }] } as any;
+      const canUseTool = async () => ({ behavior: 'allow', updatedInput: {} });
+
+      const modelWithCallbacks = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { hooks, canUseTool } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'result', subtype: 'success', session_id: 's1', usage: { input_tokens: 0, output_tokens: 0 } };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithCallbacks.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      expect(vi.mocked(mockQuery)).toHaveBeenCalled();
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+      expect(call?.options?.hooks).toBe(hooks);
+      expect(call?.options?.canUseTool).toBe(canUseTool);
+    });
     it('should generate text from SDK response', async () => {
       const mockResponse = {
         async *[Symbol.asyncIterator]() {

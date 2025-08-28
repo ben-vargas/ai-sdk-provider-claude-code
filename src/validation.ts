@@ -45,6 +45,14 @@ export const claudeCodeSettingsSchema = z.object({
   resume: z.string().optional(),
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
+  // Hooks and tool-permission callback (permissive validation of shapes)
+  canUseTool: z.any().refine((v) => v === undefined || typeof v === 'function', {
+    message: 'canUseTool must be a function'
+  }).optional(),
+  hooks: z.record(z.string(), z.array(z.object({
+    matcher: z.string().optional(),
+    hooks: z.array(z.any()).nonempty(),
+  }))).optional(),
   mcpServers: z.record(z.string(), z.union([
     // McpStdioServerConfig
     z.object({
@@ -64,6 +72,12 @@ export const claudeCodeSettingsSchema = z.object({
       type: z.literal('http'),
       url: z.string(),
       headers: z.record(z.string(), z.string()).optional()
+    }),
+    // McpSdkServerConfig (in-process custom tools)
+    z.object({
+      type: z.literal('sdk'),
+      name: z.string(),
+      instance: z.any(),
     })
   ])).optional(),
   verbose: z.boolean().optional(),

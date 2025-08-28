@@ -213,6 +213,8 @@ const result = await generateText({
 | `disallowedTools` | `string[]` | `undefined` | Tools to restrict |
 | `mcpServers` | `object` | `undefined` | MCP server configuration |
 | `resume` | `string` | `undefined` | Resume an existing session |
+| `hooks` | `object` | `undefined` | Lifecycle hooks (e.g., PreToolUse, PostToolUse) |
+| `canUseTool` | `(name, input, opts) => Promise` | `undefined` | Runtime permission callback. Requires streaming input at SDK level |
 
 ### Custom Configuration
 
@@ -403,6 +405,72 @@ const claude = createClaudeCode({
   // Other options: 'default', 'acceptEdits', 'plan'
 });
 ```
+
+### Custom SDK Tools (callbacks)
+
+Define in-process tools using the Claude Code SDK and wire them directly through this provider. This avoids managing external MCP server processes and enables type-safe tool definitions.
+
+```typescript
+import { z } from 'zod';
+import { createClaudeCode, createSdkMcpServer, tool } from 'ai-sdk-provider-claude-code';
+
+// 1) Define a tool with a Zod schema
+const add = tool('add', 'Add two numbers', { a: z.number(), b: z.number() }, async ({ a, b }) => ({
+  content: [{ type: 'text', text: String(a + b) }],
+}));
+
+// 2) Create an SDK MCP server with your tools
+const sdkServer = createSdkMcpServer({ name: 'local', tools: [add] });
+
+// 3) Wire it into the provider, restrict to this tool
+const claude = createClaudeCode({
+  defaultSettings: {
+    mcpServers: { local: sdkServer },
+    allowedTools: ['mcp__local__add'],
+  },
+});
+
+// 4) Use it as usual
+const { text } = await generateText({
+  model: claude('sonnet'),
+  prompt: 'Use the add tool to sum 3 and 4.',
+});
+```
+
+Notes:
+- Tool naming for allow/deny: `mcp__<serverName>__<toolName>`; to allow an entire server: `mcp__<serverName>`.
+- Security: only allow the tools you intend; prefer allowlists in sensitive environments.
+
+### Hooks and Runtime Permissions
+
+You can intercept lifecycle events and apply custom runtime permissions:
+
+```typescript
+import type { HookCallback } from 'ai-sdk-provider-claude-code';
+import { createClaudeCode } from 'ai-sdk-provider-claude-code';
+
+const preTool: HookCallback = async (input) => {
+  if (input.hook_event_name === 'PreToolUse') {
+    console.log('About to run:', input.tool_name);
+    return { continue: true, hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } };
+  }
+  return { continue: true };
+};
+
+const claude = createClaudeCode({
+  defaultSettings: {
+    hooks: {
+      PreToolUse: [{ hooks: [preTool] }],
+      PostToolUse: [{ hooks: [async () => ({ continue: true })] }],
+    },
+    // canUseTool: Requires streaming input mode at the SDK level
+    // canUseTool: async (toolName, input) => ({ behavior: 'allow', updatedInput: input }),
+  },
+});
+```
+
+Important:
+- `canUseTool` is supported by the SDK and is passed through by this provider. At the SDK level it requires a streaming input format (AsyncIterable of messages). If your usage requires `canUseTool`, consider integrating with the SDK streaming input directly or open an issue to request a provider-level streaming input mode.
 
 ### Custom System Prompts
 

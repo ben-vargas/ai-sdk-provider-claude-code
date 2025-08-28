@@ -1,5 +1,5 @@
 // Import types from the SDK
-import type { PermissionMode, McpServerConfig } from '@anthropic-ai/claude-code';
+import type { PermissionMode, McpServerConfig, CanUseTool } from '@anthropic-ai/claude-code';
 
 /**
  * Logger interface for custom logging.
@@ -122,6 +122,18 @@ export interface ClaudeCodeSettings {
    * MCP server configuration
    */
   mcpServers?: Record<string, McpServerConfig>;
+
+  /**
+   * Hook callbacks for lifecycle events (e.g., PreToolUse, PostToolUse).
+   * Note: typed loosely to support multiple SDK versions.
+   */
+  hooks?: Partial<Record<string, Array<{ matcher?: string; hooks: Array<(...args: any[]) => Promise<unknown>> }>>>;
+
+  /**
+   * Dynamic permission callback invoked before a tool is executed.
+   * Allows runtime approval/denial and optional input mutation.
+   */
+  canUseTool?: CanUseTool;
 
   /**
    * Enable verbose logging for debugging

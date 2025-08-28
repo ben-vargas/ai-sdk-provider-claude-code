@@ -281,6 +281,48 @@ describe('validateSettings', () => {
     expect(result3.valid).toBe(false);
     expect(result3.errors[0]).toContain('mcpServers');
   });
+
+  it('should validate hooks and canUseTool settings', () => {
+    // Valid canUseTool function
+    const valid1 = validateSettings({ canUseTool: async () => ({ behavior: 'allow', updatedInput: {} }) });
+    expect(valid1.valid).toBe(true);
+
+    // Invalid canUseTool
+    const invalid1 = validateSettings({ canUseTool: 'not-a-function' as any });
+    expect(invalid1.valid).toBe(false);
+    expect(invalid1.errors[0]).toContain('canUseTool');
+
+    // Valid hooks
+    const validHooks = validateSettings({ hooks: { PreToolUse: [{ hooks: [async () => ({ continue: true })] }] } });
+    expect(validHooks.valid).toBe(true);
+  });
+
+  it('should validate SDK MCP server configuration (type: sdk)', () => {
+    // Valid SDK server
+    const validSdk = {
+      mcpServers: {
+        custom: {
+          type: 'sdk',
+          name: 'local',
+          instance: {},
+        }
+      }
+    };
+    expect(validateSettings(validSdk).valid).toBe(true);
+
+    // Invalid - missing name
+    const invalidSdk = {
+      mcpServers: {
+        bad: {
+          type: 'sdk',
+          instance: {},
+        }
+      }
+    } as any;
+    const res = validateSettings(invalidSdk);
+    expect(res.valid).toBe(false);
+    expect(res.errors[0]).toContain('mcpServers');
+  });
 });
 
 describe('validatePrompt', () => {
