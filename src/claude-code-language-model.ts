@@ -425,7 +425,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       const modeSetting = this.settings.streamingInput ?? 'auto';
       const wantsStream = modeSetting === 'always' || (modeSetting === 'auto' && !!this.settings.canUseTool);
       if (this.settings.canUseTool && this.settings.permissionPromptToolName) {
-        throw new Error('canUseTool requires streaming input mode and cannot be used with permissionPromptToolName (SDK constraint). Please use one or the other.');
+        throw new Error("canUseTool requires streamingInput mode ('auto' or 'always') and cannot be used with permissionPromptToolName (SDK constraint). Set streamingInput: 'auto' (or 'always') and remove permissionPromptToolName, or remove canUseTool.");
       }
       const sdkPrompt = wantsStream ? toAsyncIterablePrompt(messagesPrompt, this.settings.resume ?? this.sessionId) : messagesPrompt;
       const response = query({
@@ -559,7 +559,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           const modeSetting = this.settings.streamingInput ?? 'auto';
           const wantsStream = modeSetting === 'always' || (modeSetting === 'auto' && !!this.settings.canUseTool);
           if (this.settings.canUseTool && this.settings.permissionPromptToolName) {
-            throw new Error('canUseTool requires streaming input mode and cannot be used with permissionPromptToolName (SDK constraint). Please use one or the other.');
+            throw new Error("canUseTool requires streamingInput mode ('auto' or 'always') and cannot be used with permissionPromptToolName (SDK constraint). Set streamingInput: 'auto' (or 'always') and remove permissionPromptToolName, or remove canUseTool.");
           }
           const sdkPrompt = wantsStream ? toAsyncIterablePrompt(messagesPrompt, this.settings.resume ?? this.sessionId) : messagesPrompt;
           const response = query({

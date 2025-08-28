@@ -26,7 +26,7 @@ export function createCustomMcpServer<Tools extends Record<string, {
       name,
       def.description,
       def.inputSchema.shape as ZodRawShape,
-      (args: unknown, extra: unknown) => def.handler(args as Record<string, unknown>, extra)
+      (args: Record<string, unknown>, extra: unknown) => def.handler(args, extra)
     )
   );
   return createSdkMcpServer({ name: config.name, version: config.version, tools: defs });
