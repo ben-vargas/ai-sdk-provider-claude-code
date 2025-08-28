@@ -463,14 +463,18 @@ const claude = createClaudeCode({
       PreToolUse: [{ hooks: [preTool] }],
       PostToolUse: [{ hooks: [async () => ({ continue: true })] }],
     },
-    // canUseTool: Requires streaming input mode at the SDK level
+    // Enable runtime permission callback (requires streaming input)
+    // streamingInput: 'auto', // default when canUseTool is provided; or set 'always'
     // canUseTool: async (toolName, input) => ({ behavior: 'allow', updatedInput: input }),
   },
 });
 ```
 
 Important:
-- `canUseTool` is supported by the SDK and is passed through by this provider. At the SDK level it requires a streaming input format (AsyncIterable of messages). If your usage requires `canUseTool`, consider integrating with the SDK streaming input directly or open an issue to request a provider-level streaming input mode.
+- `canUseTool` requires the SDK's stream-json input mode. This provider supports it via `streamingInput`:
+  - `'auto'` (default): if you supply `canUseTool`, the provider streams input automatically.
+  - `'always'`: always use streaming input.
+  - `'off'`: never stream (SDK will reject `canUseTool`).
 
 ### Custom System Prompts
 

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2025-08-28
+
+### Added
+- Provider-level streaming input support to enable `canUseTool` via the SDK's stream-json mode (`streamingInput: 'auto' | 'always' | 'off'`).
+- Pass-through support for hooks and `canUseTool` to the Claude Code SDK (with guard against `permissionPromptToolName`).
+- Re-exports for SDK MCP tool utilities: `createSdkMcpServer`, `tool`, and related hook/permission types.
+- Helper `createCustomMcpServer` to simplify in-process MCP tool registration.
+- Examples: hooks-callbacks and sdk-tools-callbacks.
+- Documentation: new sections on Custom SDK Tools (callbacks) and Hooks/Runtime Permissions; clarified `canUseTool` streaming requirement and usage.
+
+### Changed
+- Updated README and GUIDE to reflect that `canUseTool` is supported when streaming input is enabled (no longer "blocked").
+
 ## [1.1.1] - 2025-08-25
 
 ### Fixed

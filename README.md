@@ -126,7 +126,7 @@ Key changes:
 - Requires Node.js ≥ 18
 - No image support
 - Some AI SDK parameters unsupported (temperature, maxTokens, etc.)
- - `canUseTool` requires streaming input at the SDK level (AsyncIterable prompt). The provider passes it through but most examples use string prompts; see GUIDE for details.
+- `canUseTool` requires streaming input at the SDK level (AsyncIterable prompt). This provider supports it via `streamingInput`: use `'auto'` (default when `canUseTool` is set) or `'always'`. See GUIDE for details.
 
 ## Contributing
 
