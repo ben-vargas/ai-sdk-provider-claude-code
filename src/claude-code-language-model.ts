@@ -393,8 +393,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
     const abortController = new AbortController();
     let abortListener: (() => void) | undefined;
-    if (options.abortSignal) {
-      abortListener = () => abortController.abort();
+    if (options.abortSignal?.aborted) {
+      // Propagate already-aborted state immediately with original reason
+      abortController.abort(options.abortSignal.reason);
+    } else if (options.abortSignal) {
+      abortListener = () => abortController.abort(options.abortSignal?.reason);
       options.abortSignal.addEventListener('abort', abortListener, { once: true });
     }
 
@@ -525,8 +528,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
     const abortController = new AbortController();
     let abortListener: (() => void) | undefined;
-    if (options.abortSignal) {
-      abortListener = () => abortController.abort();
+    if (options.abortSignal?.aborted) {
+      // Propagate already-aborted state immediately with original reason
+      abortController.abort(options.abortSignal.reason);
+    } else if (options.abortSignal) {
+      abortListener = () => abortController.abort(options.abortSignal?.reason);
       options.abortSignal.addEventListener('abort', abortListener, { once: true });
     }
 
