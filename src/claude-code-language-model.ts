@@ -422,6 +422,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       });
     }
 
+    let done = () => {};
+    const outputStreamEnded = new Promise(resolve => { done = () => resolve(undefined); });
     try {
       const modeSetting = this.settings.streamingInput ?? 'auto';
       const wantsStream = modeSetting === 'always' || (modeSetting === 'auto' && !!this.settings.canUseTool);
@@ -430,8 +432,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       }
       // hold input stream open until results
       // see: https://github.com/anthropics/claude-code/issues/4775
-      let done = () => {};
-      const outputStreamEnded = new Promise(resolve => { done = () => resolve(undefined); });
       const sdkPrompt = wantsStream ? toAsyncIterablePrompt(messagesPrompt, outputStreamEnded, this.settings.resume ?? this.sessionId) : messagesPrompt;
       const response = query({
         prompt: sdkPrompt,
@@ -469,6 +469,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
         }
       }
     } catch (error: unknown) {
+      done();
       // Special handling for AbortError to preserve abort signal reason
       if (isAbortError(error)) {
         throw options.abortSignal?.aborted ? options.abortSignal.reason : error;
@@ -558,6 +559,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
     const stream = new ReadableStream<LanguageModelV2StreamPart>({
       start: async (controller) => {
+        let done = () => {};
+        const outputStreamEnded = new Promise(resolve => { done = () => resolve(undefined); });
         try {
           // Emit stream-start with warnings
           controller.enqueue({ type: 'stream-start', warnings });
@@ -569,8 +572,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           }
           // hold input stream open until results
           // see: https://github.com/anthropics/claude-code/issues/4775
-          let done = () => {};
-          const outputStreamEnded = new Promise(resolve => { done = () => resolve(undefined); });
           const sdkPrompt = wantsStream ? toAsyncIterablePrompt(messagesPrompt, outputStreamEnded, this.settings.resume ?? this.sessionId) : messagesPrompt;
           const response = query({
             prompt: sdkPrompt,
@@ -692,6 +693,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
           controller.close();
         } catch (error: unknown) {
+          done();
           let errorToEmit: unknown;
           
           // Special handling for AbortError to preserve abort signal reason
