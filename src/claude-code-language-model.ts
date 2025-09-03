@@ -611,7 +611,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 }
               }
             } else if (message.type === 'result') {
-              done()
+              done();
               let rawUsage: unknown | undefined;
               if ('usage' in message) {
                 rawUsage = message.usage;
