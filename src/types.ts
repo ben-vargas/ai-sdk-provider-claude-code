@@ -172,4 +172,9 @@ export interface ClaudeCodeSettings {
    * ```
    */
   logger?: Logger | false;
+
+  /**
+   * Environment variables to set
+   */
+  env?: Record<string, string>;
 }

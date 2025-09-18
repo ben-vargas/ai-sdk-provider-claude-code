@@ -26,7 +26,8 @@ describe('claudeCodeSettingsSchema', () => {
       resume: 'session-123',
       allowedTools: ['Read', 'Write'],
       disallowedTools: ['Bash'],
-      verbose: true
+      verbose: true,
+      env: { BASH_DEFAULT_TIMEOUT_MS: '10' }
     };
     
     const result = claudeCodeSettingsSchema.safeParse(validSettings);
@@ -58,6 +59,18 @@ describe('claudeCodeSettingsSchema', () => {
 
   it('should reject unknown properties', () => {
     const settings = { unknownProp: 'value' };
+    const result = claudeCodeSettingsSchema.safeParse(settings);
+    expect(result.success).toBe(false);
+  });
+
+  it('should accept env as a record of strings', () => {
+    const settings = { env: { PATH: '/usr/bin', FOO: 'bar' } };
+    const result = claudeCodeSettingsSchema.safeParse(settings);
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject env values that are not strings', () => {
+    const settings = { env: { NUM: 123 as any } };
     const result = claudeCodeSettingsSchema.safeParse(settings);
     expect(result.success).toBe(false);
   });

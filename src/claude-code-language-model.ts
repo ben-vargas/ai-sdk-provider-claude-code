@@ -259,6 +259,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       disallowedTools: this.settings.disallowedTools,
       mcpServers: this.settings.mcpServers,
       canUseTool: this.settings.canUseTool,
+      env: this.settings.env,
     };
     // hooks is supported in newer SDKs; include it if provided
     if (this.settings.hooks) {
