@@ -121,10 +121,19 @@ Key changes:
 - 🔧 Tool management (MCP servers, permissions)
  - 🧩 Callbacks (hooks, canUseTool)
 
+## Image Inputs (Streaming Only)
+
+- Enable streaming input (`streamingInput: 'always'` or provide `canUseTool`) before sending images.
+- Supported payloads: data URLs (`data:image/png;base64,...`), strings prefixed with `base64:<mediaType>,<data>`, or objects `{ data: '<base64>', mimeType: 'image/png' }`.
+- Remote HTTP(S) image URLs are ignored with the warning "Image URLs are not supported by this provider; supply base64/data URLs." (`supportsImageUrls` remains `false`).
+- When streaming input is disabled, image parts trigger the streaming prerequisite warning and are omitted from the request.
+- Use realistic image payloads—very small placeholders may result in the model asking for a different image.
+- `examples/images.ts` accepts a local image path and converts it to a data URL on the fly: `npx tsx examples/images.ts /absolute/path/to/image.png`.
+
 ## Limitations
 
 - Requires Node.js ≥ 18
-- No image support
+- Image inputs require streaming mode with base64/data URLs (remote fetch is not supported)
 - Some AI SDK parameters unsupported (temperature, maxTokens, etc.)
 - `canUseTool` requires streaming input at the SDK level (AsyncIterable prompt). This provider supports it via `streamingInput`: use `'auto'` (default when `canUseTool` is set) or `'always'`. See GUIDE for details.
 

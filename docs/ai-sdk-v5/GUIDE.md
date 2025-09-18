@@ -476,6 +476,50 @@ Important:
   - `'always'`: always use streaming input.
   - `'off'`: never stream (SDK will reject `canUseTool`).
 
+### Image Inputs (Streaming Only)
+
+Image parts are forwarded to the Claude Code SDK only when streaming input is enabled.
+
+- Set `streamingInput: 'always'` (or provide `canUseTool`, which causes `'auto'` to stream) before including images.
+- Supported payloads:
+  - Data URLs: `data:image/png;base64,<base64Data>`
+  - Explicit base64 strings: `'base64:image/png,<base64Data>'`
+  - Objects: `{ type: 'image', image: { data: '<base64>', mimeType: 'image/png' } }`
+- Remote HTTP(S) image URLs are ignored with the warning `Image URLs are not supported by this provider; supply base64/data URLs.` (`supportsImageUrls` remains `false`).
+- If streaming is disabled, the provider emits the streaming prerequisite warning ("Claude Code SDK features (hooks/MCP/images) require streaming input...") and drops the image content.
+- Use realistic image payloads—very small or malformed data URLs may lead Claude to request a different image.
+
+Example message:
+
+```typescript
+const messages = [
+  {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'Describe this image in one sentence.' },
+      {
+        type: 'image',
+        image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAAklEQVR4AewaftIAAAAfSURBVFXBwQ0AMBACIJo4mPsvdX0L7ziKoqJG1IgaH8ddA4x8aVGeAAAAAElFTkSuQmCC',
+      },
+    ],
+  },
+];
+
+const result = streamText({
+  model: claudeCode('sonnet', { streamingInput: 'always' }),
+  messages,
+});
+```
+
+See `examples/images.ts` for a full script.
+
+Run it against a local file (PNG/JPG/GIF/WebP) to convert to a data URL automatically:
+
+```bash
+npm run build
+npx tsx examples/images.ts /absolute/path/to/image.png
+```
+
 ### Custom System Prompts
 
 ```typescript
@@ -825,7 +869,7 @@ Review our examples for implementation patterns
 
 ## Limitations
 
-- **No image support**: The Claude Code SDK doesn't support image inputs (provider sets `supportsImageUrls = false`)
+- **Image inputs require streaming**: Provide base64/data URLs and enable streaming input; remote URLs are ignored
 - **No embedding support**: Text embeddings are not available through this provider
 - **Object-tool mode not supported**: Only `object-json` mode works via `generateObject`/`streamObject`. The AI SDK's tool calling interface is not implemented
 - **Text-only responses**: No support for file generation or other modalities

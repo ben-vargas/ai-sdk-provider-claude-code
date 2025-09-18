@@ -57,7 +57,7 @@ describe('convertToClaudeCodeMessages', () => {
     expect(result.messagesPrompt).toBe('Human: Hello\n, \nworld!');
   });
 
-  it('should return warning for image content but not throw', () => {
+  it('should return warning when image content cannot be converted', () => {
     const result = convertToClaudeCodeMessages([
       {
         role: 'user',
@@ -69,8 +69,9 @@ describe('convertToClaudeCodeMessages', () => {
     ] as CoreMessage[]);
     
     expect(result.warnings).toBeDefined();
-    expect(result.warnings).toContain('Claude Code SDK does not support image inputs. Images will be ignored.');
+    expect(result.warnings).toContain('Unable to convert image content; supply base64/data URLs.');
     expect(result.messagesPrompt).toBe('Human: Look at this:');
+    expect(result.hasImageParts).toBe(false);
   });
 
   it('should handle unknown content types gracefully', () => {

@@ -12,6 +12,9 @@ vi.mock('@anthropic-ai/claude-code', () => {
 
 // Import the mocked module to get typed references
 import { query as mockQuery, AbortError as MockAbortError } from '@anthropic-ai/claude-code';
+import type { SDKUserMessage } from '@anthropic-ai/claude-code';
+
+const STREAMING_WARNING_MESSAGE = "Claude Code SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
 
 describe('ClaudeCodeLanguageModel', () => {
   let model: ClaudeCodeLanguageModel;
@@ -49,6 +52,69 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call).toBeDefined();
       // AsyncIterable check
       expect(typeof call.prompt?.[Symbol.asyncIterator]).toBe('function');
+    });
+
+    it('includes image content in streaming prompts when enabled', async () => {
+      const modelWithImages = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { streamingInput: 'always' } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'img-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+
+      let promptContentPromise: Promise<any> | undefined;
+
+      const isAsyncIterable = (value: unknown): value is AsyncIterable<unknown> => {
+        return Boolean(
+          value &&
+          typeof value === 'object' &&
+          Symbol.asyncIterator in value &&
+          typeof (value as Record<PropertyKey, unknown>)[Symbol.asyncIterator] === 'function'
+        );
+      };
+
+      vi.mocked(mockQuery).mockImplementation(({ prompt }) => {
+        if (isAsyncIterable(prompt)) {
+          const iterator = prompt[Symbol.asyncIterator]();
+          promptContentPromise = iterator.next().then(({ value }) => (value as SDKUserMessage | undefined)?.message?.content);
+        }
+        return mockResponse as any;
+      });
+
+      await modelWithImages.doGenerate({
+        prompt: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Describe this image.' },
+              { type: 'image', image: 'data:image/png;base64,aGVsbG8=' },
+            ],
+          },
+        ],
+      } as any);
+
+      expect(promptContentPromise).toBeDefined();
+      const content = await promptContentPromise!;
+      expect(Array.isArray(content)).toBe(true);
+      expect(content).toHaveLength(2);
+      expect(content[0]).toEqual({ type: 'text', text: 'Human: Describe this image.' });
+      expect(content[1]).toEqual({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: 'image/png',
+          data: 'aGVsbG8=',
+        },
+      });
     });
 
     it('keeps string prompt when streamingInput off even if canUseTool provided', async () => {
@@ -286,6 +352,56 @@ describe('ClaudeCodeLanguageModel', () => {
           totalTokens: 15,
         },
       });
+    });
+
+    it('emits streaming prerequisite warning when images are provided without streaming input', async () => {
+      const modelWithStreamingOff = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { streamingInput: 'off' } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'warn-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await modelWithStreamingOff.doStream({
+        prompt: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Look at this image.' },
+              { type: 'image', image: 'data:image/png;base64,aGVsbG8=' },
+            ],
+          },
+        ],
+      } as any);
+
+      const reader = result.stream.getReader();
+      const start = await reader.read();
+      expect(start.done).toBe(false);
+      expect(start.value).toMatchObject({
+        type: 'stream-start',
+        warnings: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'other',
+            message: STREAMING_WARNING_MESSAGE,
+          }),
+        ]),
+      });
+
+      await reader.cancel();
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+      expect(typeof call.prompt).toBe('string');
     });
 
     it('should emit JSON once in object-json mode and return finish metadata', async () => {
