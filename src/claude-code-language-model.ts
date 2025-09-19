@@ -46,8 +46,8 @@ type ClaudeToolResult = {
 type ToolStreamState = {
   name: string;
   lastSerializedInput?: string;
-  rawInput?: unknown;
   inputStarted: boolean;
+  inputEnded: boolean;
   callDispatched: boolean;
 };
 
@@ -702,6 +702,43 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       start: async (controller) => {
         let done = () => {};
         const outputStreamEnded = new Promise(resolve => { done = () => resolve(undefined); });
+          const toolStates = new Map<string, ToolStreamState>();
+
+          const emitToolCall = (
+            toolId: string,
+            state: ToolStreamState,
+          ) => {
+            if (!state.inputEnded && state.inputStarted) {
+              controller.enqueue({
+                type: 'tool-input-end',
+                id: toolId,
+              });
+              state.inputEnded = true;
+            }
+
+            if (!state.callDispatched) {
+              controller.enqueue({
+                type: 'tool-call',
+                toolCallId: toolId,
+                toolName: state.name,
+                input: state.lastSerializedInput ?? '',
+                providerExecuted: true,
+                providerMetadata: {
+                  'claude-code': {
+                    rawInput: state.lastSerializedInput ?? '',
+                  },
+                },
+              });
+              state.callDispatched = true;
+            }
+          };
+
+          const finalizeToolCalls = () => {
+            for (const [toolId, state] of toolStates) {
+              emitToolCall(toolId, state);
+            }
+          };
+
         try {
           // Emit stream-start with warnings
           controller.enqueue({ type: 'stream-start', warnings });
@@ -727,7 +764,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           let usage: LanguageModelV2Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
           let accumulatedText = '';
           let textPartId: string | undefined;
-          const toolStates = new Map<string, ToolStreamState>();
 
           for await (const message of response) {
             if (message.type === 'assistant') {
@@ -740,13 +776,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                   state = {
                     name: tool.name,
                     inputStarted: false,
+                    inputEnded: false,
                     callDispatched: false,
                   };
                   toolStates.set(toolId, state);
                 }
 
                 state.name = tool.name;
-                state.rawInput = tool.input;
 
                 if (!state.inputStarted) {
                   controller.enqueue({
@@ -780,6 +816,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                     });
                   }
                   state.lastSerializedInput = serializedInput;
+                }
+
+                if (!state.callDispatched) {
+                  emitToolCall(toolId, state);
                 }
               }
 
@@ -818,6 +858,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                   state = {
                     name: toolName,
                     inputStarted: false,
+                    inputEnded: false,
                     callDispatched: false,
                   };
                   toolStates.set(result.id, state);
@@ -834,26 +875,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                     })();
 
                 if (state && !state.callDispatched) {
-                  if (state.inputStarted) {
-                    controller.enqueue({
-                      type: 'tool-input-end',
-                      id: result.id,
-                    });
-                  }
-
-                  controller.enqueue({
-                    type: 'tool-call',
-                    toolCallId: result.id,
-                    toolName,
-                    input: state.lastSerializedInput ?? '',
-                    providerExecuted: true,
-                    providerMetadata: {
-                      'claude-code': {
-                        rawInput: state.lastSerializedInput ?? '',
-                      },
-                    },
-                  });
-                  state.callDispatched = true;
+                  emitToolCall(result.id, state);
                 }
 
                 controller.enqueue({
@@ -924,6 +946,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 });
               }
               
+              finalizeToolCalls();
+
               controller.enqueue({
                 type: 'finish',
                 finishReason,
@@ -951,9 +975,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             }
           }
 
+          finalizeToolCalls();
           controller.close();
         } catch (error: unknown) {
           done();
+          finalizeToolCalls();
           let errorToEmit: unknown;
           
           // Special handling for AbortError to preserve abort signal reason
