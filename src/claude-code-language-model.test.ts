@@ -657,6 +657,8 @@ describe('ClaudeCodeLanguageModel', () => {
         id: toolUseId,
       });
 
+      expect(events.indexOf(toolInputDelta!)).toBeLessThan(events.indexOf(toolInputEnd!));
+
       expect(toolCall).toMatchObject({
         type: 'tool-call',
         toolCallId: toolUseId,
@@ -669,6 +671,9 @@ describe('ClaudeCodeLanguageModel', () => {
           },
         },
       });
+
+      expect(events.indexOf(toolInputEnd!)).toBeLessThan(events.indexOf(toolCall!));
+      expect(events.indexOf(toolCall!)).toBeLessThan(events.indexOf(toolResult!));
 
       expect(toolResult).toMatchObject({
         type: 'tool-result',

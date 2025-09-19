@@ -43,6 +43,14 @@ type ClaudeToolResult = {
   isError: boolean;
 };
 
+type ToolStreamState = {
+  name: string;
+  lastSerializedInput?: string;
+  rawInput?: unknown;
+  inputStarted: boolean;
+  callDispatched: boolean;
+};
+
 function toAsyncIterablePrompt(
   messagesPrompt: string,
   outputStreamEnded: Promise<unknown>,
@@ -719,10 +727,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           let usage: LanguageModelV2Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
           let accumulatedText = '';
           let textPartId: string | undefined;
-          const emittedToolInputs = new Set<string>();
-          const emittedToolCalls = new Set<string>();
-          const toolInputPayloads = new Map<string, string>();
-          const toolNameById = new Map<string, string>();
+          const toolStates = new Map<string, ToolStreamState>();
 
           for await (const message of response) {
             if (message.type === 'assistant') {
@@ -730,31 +735,39 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
               for (const tool of this.extractToolUses(content)) {
                 const toolId = tool.id;
-                toolNameById.set(toolId, tool.name);
+                let state = toolStates.get(toolId);
+                if (!state) {
+                  state = {
+                    name: tool.name,
+                    inputStarted: false,
+                    callDispatched: false,
+                  };
+                  toolStates.set(toolId, state);
+                }
 
-                if (!emittedToolInputs.has(toolId)) {
+                state.name = tool.name;
+                state.rawInput = tool.input;
+
+                if (!state.inputStarted) {
                   controller.enqueue({
                     type: 'tool-input-start',
                     id: toolId,
                     toolName: tool.name,
                     providerExecuted: true,
                   });
-                  emittedToolInputs.add(toolId);
+                  state.inputStarted = true;
                 }
 
                 const serializedInput = this.serializeToolInput(tool.input);
-                const previousPayload = toolInputPayloads.get(toolId);
-
                 if (serializedInput) {
                   let deltaPayload = serializedInput;
 
-                  if (previousPayload !== undefined) {
-                    if (serializedInput.startsWith(previousPayload)) {
-                      deltaPayload = serializedInput.slice(previousPayload.length);
-                    } else if (serializedInput === previousPayload) {
+                  if (state.lastSerializedInput !== undefined) {
+                    if (serializedInput.startsWith(state.lastSerializedInput)) {
+                      deltaPayload = serializedInput.slice(state.lastSerializedInput.length);
+                    } else if (serializedInput === state.lastSerializedInput) {
                       deltaPayload = '';
                     } else {
-                      // fallback: send full payload once more to stay consistent
                       deltaPayload = serializedInput;
                     }
                   }
@@ -766,29 +779,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                       delta: deltaPayload,
                     });
                   }
-
-                  toolInputPayloads.set(toolId, serializedInput);
-                }
-
-                if (!emittedToolCalls.has(toolId)) {
-                  controller.enqueue({
-                    type: 'tool-input-end',
-                    id: toolId,
-                  });
-
-                  controller.enqueue({
-                    type: 'tool-call',
-                    toolCallId: toolId,
-                    toolName: tool.name,
-                    input: serializedInput,
-                    providerExecuted: true,
-                    providerMetadata: {
-                      'claude-code': {
-                        rawInput: serializedInput,
-                      },
-                    },
-                  });
-                  emittedToolCalls.add(toolId);
+                  state.lastSerializedInput = serializedInput;
                 }
               }
 
@@ -821,7 +812,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             } else if (message.type === 'user') {
               const content = message.message?.content ?? [];
               for (const result of this.extractToolResults(content)) {
-                const toolName = result.name ?? toolNameById.get(result.id) ?? 'claude-tool';
+                let state = toolStates.get(result.id);
+                const toolName = result.name ?? state?.name ?? 'claude-tool';
+                if (!state) {
+                  state = {
+                    name: toolName,
+                    inputStarted: false,
+                    callDispatched: false,
+                  };
+                  toolStates.set(result.id, state);
+                }
                 const normalizedResult = this.normalizeToolResult(result.result);
                 const rawResult = typeof result.result === 'string'
                   ? result.result
@@ -832,6 +832,29 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                         return String(result.result);
                       }
                     })();
+
+                if (state && !state.callDispatched) {
+                  if (state.inputStarted) {
+                    controller.enqueue({
+                      type: 'tool-input-end',
+                      id: result.id,
+                    });
+                  }
+
+                  controller.enqueue({
+                    type: 'tool-call',
+                    toolCallId: result.id,
+                    toolName,
+                    input: state.lastSerializedInput ?? '',
+                    providerExecuted: true,
+                    providerMetadata: {
+                      'claude-code': {
+                        rawInput: state.lastSerializedInput ?? '',
+                      },
+                    },
+                  });
+                  state.callDispatched = true;
+                }
 
                 controller.enqueue({
                   type: 'tool-result',
