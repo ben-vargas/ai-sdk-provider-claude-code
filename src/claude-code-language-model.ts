@@ -740,6 +740,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           for (const [toolId, state] of toolStates) {
             emitToolCall(toolId, state);
           }
+          toolStates.clear();
         };
 
         try {
@@ -799,16 +800,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
                 const serializedInput = this.serializeToolInput(tool.input);
                 if (serializedInput) {
-                  let deltaPayload = serializedInput;
+                  let deltaPayload = '';
 
-                  if (state.lastSerializedInput !== undefined) {
-                    if (serializedInput.startsWith(state.lastSerializedInput)) {
-                      deltaPayload = serializedInput.slice(state.lastSerializedInput.length);
-                    } else if (serializedInput === state.lastSerializedInput) {
-                      deltaPayload = '';
-                    } else {
-                      deltaPayload = serializedInput;
-                    }
+                  if (state.lastSerializedInput === undefined) {
+                    deltaPayload = serializedInput;
+                  } else if (serializedInput.startsWith(state.lastSerializedInput)) {
+                    deltaPayload = serializedInput.slice(state.lastSerializedInput.length);
+                  } else if (serializedInput !== state.lastSerializedInput) {
+                    // Non-prefix updates cannot be represented as a delta append,
+                    // so defer to the final tool-call payload without streaming.
+                    deltaPayload = '';
                   }
 
                   if (deltaPayload) {
@@ -875,6 +876,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                     })();
 
                 emitToolCall(result.id, state);
+                toolStates.delete(result.id);
 
                 controller.enqueue({
                   type: 'tool-result',
