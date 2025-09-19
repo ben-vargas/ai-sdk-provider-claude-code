@@ -86,7 +86,7 @@ export const claudeCodeSettingsSchema = z.object({
     z.literal(false),
     loggerFunctionSchema
   ]).optional(),
-  env: z.record(z.string(), z.string()).optional(),
+  env: z.record(z.string(), z.string().optional()).optional(),
 }).strict();
 
 /**

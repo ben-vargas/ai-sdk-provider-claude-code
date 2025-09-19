@@ -176,5 +176,5 @@ export interface ClaudeCodeSettings {
   /**
    * Environment variables to set
    */
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
 }

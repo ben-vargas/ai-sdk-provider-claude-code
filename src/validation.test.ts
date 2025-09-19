@@ -69,6 +69,12 @@ describe('claudeCodeSettingsSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('should accept env values that are undefined', () => {
+    const settings = { env: { PATH: '/usr/bin', UNSET: undefined } };
+    const result = claudeCodeSettingsSchema.safeParse(settings);
+    expect(result.success).toBe(true);
+  });
+
   it('should reject env values that are not strings', () => {
     const settings = { env: { NUM: 123 as any } };
     const result = claudeCodeSettingsSchema.safeParse(settings);

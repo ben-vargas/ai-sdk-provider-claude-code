@@ -533,22 +533,21 @@ const claude = createClaudeCode({
 
 ### Environment Configuration
 
-Set an `env` key in the options to configure Claude Code's environment using any of the keys in Claude's [settings documentation](https://docs.claude.com/en/docs/claude-code/settings#environment-variables).
-
-Note that you typically cannot pass a record without the typical platform environment keys so you will need to first copy the existing environment:
+Set an `env` key in the options to configure Claude Code's environment using any of the keys in Claude's [settings documentation](https://docs.claude.com/en/docs/claude-code/settings#environment-variables). The env object will be merged with `process.env` to maintain you existing environment.
 
 ```typescript
-// first make a copy of your existing environment
-const configurationEnv = { ...process.env } as Record<string, string>;
-// e.g. to prevent a system key from interfering with auth
-delete configurationEnv.ANTHROPIC_API_KEY;
-// e.g. any Claude Code setting from:
-// https://docs.claude.com/en/docs/claude-code/settings#environment-variables
-configurationEnv.BASH_DEFAULT_TIMEOUT_MS = '10';
+const env = {
+  // e.g. to prevent a system key from interfering with auth
+  ANTHROPIC_API_KEY: undefined,
+  // e.g. any Claude Code setting from:
+  // https://docs.claude.com/en/docs/claude-code/settings#environment-variables
+  BASH_DEFAULT_TIMEOUT_MS: '10',
+};
+
 const customProvider = createClaudeCode({
   defaultSettings: {
     // Provide custom environment variables to the CLI
-    env: configurationEnv,
+    env,
   }
 });
 ```
