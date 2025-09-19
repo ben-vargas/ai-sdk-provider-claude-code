@@ -30,6 +30,19 @@ function isAbortError(err: unknown): boolean {
 
 const STREAMING_FEATURE_WARNING = "Claude Code SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
 
+type ClaudeToolUse = {
+  id: string;
+  name: string;
+  input: unknown;
+};
+
+type ClaudeToolResult = {
+  id: string;
+  name?: string;
+  result: unknown;
+  isError: boolean;
+};
+
 function toAsyncIterablePrompt(
   messagesPrompt: string,
   outputStreamEnded: Promise<unknown>,
@@ -182,6 +195,80 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
   private getModel(): string {
     const mapped = modelMap[this.modelId];
     return mapped ?? this.modelId;
+  }
+
+  private extractToolUses(content: unknown): ClaudeToolUse[] {
+    if (!Array.isArray(content)) {
+      return [];
+    }
+
+    return content
+      .filter(
+        (item): item is { type: string; id?: unknown; name?: unknown; input?: unknown } =>
+          typeof item === 'object' && item !== null && 'type' in item && (item as { type: unknown }).type === 'tool_use',
+      )
+      .map((item) => {
+        const { id, name, input } = item as { id?: unknown; name?: unknown; input?: unknown };
+        return {
+          id: typeof id === 'string' && id.length > 0 ? id : generateId(),
+          name: typeof name === 'string' && name.length > 0 ? name : 'unknown-tool',
+          input,
+        } satisfies ClaudeToolUse;
+      });
+  }
+
+  private extractToolResults(content: unknown): ClaudeToolResult[] {
+    if (!Array.isArray(content)) {
+      return [];
+    }
+
+    return content
+      .filter(
+        (item): item is {
+          type: string;
+          tool_use_id?: unknown;
+          content?: unknown;
+          is_error?: unknown;
+          name?: unknown;
+        } => typeof item === 'object' && item !== null && 'type' in item && (item as { type: unknown }).type === 'tool_result',
+      )
+      .map((item) => {
+        const { tool_use_id, content, is_error, name } = item;
+        return {
+          id: typeof tool_use_id === 'string' && tool_use_id.length > 0 ? tool_use_id : generateId(),
+          name: typeof name === 'string' && name.length > 0 ? name : undefined,
+          result: content,
+          isError: Boolean(is_error),
+        } satisfies ClaudeToolResult;
+      });
+  }
+
+  private serializeToolInput(input: unknown): string {
+    if (typeof input === 'string') {
+      return input;
+    }
+
+    if (input === undefined) {
+      return '';
+    }
+
+    try {
+      return JSON.stringify(input);
+    } catch {
+      return String(input);
+    }
+  }
+
+  private normalizeToolResult(result: unknown): unknown {
+    if (typeof result === 'string') {
+      try {
+        return JSON.parse(result);
+      } catch {
+        return result;
+      }
+    }
+
+    return result;
   }
 
   private generateAllWarnings(
@@ -632,16 +719,86 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           let usage: LanguageModelV2Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
           let accumulatedText = '';
           let textPartId: string | undefined;
+          const emittedToolInputs = new Set<string>();
+          const emittedToolCalls = new Set<string>();
+          const toolInputPayloads = new Map<string, string>();
+          const toolNameById = new Map<string, string>();
 
           for await (const message of response) {
             if (message.type === 'assistant') {
-              const text = message.message.content
+              const content = message.message?.content ?? [];
+
+              for (const tool of this.extractToolUses(content)) {
+                const toolId = tool.id;
+                toolNameById.set(toolId, tool.name);
+
+                if (!emittedToolInputs.has(toolId)) {
+                  controller.enqueue({
+                    type: 'tool-input-start',
+                    id: toolId,
+                    toolName: tool.name,
+                    providerExecuted: true,
+                  });
+                  emittedToolInputs.add(toolId);
+                }
+
+                const serializedInput = this.serializeToolInput(tool.input);
+                const previousPayload = toolInputPayloads.get(toolId);
+
+                if (serializedInput) {
+                  let deltaPayload = serializedInput;
+
+                  if (previousPayload !== undefined) {
+                    if (serializedInput.startsWith(previousPayload)) {
+                      deltaPayload = serializedInput.slice(previousPayload.length);
+                    } else if (serializedInput === previousPayload) {
+                      deltaPayload = '';
+                    } else {
+                      // fallback: send full payload once more to stay consistent
+                      deltaPayload = serializedInput;
+                    }
+                  }
+
+                  if (deltaPayload) {
+                    controller.enqueue({
+                      type: 'tool-input-delta',
+                      id: toolId,
+                      delta: deltaPayload,
+                    });
+                  }
+
+                  toolInputPayloads.set(toolId, serializedInput);
+                }
+
+                if (!emittedToolCalls.has(toolId)) {
+                  controller.enqueue({
+                    type: 'tool-input-end',
+                    id: toolId,
+                  });
+
+                  controller.enqueue({
+                    type: 'tool-call',
+                    toolCallId: toolId,
+                    toolName: tool.name,
+                    input: serializedInput,
+                    providerExecuted: true,
+                    providerMetadata: {
+                      'claude-code': {
+                        rawInput: serializedInput,
+                      },
+                    },
+                  });
+                  emittedToolCalls.add(toolId);
+                }
+              }
+
+              const text = content
                 .map((c: { type: string; text?: string }) => (c.type === 'text' ? c.text : ''))
                 .join('');
-              
+
               if (text) {
                 accumulatedText += text;
-                
+
                 // In JSON mode, we accumulate the text and extract JSON at the end
                 // Otherwise, stream the text as it comes
                 if (options.responseFormat?.type !== 'json') {
@@ -660,6 +817,35 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                     delta: text,
                   });
                 }
+              }
+            } else if (message.type === 'user') {
+              const content = message.message?.content ?? [];
+              for (const result of this.extractToolResults(content)) {
+                const toolName = result.name ?? toolNameById.get(result.id) ?? 'claude-tool';
+                const normalizedResult = this.normalizeToolResult(result.result);
+                const rawResult = typeof result.result === 'string'
+                  ? result.result
+                  : (() => {
+                      try {
+                        return JSON.stringify(result.result);
+                      } catch {
+                        return String(result.result);
+                      }
+                    })();
+
+                controller.enqueue({
+                  type: 'tool-result',
+                  toolCallId: result.id,
+                  toolName,
+                  result: normalizedResult,
+                  isError: result.isError,
+                  providerExecuted: true,
+                  providerMetadata: {
+                    'claude-code': {
+                      rawResult,
+                    },
+                  },
+                });
               }
             } else if (message.type === 'result') {
               done();

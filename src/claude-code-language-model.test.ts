@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
+import type { LanguageModelV2StreamPart } from '@ai-sdk/provider';
 
 // Mock the SDK module with factory function
 vi.mock('@anthropic-ai/claude-code', () => {
@@ -564,6 +565,126 @@ describe('ClaudeCodeLanguageModel', () => {
         },
       });
     });
+
+    it('emits tool streaming events for provider-executed tools', async () => {
+      const toolUseId = 'toolu_123';
+      const toolName = 'list_directory';
+      const toolInput = { command: 'ls', args: ['-lah'] };
+      const toolResultPayload = JSON.stringify([
+        { name: 'README.md', size: 1024 },
+        { name: 'package.json', size: 2048 },
+      ]);
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: toolInput,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  content: toolResultPayload,
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'tool-session',
+            usage: {
+              input_tokens: 12,
+              output_tokens: 3,
+            },
+            total_cost_usd: 0.002,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'List files' }] }],
+      });
+
+      const events: LanguageModelV2StreamPart[] = [];
+      const reader = stream.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolInputStart = events.find((event) => event.type === 'tool-input-start');
+      const toolInputDelta = events.find((event) => event.type === 'tool-input-delta');
+      const toolInputEnd = events.find((event) => event.type === 'tool-input-end');
+      const toolCall = events.find((event) => event.type === 'tool-call');
+      const toolResult = events.find((event) => event.type === 'tool-result');
+
+      expect(toolInputStart).toMatchObject({
+        type: 'tool-input-start',
+        id: toolUseId,
+        toolName,
+        providerExecuted: true,
+      });
+
+      expect(toolInputDelta).toMatchObject({
+        type: 'tool-input-delta',
+        id: toolUseId,
+        delta: JSON.stringify(toolInput),
+      });
+
+      expect(toolInputEnd).toMatchObject({
+        type: 'tool-input-end',
+        id: toolUseId,
+      });
+
+      expect(toolCall).toMatchObject({
+        type: 'tool-call',
+        toolCallId: toolUseId,
+        toolName,
+        input: JSON.stringify(toolInput),
+        providerExecuted: true,
+        providerMetadata: {
+          'claude-code': {
+            rawInput: JSON.stringify(toolInput),
+          },
+        },
+      });
+
+      expect(toolResult).toMatchObject({
+        type: 'tool-result',
+        toolCallId: toolUseId,
+        toolName,
+        result: JSON.parse(toolResultPayload),
+        providerExecuted: true,
+        isError: false,
+        providerMetadata: {
+          'claude-code': {
+            rawResult: toolResultPayload,
+          },
+        },
+      });
+    });
+
   });
 
   describe('model configuration', () => {

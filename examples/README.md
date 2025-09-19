@@ -38,14 +38,21 @@ npx tsx examples/streaming.ts
 ```
 **Key concepts**: Stream processing, chunk handling, real-time output
 
-### 3. Images (`images.ts`)
+### 3. Tool Streaming (`tool-streaming.ts`)
+**Purpose**: Observe tool-call events emitted by the provider while Claude Code executes built-in tools.
+```bash
+npx tsx examples/tool-streaming.ts
+```
+**Key concepts**: Tool streaming, provider-executed tools, detailed stream inspection
+
+### 4. Images (`images.ts`)
 **Purpose**: Stream a prompt that includes a local image (PNG/JPG/GIF/WebP).
 ```bash
 npx tsx examples/images.ts /absolute/path/to/image.png
 ```
 **Key concepts**: Image data URLs, streaming prerequisite, multimodal prompts
 
-### 4. Conversation History (`conversation-history.ts`)
+### 5. Conversation History (`conversation-history.ts`)
 **Purpose**: Show the correct way to maintain context across multiple messages.
 ```bash
 npx tsx examples/conversation-history.ts
@@ -54,28 +61,28 @@ npx tsx examples/conversation-history.ts
 
 ## Advanced Configuration
 
-### 5. Custom Config (`custom-config.ts`)
+### 6. Custom Config (`custom-config.ts`)
 **Purpose**: Demonstrate provider and model configuration options.
 ```bash
 npx tsx examples/custom-config.ts
 ```
 **Key concepts**: Provider settings, model overrides, tool restrictions, permission modes
 
-### 6. Tool Management (`tool-management.ts`)
+### 7. Tool Management (`tool-management.ts`)
 **Purpose**: Show fine-grained control over Claude's tool access for security.
 ```bash
 npx tsx examples/tool-management.ts
 ```
 **Key concepts**: Allow/deny lists, tool security, MCP server tools, built-in tools
 
-### 7. Long-Running Tasks (`long-running-tasks.ts`)
+### 8. Long-Running Tasks (`long-running-tasks.ts`)
 **Purpose**: Handle timeouts properly using AI SDK's AbortSignal pattern.
 ```bash
 npx tsx examples/long-running-tasks.ts
 ```
 **Key concepts**: Custom timeouts, graceful cancellation, retry logic, Opus 4's extended thinking
 
-### 8. Abort Signal (`abort-signal.ts`)
+### 9. Abort Signal (`abort-signal.ts`)
 **Purpose**: Implement user-initiated cancellations and cleanup.
 ```bash
 npx tsx examples/abort-signal.ts
@@ -84,28 +91,28 @@ npx tsx examples/abort-signal.ts
 
 ## Object Generation (Structured Output)
 
-### 9. Object Generation Overview (`generate-object.ts`)
+### 10. Object Generation Overview (`generate-object.ts`)
 **Purpose**: Advanced real-world examples of object generation.
 ```bash
 npx tsx examples/generate-object.ts
 ```
 **Key concepts**: Complex schemas, product analysis, free-form JSON, practical applications
 
-### 10. Object Generation Tutorial (`generate-object-basic.ts`)
+### 11. Object Generation Tutorial (`generate-object-basic.ts`)
 **Purpose**: Learn object generation step-by-step with progressively complex examples.
 ```bash
 npx tsx examples/generate-object-basic.ts
 ```
 **Key concepts**: Schema basics, progressive complexity, best practices, clear explanations
 
-### 11. Nested Structures (`generate-object-nested.ts`)
+### 12. Nested Structures (`generate-object-nested.ts`)
 **Purpose**: Generate complex, real-world data structures.
 ```bash
 npx tsx examples/generate-object-nested.ts
 ```
 **Key concepts**: Hierarchical data, recursive schemas, complex relationships
 
-### 12. Validation Constraints (`generate-object-constraints.ts`)
+### 13. Validation Constraints (`generate-object-constraints.ts`)
 **Purpose**: Enforce data quality with advanced validation rules.
 ```bash
 npx tsx examples/generate-object-constraints.ts
@@ -114,28 +121,28 @@ npx tsx examples/generate-object-constraints.ts
 
 ## Testing & Troubleshooting
 
-### 13. Integration Test (`integration-test.ts`)
+### 14. Integration Test (`integration-test.ts`)
 **Purpose**: Comprehensive test suite to verify your setup and all features.
 ```bash
 npx tsx examples/integration-test.ts
 ```
 **Key concepts**: Feature verification, error handling, test patterns
 
-### 14. Check CLI (`check-cli.ts`)
+### 15. Check CLI (`check-cli.ts`)
 **Purpose**: Troubleshooting tool to verify CLI installation and authentication.
 ```bash
 npx tsx examples/check-cli.ts
 ```
 **Key concepts**: Setup verification, error diagnosis, troubleshooting steps
 
-### 15. Limitations (`limitations.ts`)
+### 16. Limitations (`limitations.ts`)
 **Purpose**: Understand what AI SDK features are not supported by the CLI.
 ```bash
 npx tsx examples/limitations.ts
 ```
 **Key concepts**: Unsupported parameters, workarounds, provider constraints
 
-### 16. Session Test (`test-session.ts`)
+### 17. Session Test (`test-session.ts`)
 **Purpose**: Demonstrates message history pattern with comparison to sessionless approach.
 ```bash
 npx tsx examples/test-session.ts
