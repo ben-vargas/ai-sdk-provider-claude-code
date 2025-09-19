@@ -47,8 +47,8 @@ type ToolStreamState = {
   name: string;
   lastSerializedInput?: string;
   inputStarted: boolean;
-  inputEnded: boolean;
-  callDispatched: boolean;
+  inputClosed: boolean;
+  callEmitted: boolean;
 };
 
 function toAsyncIterablePrompt(
@@ -702,42 +702,45 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       start: async (controller) => {
         let done = () => {};
         const outputStreamEnded = new Promise(resolve => { done = () => resolve(undefined); });
-          const toolStates = new Map<string, ToolStreamState>();
+        const toolStates = new Map<string, ToolStreamState>();
 
-          const emitToolCall = (
-            toolId: string,
-            state: ToolStreamState,
-          ) => {
-            if (!state.inputEnded && state.inputStarted) {
-              controller.enqueue({
-                type: 'tool-input-end',
-                id: toolId,
-              });
-              state.inputEnded = true;
-            }
+        const closeToolInput = (toolId: string, state: ToolStreamState) => {
+          if (!state.inputClosed && state.inputStarted) {
+            controller.enqueue({
+              type: 'tool-input-end',
+              id: toolId,
+            });
+            state.inputClosed = true;
+          }
+        };
 
-            if (!state.callDispatched) {
-              controller.enqueue({
-                type: 'tool-call',
-                toolCallId: toolId,
-                toolName: state.name,
-                input: state.lastSerializedInput ?? '',
-                providerExecuted: true,
-                providerMetadata: {
-                  'claude-code': {
-                    rawInput: state.lastSerializedInput ?? '',
-                  },
-                },
-              });
-              state.callDispatched = true;
-            }
-          };
+        const emitToolCall = (toolId: string, state: ToolStreamState) => {
+          if (state.callEmitted) {
+            return;
+          }
 
-          const finalizeToolCalls = () => {
-            for (const [toolId, state] of toolStates) {
-              emitToolCall(toolId, state);
-            }
-          };
+          closeToolInput(toolId, state);
+
+          controller.enqueue({
+            type: 'tool-call',
+            toolCallId: toolId,
+            toolName: state.name,
+            input: state.lastSerializedInput ?? '',
+            providerExecuted: true,
+            providerMetadata: {
+              'claude-code': {
+                rawInput: state.lastSerializedInput ?? '',
+              },
+            },
+          });
+          state.callEmitted = true;
+        };
+
+        const finalizeToolCalls = () => {
+          for (const [toolId, state] of toolStates) {
+            emitToolCall(toolId, state);
+          }
+        };
 
         try {
           // Emit stream-start with warnings
@@ -776,8 +779,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                   state = {
                     name: tool.name,
                     inputStarted: false,
-                    inputEnded: false,
-                    callDispatched: false,
+                    inputClosed: false,
+                    callEmitted: false,
                   };
                   toolStates.set(toolId, state);
                 }
@@ -817,10 +820,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                   }
                   state.lastSerializedInput = serializedInput;
                 }
-
-                if (!state.callDispatched) {
-                  emitToolCall(toolId, state);
-                }
               }
 
               const text = content
@@ -858,11 +857,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                   state = {
                     name: toolName,
                     inputStarted: false,
-                    inputEnded: false,
-                    callDispatched: false,
+                    inputClosed: false,
+                    callEmitted: false,
                   };
                   toolStates.set(result.id, state);
                 }
+                state.name = toolName;
                 const normalizedResult = this.normalizeToolResult(result.result);
                 const rawResult = typeof result.result === 'string'
                   ? result.result
@@ -874,9 +874,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                       }
                     })();
 
-                if (state && !state.callDispatched) {
-                  emitToolCall(result.id, state);
-                }
+                emitToolCall(result.id, state);
 
                 controller.enqueue({
                   type: 'tool-result',

@@ -690,6 +690,75 @@ describe('ClaudeCodeLanguageModel', () => {
       });
     });
 
+    it('finalizes tool calls even when no tool result is emitted', async () => {
+      const toolUseId = 'toolu_missing_result';
+      const toolName = 'Read';
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: { file_path: '/tmp/example.txt' },
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'session-missing-result',
+            usage: {
+              input_tokens: 5,
+              output_tokens: 0,
+            },
+            total_cost_usd: 0,
+            duration_ms: 10,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read file' }] }],
+      });
+
+      const events: LanguageModelV2StreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolInputStartIndex = events.findIndex((event) => event.type === 'tool-input-start');
+      const toolInputEndIndex = events.findIndex((event) => event.type === 'tool-input-end');
+      const toolCallIndex = events.findIndex((event) => event.type === 'tool-call');
+      const toolResultIndex = events.findIndex((event) => event.type === 'tool-result');
+      const finishIndex = events.findIndex((event) => event.type === 'finish');
+
+      expect(toolInputStartIndex).toBeGreaterThan(-1);
+      expect(toolInputEndIndex).toBeGreaterThan(toolInputStartIndex);
+      expect(toolCallIndex).toBeGreaterThan(toolInputEndIndex);
+      expect(toolResultIndex).toBe(-1);
+      expect(finishIndex).toBeGreaterThan(toolCallIndex);
+
+      const toolCallEvent = events[toolCallIndex];
+      expect(toolCallEvent).toMatchObject({
+        type: 'tool-call',
+        toolCallId: toolUseId,
+        toolName,
+        input: JSON.stringify({ file_path: '/tmp/example.txt' }),
+        providerExecuted: true,
+      });
+    });
+
   });
 
   describe('model configuration', () => {
