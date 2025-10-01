@@ -173,6 +173,16 @@ Token usage properties have been renamed:
 
 ## Detailed Configuration
 
+## Performance and Limitations
+
+The provider optimizes tool streaming with pragmatic thresholds:
+
+- Delta streaming: Only for tool inputs ≤ 10KB and for prefix-only updates (appends). Non-prefix or large updates skip deltas and are captured in the final `tool-call` payload.
+- Size limits: Tool inputs exceeding 1MB throw an error; inputs above 100KB log a warning due to potential performance impact.
+- Memory: Tool state is retained until stream completion to prevent duplicate `tool-call` emissions for multi-chunk results or errors.
+
+See Tool Streaming Support for details and event semantics: docs/ai-sdk-v5/TOOL_STREAMING_SUPPORT.md#performance-considerations
+
 ### AbortSignal Support
 
 The provider fully supports the standard AbortSignal for request cancellation, following Vercel AI SDK patterns:

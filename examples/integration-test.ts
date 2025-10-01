@@ -59,33 +59,33 @@ async function testConversation() {
     const { text: response1 } = await generateText({
       model: claudeCode('sonnet'),
       messages: [
-        { role: 'user', content: 'My favorite color is purple and I live in Seattle. Remember this.' },
+        { role: 'user', content: 'My favorite color is purple and I live in Seattle. Just acknowledge this information.' },
       ],
     });
     console.log('✅ First turn:', response1);
-    
+
     // Second turn: test memory with full history
     const { text: response2 } = await generateText({
       model: claudeCode('sonnet'),
       messages: [
-        { role: 'user', content: 'My favorite color is purple and I live in Seattle. Remember this.' },
+        { role: 'user', content: 'My favorite color is purple and I live in Seattle. Just acknowledge this information.' },
         { role: 'assistant', content: response1 },
         { role: 'user', content: 'What is my favorite color?' },
       ],
     });
-    
+
     if (response2.toLowerCase().includes('purple')) {
       console.log('✅ Second turn (remembered color):', response2);
     } else {
       console.error('❌ Failed to remember color:', response2);
       throw new Error('Conversation memory test failed');
     }
-    
+
     // Third turn: test deeper context
     const { text: response3 } = await generateText({
       model: claudeCode('sonnet'),
       messages: [
-        { role: 'user', content: 'My favorite color is purple and I live in Seattle. Remember this.' },
+        { role: 'user', content: 'My favorite color is purple and I live in Seattle. Just acknowledge this information.' },
         { role: 'assistant', content: response1 },
         { role: 'user', content: 'What is my favorite color?' },
         { role: 'assistant', content: response2 },

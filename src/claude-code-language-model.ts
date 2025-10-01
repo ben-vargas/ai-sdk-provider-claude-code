@@ -43,6 +43,38 @@ type ClaudeToolResult = {
   isError: boolean;
 };
 
+// Provider extension for tool-error stream parts.
+type ToolErrorPart = {
+  type: 'tool-error';
+  toolCallId: string;
+  toolName: string;
+  error: string;
+  providerExecuted: true;
+  providerMetadata?: Record<string, JSONValue>;
+};
+
+// Local extension of the AI SDK stream part union to include tool-error.
+type ExtendedStreamPart = LanguageModelV2StreamPart | ToolErrorPart;
+
+/**
+ * Tracks the streaming lifecycle state for a single tool invocation.
+ *
+ * The tool streaming lifecycle follows this sequence:
+ * 1. Tool use detected → state created with all flags false
+ * 2. First input seen → `inputStarted` = true, emit `tool-input-start`
+ * 3. Input deltas streamed → emit `tool-input-delta` (may be skipped for large/non-prefix updates)
+ * 4. Input finalized → `inputClosed` = true, emit `tool-input-end`
+ * 5. Tool call formed → `callEmitted` = true, emit `tool-call`
+ * 6. Tool results/errors arrive → emit `tool-result` or `tool-error` (may occur multiple times)
+ * 7. Stream ends → state cleaned up by `finalizeToolCalls()`
+ *
+ * @property name - Tool name from SDK (e.g., "Bash", "Read")
+ * @property lastSerializedInput - Most recent serialized input, used for delta calculation
+ * @property inputStarted - True after `tool-input-start` emitted; prevents duplicate start events
+ * @property inputClosed - True after `tool-input-end` emitted; ensures proper event ordering
+ * @property callEmitted - True after `tool-call` emitted; prevents duplicate call events when
+ *                         multiple result/error chunks arrive for the same tool invocation
+ */
 type ToolStreamState = {
   name: string;
   lastSerializedInput?: string;
@@ -167,6 +199,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
   readonly supportedUrls = {};
   readonly supportsStructuredOutputs = false;
 
+  // Fallback/magic string constants
+  static readonly UNKNOWN_TOOL_NAME = 'unknown-tool';
+
+  // Tool input safety limits
+  private static readonly MAX_TOOL_INPUT_SIZE = 1_048_576; // 1MB hard limit
+  private static readonly MAX_TOOL_INPUT_WARN = 102_400;   // 100KB warning threshold
+  private static readonly MAX_DELTA_CALC_SIZE = 10_000;    // 10KB delta computation threshold
+
   readonly modelId: ClaudeCodeModelId;
   readonly settings: ClaudeCodeSettings;
   
@@ -219,7 +259,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
         const { id, name, input } = item as { id?: unknown; name?: unknown; input?: unknown };
         return {
           id: typeof id === 'string' && id.length > 0 ? id : generateId(),
-          name: typeof name === 'string' && name.length > 0 ? name : 'unknown-tool',
+          name: typeof name === 'string' && name.length > 0 ? name : ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME,
           input,
         } satisfies ClaudeToolUse;
       });
@@ -251,9 +291,51 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       });
   }
 
+  private extractToolErrors(content: unknown): Array<{
+    id: string;
+    name?: string;
+    error: unknown;
+  }> {
+    if (!Array.isArray(content)) {
+      return [];
+    }
+
+    return content
+      .filter(
+        (item): item is {
+          type: string;
+          tool_use_id?: unknown;
+          error?: unknown;
+          name?: unknown;
+        } =>
+          typeof item === 'object' &&
+          item !== null &&
+          'type' in item &&
+          (item as { type: unknown }).type === 'tool_error',
+      )
+      .map((item) => {
+        const { tool_use_id, error, name } = item as {
+          tool_use_id?: unknown;
+          error?: unknown;
+          name?: unknown;
+        };
+        return {
+          id:
+            typeof tool_use_id === 'string' && tool_use_id.length > 0
+              ? tool_use_id
+              : generateId(),
+          name:
+            typeof name === 'string' && name.length > 0
+              ? name
+              : undefined,
+          error,
+        };
+      });
+  }
+
   private serializeToolInput(input: unknown): string {
     if (typeof input === 'string') {
-      return input;
+      return this.checkInputSize(input);
     }
 
     if (input === undefined) {
@@ -261,10 +343,30 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     }
 
     try {
-      return JSON.stringify(input);
+      const serialized = JSON.stringify(input);
+      return this.checkInputSize(serialized);
     } catch {
-      return String(input);
+      const fallback = String(input);
+      return this.checkInputSize(fallback);
     }
+  }
+
+  private checkInputSize(str: string): string {
+    const length = str.length;
+
+    if (length > ClaudeCodeLanguageModel.MAX_TOOL_INPUT_SIZE) {
+      throw new Error(
+        `Tool input exceeds maximum size of ${ClaudeCodeLanguageModel.MAX_TOOL_INPUT_SIZE} bytes (got ${length} bytes). This may indicate a malformed request or an attempt to process excessively large data.`,
+      );
+    }
+
+    if (length > ClaudeCodeLanguageModel.MAX_TOOL_INPUT_WARN) {
+      console.warn(
+        `[claude-code] Large tool input detected: ${length} bytes. Performance may be impacted. Consider chunking or reducing input size.`,
+      );
+    }
+
+    return str;
   }
 
   private normalizeToolResult(result: unknown): unknown {
@@ -332,6 +434,20 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     }
     
     return warnings;
+  }
+
+  private handleJsonExtraction(
+    text: string,
+    warnings: LanguageModelV2CallWarning[],
+  ): string {
+    const extracted = extractJson(text);
+    const validation = this.validateJsonExtraction(text, extracted);
+
+    if (!validation.valid && validation.warning) {
+      warnings.push(validation.warning);
+    }
+
+    return extracted;
   }
 
   private createQueryOptions(abortController: AbortController): Options {
@@ -611,14 +727,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
     // Extract JSON if responseFormat indicates JSON mode
     if (options.responseFormat?.type === 'json' && text) {
-      const extracted = extractJson(text);
-      const validation = this.validateJsonExtraction(text, extracted);
-      
-      if (!validation.valid && validation.warning) {
-        warnings.push(validation.warning);
-      }
-      
-      text = extracted;
+      text = this.handleJsonExtraction(text, warnings);
     }
 
     return {
@@ -698,11 +807,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       });
     }
 
-    const stream = new ReadableStream<LanguageModelV2StreamPart>({
+    const stream = new ReadableStream<ExtendedStreamPart>({
       start: async (controller) => {
         let done = () => {};
         const outputStreamEnded = new Promise(resolve => { done = () => resolve(undefined); });
         const toolStates = new Map<string, ToolStreamState>();
+        const streamWarnings: LanguageModelV2CallWarning[] = [];
 
         const closeToolInput = (toolId: string, state: ToolStreamState) => {
           if (!state.inputClosed && state.inputStarted) {
@@ -729,6 +839,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             providerExecuted: true,
             providerMetadata: {
               'claude-code': {
+                // rawInput preserves the original serialized format before AI SDK normalization.
+                // Use this if you need the exact string sent to the Claude CLI, which may differ
+                // from the `input` field after AI SDK processing.
                 rawInput: state.lastSerializedInput ?? '',
               },
             },
@@ -771,7 +884,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
           for await (const message of response) {
             if (message.type === 'assistant') {
-              const content = message.message?.content ?? [];
+              if (!message.message?.content) {
+                console.warn(
+                  `[claude-code] Unexpected assistant message structure: missing content field. Message type: ${message.type}. This may indicate an SDK protocol violation.`,
+                  message,
+                );
+                continue;
+              }
+
+              const content = message.message.content;
 
               for (const tool of this.extractToolUses(content)) {
                 const toolId = tool.id;
@@ -802,13 +923,19 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 if (serializedInput) {
                   let deltaPayload = '';
 
+                  // First input: emit full delta only if small enough
                   if (state.lastSerializedInput === undefined) {
-                    deltaPayload = serializedInput;
-                  } else if (serializedInput.startsWith(state.lastSerializedInput)) {
+                    if (serializedInput.length <= ClaudeCodeLanguageModel.MAX_DELTA_CALC_SIZE) {
+                      deltaPayload = serializedInput;
+                    }
+                  } else if (
+                    serializedInput.length <= ClaudeCodeLanguageModel.MAX_DELTA_CALC_SIZE &&
+                    state.lastSerializedInput.length <= ClaudeCodeLanguageModel.MAX_DELTA_CALC_SIZE &&
+                    serializedInput.startsWith(state.lastSerializedInput)
+                  ) {
                     deltaPayload = serializedInput.slice(state.lastSerializedInput.length);
                   } else if (serializedInput !== state.lastSerializedInput) {
-                    // Non-prefix updates cannot be represented as a delta append,
-                    // so defer to the final tool-call payload without streaming.
+                    // Non-prefix updates or large inputs - defer to the final tool-call payload
                     deltaPayload = '';
                   }
 
@@ -850,11 +977,19 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 }
               }
             } else if (message.type === 'user') {
-              const content = message.message?.content ?? [];
+              if (!message.message?.content) {
+                console.warn(
+                  `[claude-code] Unexpected user message structure: missing content field. Message type: ${message.type}. This may indicate an SDK protocol violation.`,
+                  message,
+                );
+                continue;
+              }
+              const content = message.message.content;
               for (const result of this.extractToolResults(content)) {
                 let state = toolStates.get(result.id);
-                const toolName = result.name ?? state?.name ?? 'claude-tool';
+                const toolName = result.name ?? state?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
                 if (!state) {
+                  console.warn(`[claude-code] Received tool result for unknown tool ID: ${result.id}`);
                   state = {
                     name: toolName,
                     inputStarted: false,
@@ -862,6 +997,23 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                     callEmitted: false,
                   };
                   toolStates.set(result.id, state);
+                  // Synthesize input lifecycle to preserve ordering when no prior tool_use was seen
+                  if (!state.inputStarted) {
+                    controller.enqueue({
+                      type: 'tool-input-start',
+                      id: result.id,
+                      toolName,
+                      providerExecuted: true,
+                    });
+                    state.inputStarted = true;
+                  }
+                  if (!state.inputClosed) {
+                    controller.enqueue({
+                      type: 'tool-input-end',
+                      id: result.id,
+                    });
+                    state.inputClosed = true;
+                  }
                 }
                 state.name = toolName;
                 const normalizedResult = this.normalizeToolResult(result.result);
@@ -876,7 +1028,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                     })();
 
                 emitToolCall(result.id, state);
-                toolStates.delete(result.id);
 
                 controller.enqueue({
                   type: 'tool-result',
@@ -887,7 +1038,55 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                   providerExecuted: true,
                   providerMetadata: {
                     'claude-code': {
+                      // rawResult preserves the original CLI output string before JSON parsing.
+                      // Use this when you need the exact string returned by the tool, especially
+                      // if the `result` field has been parsed/normalized and you need the original format.
                       rawResult,
+                    },
+                  },
+                });
+              }
+              // Handle tool errors
+              for (const error of this.extractToolErrors(content)) {
+                let state = toolStates.get(error.id);
+                const toolName = error.name ?? state?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
+
+                if (!state) {
+                  console.warn(`[claude-code] Received tool error for unknown tool ID: ${error.id}`);
+                  state = {
+                    name: toolName,
+                    inputStarted: true,
+                    inputClosed: true,
+                    callEmitted: false,
+                  };
+                  toolStates.set(error.id, state);
+                }
+
+                // Ensure tool-call is emitted before tool-error
+                emitToolCall(error.id, state);
+
+                const rawError =
+                  typeof error.error === 'string'
+                    ? error.error
+                    : typeof error.error === 'object' && error.error !== null
+                      ? (() => {
+                          try {
+                            return JSON.stringify(error.error);
+                          } catch {
+                            return String(error.error);
+                          }
+                        })()
+                      : String(error.error);
+
+                controller.enqueue({
+                  type: 'tool-error',
+                  toolCallId: error.id,
+                  toolName,
+                  error: rawError,
+                  providerExecuted: true,
+                  providerMetadata: {
+                    'claude-code': {
+                      rawError,
                     },
                   },
                 });
@@ -916,13 +1115,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
               
               // Check if we need to extract JSON based on responseFormat
               if (options.responseFormat?.type === 'json' && accumulatedText) {
-                const extractedJson = extractJson(accumulatedText);
-                this.validateJsonExtraction(accumulatedText, extractedJson);
-                
-                // If validation failed, we should add a warning but we can't modify warnings array in stream
-                // So we'll just send the extracted JSON anyway
-                // In the future, we could emit a warning stream part if the SDK supports it
-                
+                const extractedJson = this.handleJsonExtraction(accumulatedText, streamWarnings);
+
                 // Emit text-start/delta/end for JSON content
                 const jsonTextId = generateId();
                 controller.enqueue({
@@ -948,6 +1142,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
               
               finalizeToolCalls();
 
+              // Prepare JSON-safe warnings for provider metadata
+              const warningsJson = this.serializeWarningsForMetadata(streamWarnings);
+
               controller.enqueue({
                 type: 'finish',
                 finishReason,
@@ -958,6 +1155,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                     ...(message.total_cost_usd !== undefined && { costUsd: message.total_cost_usd }),
                     ...(message.duration_ms !== undefined && { durationMs: message.duration_ms }),
                     ...(rawUsage !== undefined && { rawUsage: rawUsage as JSONValue }),
+                    ...(streamWarnings.length > 0 && { warnings: warningsJson as unknown as JSONValue }),
                   },
                 },
               });
@@ -1011,10 +1209,32 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     });
 
     return {
-      stream,
+      stream: stream as unknown as ReadableStream<LanguageModelV2StreamPart>,
       request: {
         body: messagesPrompt,
       },
     };
+  }
+
+  private serializeWarningsForMetadata(
+    warnings: LanguageModelV2CallWarning[],
+  ): JSONValue {
+    const result = warnings.map((w) => {
+      const base: Record<string, string> = { type: w.type };
+      if ('message' in w) {
+        const m = (w as { message?: unknown }).message;
+        if (m !== undefined) base.message = String(m);
+      }
+      if (w.type === 'unsupported-setting') {
+        const setting = (w as { setting: unknown }).setting;
+        if (setting !== undefined) base.setting = String(setting);
+        if ('details' in w) {
+          const d = (w as { details?: unknown }).details;
+          if (d !== undefined) base.details = String(d);
+        }
+      }
+      return base;
+    });
+    return result as unknown as JSONValue;
   }
 }

@@ -110,6 +110,7 @@ Key changes:
 - **[Breaking Changes](docs/ai-sdk-v5/V5_BREAKING_CHANGES.md)** - v0.x to v1.x migration guide
 - **[Troubleshooting](docs/ai-sdk-v5/TROUBLESHOOTING.md)** - Common issues and solutions
 - **[Examples](examples/)** - Sample scripts and patterns
+ - **[Tool Streaming Support](docs/ai-sdk-v5/TOOL_STREAMING_SUPPORT.md)** - Event semantics and performance notes
 
 ## Core Features
 
@@ -136,6 +137,12 @@ Key changes:
 - Image inputs require streaming mode with base64/data URLs (remote fetch is not supported)
 - Some AI SDK parameters unsupported (temperature, maxTokens, etc.)
 - `canUseTool` requires streaming input at the SDK level (AsyncIterable prompt). This provider supports it via `streamingInput`: use `'auto'` (default when `canUseTool` is set) or `'always'`. See GUIDE for details.
+
+## Tool Error Parity (Streaming)
+
+- In addition to `tool-call` and `tool-result`, this provider emits a distinct `tool-error` stream event when a tool execution fails.
+- For parity with other tool events, `tool-error` includes `providerExecuted: true` and `providerMetadata['claude-code']` (e.g., `rawError`). These fields are documented extensions; downstream consumers may safely ignore them if unused.
+- See Tool Streaming Support for full event list, ordering guarantees, and performance considerations.
 
 ## Contributing
 

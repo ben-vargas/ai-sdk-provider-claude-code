@@ -2,6 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
 import type { LanguageModelV2StreamPart } from '@ai-sdk/provider';
 
+// Extend stream part union locally to include provider-specific 'tool-error'
+type ToolErrorPart = {
+  type: 'tool-error';
+  toolCallId: string;
+  toolName: string;
+  error: string;
+  providerExecuted: true;
+  providerMetadata?: Record<string, unknown>;
+};
+type ExtendedStreamPart = LanguageModelV2StreamPart | ToolErrorPart;
+
 // Mock the SDK module with factory function
 vi.mock('@anthropic-ai/claude-code', () => {
   return {
@@ -624,7 +635,7 @@ describe('ClaudeCodeLanguageModel', () => {
         prompt: [{ role: 'user', content: [{ type: 'text', text: 'List files' }] }],
       });
 
-      const events: LanguageModelV2StreamPart[] = [];
+      const events: ExtendedStreamPart[] = [];
       const reader = stream.getReader();
 
       while (true) {
@@ -729,7 +740,7 @@ describe('ClaudeCodeLanguageModel', () => {
         prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read file' }] }],
       });
 
-      const events: LanguageModelV2StreamPart[] = [];
+      const events: ExtendedStreamPart[] = [];
       const reader = stream.getReader();
       while (true) {
         const { done, value } = await reader.read();
@@ -756,6 +767,672 @@ describe('ClaudeCodeLanguageModel', () => {
         toolName,
         input: JSON.stringify({ file_path: '/tmp/example.txt' }),
         providerExecuted: true,
+      });
+    });
+
+    it('emits tool-error events for tool failures and orders after tool-call', async () => {
+      const toolUseId = 'toolu_error';
+      const toolName = 'Read';
+      const errorMessage = 'File not found: /nonexistent.txt';
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: { file_path: '/nonexistent.txt' },
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_error',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  error: errorMessage,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'error-session',
+            usage: { input_tokens: 10, output_tokens: 0 },
+            total_cost_usd: 0.001,
+            duration_ms: 100,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read missing file' }] }],
+      } as any);
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolError = events.find((e) => e.type === 'tool-error');
+      const toolCall = events.find((e) => e.type === 'tool-call');
+
+      expect(toolCall).toMatchObject({
+        type: 'tool-call',
+        toolCallId: toolUseId,
+        toolName,
+        providerExecuted: true,
+      });
+
+      expect(toolError).toMatchObject({
+        type: 'tool-error',
+        toolCallId: toolUseId,
+        toolName,
+        error: errorMessage,
+        providerExecuted: true,
+      });
+
+      expect(events.indexOf(toolCall!)).toBeLessThan(events.indexOf(toolError!));
+    });
+
+    it('emits only one tool-call for multiple tool-result chunks', async () => {
+      const toolUseId = 'toolu_chunked';
+      const toolName = 'Bash';
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: { command: 'echo "test"' },
+                },
+              ],
+            },
+          };
+          // First result chunk
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  content: 'Chunk 1\n',
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          // Second result chunk - same tool_use_id
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  content: 'Chunk 2\n',
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'chunked-session',
+            usage: { input_tokens: 15, output_tokens: 5 },
+            total_cost_usd: 0.002,
+            duration_ms: 200,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Run command' }] }],
+      } as any);
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolCalls = events.filter((e) => e.type === 'tool-call');
+      const toolResults = events.filter((e) => e.type === 'tool-result');
+
+      expect(toolCalls).toHaveLength(1);
+      expect(toolResults).toHaveLength(2);
+      expect(toolCalls[0]).toMatchObject({
+        type: 'tool-call',
+        toolCallId: toolUseId,
+        toolName,
+      });
+    });
+
+    it('synthesizes lifecycle for orphaned tool results (no prior tool_use)', async () => {
+      const toolUseId = 'toolu_orphan';
+      const toolName = 'Read';
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  content: 'OK',
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'orphan-session',
+            usage: { input_tokens: 5, output_tokens: 1 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Run' }] }],
+      } as any);
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const inputStartIndex = events.findIndex((e) => e.type === 'tool-input-start');
+      const inputEndIndex = events.findIndex((e) => e.type === 'tool-input-end');
+      const callIndex = events.findIndex((e) => e.type === 'tool-call');
+      const resultIndex = events.findIndex((e) => e.type === 'tool-result');
+
+      expect(inputStartIndex).toBeGreaterThan(-1);
+      expect(inputEndIndex).toBeGreaterThan(inputStartIndex);
+      expect(callIndex).toBeGreaterThan(inputEndIndex);
+      expect(resultIndex).toBeGreaterThan(callIndex);
+    });
+
+    // Note: Exhaustive size-limit error conditions are validated by unit-level logic; streaming emits metadata and/or errors.
+
+    it('warns for large tool inputs but processes them', async () => {
+      const toolUseId = 'toolu_large';
+      const toolName = 'LargeTool';
+      const largeInput = 'x'.repeat(200_000); // 200KB
+
+      const consoleWarnSpy = vi.spyOn(console, 'warn');
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: { data: largeInput },
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'large-session',
+            usage: { input_tokens: 10, output_tokens: 0 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Large input test' }] }],
+      } as any);
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      expect(consoleWarnSpy).toHaveBeenCalled();
+      const toolCall = events.find((e) => e.type === 'tool-call');
+      expect(toolCall).toBeDefined();
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('skips delta calculation for large inputs', async () => {
+      const toolUseId = 'toolu_large_delta';
+      const toolName = 'LargeDeltaTool';
+      const largeInput = 'x'.repeat(50_000); // 50KB
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: { data: largeInput },
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'large-delta-session',
+            usage: { input_tokens: 10, output_tokens: 0 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Large delta test' }] }],
+      } as any);
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const deltas = events.filter((e) => e.type === 'tool-input-delta');
+      expect(deltas).toHaveLength(0);
+      const toolCall = events.find((e) => e.type === 'tool-call');
+      expect(toolCall).toBeDefined();
+    });
+
+    it('does not emit delta for non-prefix input updates', async () => {
+      const toolUseId = 'toolu_nonprefix';
+      const toolName = 'TestTool';
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          // First chunk
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                { type: 'tool_use', id: toolUseId, name: toolName, input: { arg: 'initial' } },
+              ],
+            },
+          };
+          // Second chunk - non-prefix replacement
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                { type: 'tool_use', id: toolUseId, name: toolName, input: { arg: 'replaced' } },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'nonprefix-session',
+            usage: { input_tokens: 10, output_tokens: 2 },
+            total_cost_usd: 0.001,
+            duration_ms: 50,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const deltas = events.filter((e) => e.type === 'tool-input-delta');
+      const toolCall = events.find((e) => e.type === 'tool-call') as any;
+
+      expect(deltas).toHaveLength(1);
+      expect((deltas[0] as any).delta).toBe(JSON.stringify({ arg: 'initial' }));
+      expect(toolCall.input).toBe(JSON.stringify({ arg: 'replaced' }));
+    });
+
+    it('emits multiple tool-error chunks without duplicate tool-call', async () => {
+      const toolUseId = 'toolu_multi_error';
+      const toolName = 'Read';
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                { type: 'tool_use', id: toolUseId, name: toolName, input: { file: 'x' } },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                { type: 'tool_error', tool_use_id: toolUseId, name: toolName, error: 'e1' },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                { type: 'tool_error', tool_use_id: toolUseId, name: toolName, error: 'e2' },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'multierror-session',
+            usage: { input_tokens: 1, output_tokens: 0 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'run' }] }],
+      } as any);
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolCalls = events.filter((e) => e.type === 'tool-call');
+      const toolErrors = events.filter((e) => e.type === 'tool-error');
+      expect(toolCalls).toHaveLength(1);
+      expect(toolErrors).toHaveLength(2);
+    });
+
+    it('handles multiple concurrent tool calls', async () => {
+      const id1 = 't1';
+      const id2 = 't2';
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                { type: 'tool_use', id: id1, name: 'Read', input: { p: 'a' } },
+                { type: 'tool_use', id: id2, name: 'Bash', input: { c: 'echo' } },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                { type: 'tool_result', tool_use_id: id1, name: 'Read', content: 'A', is_error: false },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                { type: 'tool_result', tool_use_id: id2, name: 'Bash', content: 'B', is_error: false },
+              ],
+            },
+          };
+          yield { type: 'result', subtype: 'success', session_id: 'concurrent', usage: { input_tokens: 1, output_tokens: 1 } };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'run' }] }] } as any);
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolCalls = events.filter((e) => e.type === 'tool-call');
+      const toolResults = events.filter((e) => e.type === 'tool-result');
+      expect(toolCalls).toHaveLength(2);
+      expect(toolResults).toHaveLength(2);
+    });
+
+    it('supports interleaved text and tool events', async () => {
+      const toolUseId = 'tool_interleave';
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Intro ' }] } };
+          yield { type: 'assistant', message: { content: [{ type: 'tool_use', id: toolUseId, name: 'Read', input: { p: '/f' } }] } };
+          yield { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, name: 'Read', content: 'OK', is_error: false }] } };
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: ' Outro' }] } };
+          yield { type: 'result', subtype: 'success', session_id: 'inter', usage: { input_tokens: 1, output_tokens: 1 } };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+      const { stream } = await model.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] } as any);
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const firstTextIndex = events.findIndex((e) => e.type === 'text-delta');
+      const toolCallIndex = events.findIndex((e) => e.type === 'tool-call');
+      const lastTextIndex = events.findIndex((e, i) => i > toolCallIndex && e.type === 'text-delta');
+      expect(firstTextIndex).toBeGreaterThan(-1);
+      expect(toolCallIndex).toBeGreaterThan(firstTextIndex);
+      expect(lastTextIndex).toBeGreaterThan(toolCallIndex);
+    });
+
+    it('includes JSON validation warnings in streaming finish metadata', async () => {
+      const malformedJson = 'Here is the JSON: {"a": 1, "b": invalid}';
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: malformedJson }],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'json-warn-session',
+            usage: { input_tokens: 10, output_tokens: 20 },
+            total_cost_usd: 0.002,
+            duration_ms: 100,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: {} } as any,
+      } as any);
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const finishEvent = events.find((e) => e.type === 'finish') as any;
+      expect(finishEvent).toBeDefined();
+      const metadata = finishEvent.providerMetadata?.['claude-code'];
+      expect(metadata?.warnings).toBeDefined();
+      expect(metadata.warnings.length).toBeGreaterThan(0);
+      expect(metadata.warnings[0]).toMatchObject({ type: 'other' });
+    });
+
+    it('warns and skips messages with invalid structure', async () => {
+      const consoleWarnSpy = vi.spyOn(console, 'warn');
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          // Assistant message missing content
+          yield {
+            type: 'assistant',
+            message: { role: 'assistant' },
+          } as any;
+          // User message missing content
+          yield {
+            type: 'user',
+            message: { role: 'user' },
+          } as any;
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'invalid-struct-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'noop' }] }],
+      } as any);
+
+      const reader = stream.getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+
+      expect(consoleWarnSpy).toHaveBeenCalled();
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('uses consistent fallback name for unknown tools', async () => {
+      const toolUseId = 'toolu_unknown_name';
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  // name omitted/unknown
+                  input: { x: 1 },
+                } as any,
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: toolUseId,
+                  content: 'ok',
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-unknown',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'run' }] }],
+      } as any);
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolCall = events.find((e) => e.type === 'tool-call');
+      expect(toolCall).toMatchObject({
+        type: 'tool-call',
+        toolName: 'unknown-tool',
       });
     });
 
