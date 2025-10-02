@@ -6,7 +6,7 @@ This directory contains curated examples demonstrating the most important featur
 
 ## Prerequisites
 
-1. Install and authenticate Claude Code SDK:
+1. Install and authenticate Claude CLI:
 
 ```bash
 npm install -g @anthropic-ai/claude-code
@@ -119,9 +119,29 @@ npx tsx examples/abort-signal.ts
 
 **Key concepts**: Request cancellation, resource cleanup, user controls
 
+### 10. Hooks & Callbacks (`hooks-callbacks.ts`)
+
+**Purpose**: Use lifecycle hooks and dynamic permission callbacks.
+
+```bash
+npx tsx examples/hooks-callbacks.ts
+```
+
+**Key concepts**: PreToolUse/PostToolUse hooks, canUseTool callback, permission control, event lifecycle
+
+### 11. SDK Tools (`sdk-tools-callbacks.ts`)
+
+**Purpose**: Define and use in-process MCP tools with the Agent SDK.
+
+```bash
+npx tsx examples/sdk-tools-callbacks.ts
+```
+
+**Key concepts**: In-process tools, createSdkMcpServer, tool definitions, MCP integration
+
 ## Object Generation (Structured Output)
 
-### 10. Object Generation Overview (`generate-object.ts`)
+### 12. Object Generation Overview (`generate-object.ts`)
 
 **Purpose**: Advanced real-world examples of object generation.
 
@@ -131,7 +151,7 @@ npx tsx examples/generate-object.ts
 
 **Key concepts**: Complex schemas, product analysis, free-form JSON, practical applications
 
-### 11. Object Generation Tutorial (`generate-object-basic.ts`)
+### 13. Object Generation Tutorial (`generate-object-basic.ts`)
 
 **Purpose**: Learn object generation step-by-step with progressively complex examples.
 
@@ -141,7 +161,7 @@ npx tsx examples/generate-object-basic.ts
 
 **Key concepts**: Schema basics, progressive complexity, best practices, clear explanations
 
-### 12. Nested Structures (`generate-object-nested.ts`)
+### 14. Nested Structures (`generate-object-nested.ts`)
 
 **Purpose**: Generate complex, real-world data structures.
 
@@ -151,7 +171,7 @@ npx tsx examples/generate-object-nested.ts
 
 **Key concepts**: Hierarchical data, recursive schemas, complex relationships
 
-### 13. Validation Constraints (`generate-object-constraints.ts`)
+### 15. Validation Constraints (`generate-object-constraints.ts`)
 
 **Purpose**: Enforce data quality with advanced validation rules.
 
@@ -163,7 +183,7 @@ npx tsx examples/generate-object-constraints.ts
 
 ## Testing & Troubleshooting
 
-### 14. Integration Test (`integration-test.ts`)
+### 16. Integration Test (`integration-test.ts`)
 
 **Purpose**: Comprehensive test suite to verify your setup and all features.
 
@@ -173,7 +193,7 @@ npx tsx examples/integration-test.ts
 
 **Key concepts**: Feature verification, error handling, test patterns
 
-### 15. Check CLI (`check-cli.ts`)
+### 17. Check CLI (`check-cli.ts`)
 
 **Purpose**: Troubleshooting tool to verify CLI installation and authentication.
 
@@ -183,7 +203,7 @@ npx tsx examples/check-cli.ts
 
 **Key concepts**: Setup verification, error diagnosis, troubleshooting steps
 
-### 16. Limitations (`limitations.ts`)
+### 18. Limitations (`limitations.ts`)
 
 **Purpose**: Understand what AI SDK features are not supported by the CLI.
 
@@ -192,16 +212,6 @@ npx tsx examples/limitations.ts
 ```
 
 **Key concepts**: Unsupported parameters, workarounds, provider constraints
-
-### 17. Session Test (`test-session.ts`)
-
-**Purpose**: Demonstrates message history pattern with comparison to sessionless approach.
-
-```bash
-npx tsx examples/test-session.ts
-```
-
-**Key concepts**: Context retention, history vs no-history comparison, conversation patterns
 
 ## Common Patterns
 
@@ -289,22 +299,27 @@ try {
 
 ## Quick Reference
 
-| Example               | Primary Use Case  | Key Feature            |
-| --------------------- | ----------------- | ---------------------- |
-| basic-usage           | Getting started   | Simple text generation |
-| streaming             | Responsive UIs    | Real-time output       |
-| conversation-history  | Chatbots          | Context preservation   |
-| custom-config         | Enterprise setup  | Configuration options  |
-| tool-management       | Security          | Access control         |
-| long-running-tasks    | Complex reasoning | Timeout handling       |
-| generate-object       | Advanced patterns | Real-world schemas     |
-| generate-object-basic | Learning          | Step-by-step tutorial  |
+| Example               | Primary Use Case   | Key Feature            |
+| --------------------- | ------------------ | ---------------------- |
+| basic-usage           | Getting started    | Simple text generation |
+| streaming             | Responsive UIs     | Real-time output       |
+| tool-streaming        | Tool observability | Tool event inspection  |
+| images                | Multimodal prompts | Image input support    |
+| conversation-history  | Chatbots           | Context preservation   |
+| custom-config         | Enterprise setup   | Configuration options  |
+| tool-management       | Security           | Access control         |
+| hooks-callbacks       | Event handling     | Lifecycle hooks        |
+| sdk-tools-callbacks   | Custom tools       | In-process MCP tools   |
+| long-running-tasks    | Complex reasoning  | Timeout handling       |
+| generate-object       | Advanced patterns  | Real-world schemas     |
+| generate-object-basic | Learning           | Step-by-step tutorial  |
 
 ## Learning Path
 
 1. **Beginners**: Start with `basic-usage.ts` → `streaming.ts` → `conversation-history.ts`
-2. **Object Generation**: `generate-object-basic.ts` → `generate-object-nested.ts` → `generate-object-constraints.ts` → `generate-object.ts`
-3. **Advanced**: `custom-config.ts` → `tool-management.ts` → `long-running-tasks.ts`
-4. **Testing**: Run `integration-test.ts` to verify everything works
+2. **Images & Tools**: `images.ts` → `tool-streaming.ts` to understand multimodal inputs and tool events
+3. **Object Generation**: `generate-object-basic.ts` → `generate-object-nested.ts` → `generate-object-constraints.ts` → `generate-object.ts`
+4. **Advanced**: `custom-config.ts` → `tool-management.ts` → `hooks-callbacks.ts` → `sdk-tools-callbacks.ts` → `long-running-tasks.ts`
+5. **Testing**: Run `integration-test.ts` to verify everything works
 
 For more details, see the main [README](../README.md).
