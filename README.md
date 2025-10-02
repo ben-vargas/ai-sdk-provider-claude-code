@@ -23,11 +23,17 @@
 
 ### Installing the Right Version
 
-**For AI SDK v5 (recommended):**
+**For AI SDK v5 with Claude Agent SDK (recommended):**
 
 ```bash
 npm install ai-sdk-provider-claude-code ai
 # or explicitly: npm install ai-sdk-provider-claude-code@latest
+```
+
+**For AI SDK v5 with Claude Code SDK (legacy):**
+
+```bash
+npm install ai-sdk-provider-claude-code@v1-claude-code-sdk ai
 ```
 
 **For AI SDK v4 (legacy):**
