@@ -15,11 +15,11 @@
 
 ## Version Compatibility
 
-| Provider Version | AI SDK Version | Underlying SDK                      | NPM Tag     | Status | Branch                                                                                  |
-| ---------------- | -------------- | ----------------------------------- | ----------- | ------ | --------------------------------------------------------------------------------------- |
-| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk`    | `latest`    | Stable | `main`                                                                                  |
-| 1.x.x            | v5             | `@anthropic-ai/claude-code` (legacy) | `v1`        | Stable | [`v1`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/v1)              |
-| 0.x.x            | v4             | `@anthropic-ai/claude-code`         | `ai-sdk-v4` | Legacy | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
+| Provider Version | AI SDK Version | Underlying SDK                       | NPM Tag     | Status | Branch                                                                                  |
+| ---------------- | -------------- | ------------------------------------ | ----------- | ------ | --------------------------------------------------------------------------------------- |
+| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk`     | `latest`    | Stable | `main`                                                                                  |
+| 1.x.x            | v5             | `@anthropic-ai/claude-code` (legacy) | `v1`        | Stable | [`v1`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/v1)               |
+| 0.x.x            | v4             | `@anthropic-ai/claude-code`          | `ai-sdk-v4` | Legacy | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
 
 ### Installing the Right Version
 
@@ -183,6 +183,7 @@ If you're upgrading from version 1.x:
 3. **If you never used CLAUDE.md or custom system prompts**, no changes needed - v2.0.0 works the same for you.
 
 **Benefits of v2.0.0**:
+
 - Predictable behavior across environments (no hidden filesystem settings)
 - Better suited for CI/CD and multi-tenant applications
 - Explicit configuration over implicit defaults

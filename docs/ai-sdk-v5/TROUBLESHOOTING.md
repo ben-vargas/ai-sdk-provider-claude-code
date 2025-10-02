@@ -355,7 +355,7 @@ npx tsx ../examples/long-running-tasks.ts
 
 ## Known Limitations
 
-1. **No Image Support**: The Claude Code SDK doesn't support image inputs
+1. **Image Support Requires Streaming Mode**: Image inputs are supported via streaming mode with base64/data URLs. See `examples/images.ts`. Remote HTTP(S) URLs are not supported.
 2. **No AI SDK Tool Calling**: The AI SDK's function calling interface isn't implemented, but Claude can use tools via MCP servers and built-in CLI tools
 3. **Object Generation**: Relies on prompt engineering rather than native JSON mode
 4. **Model Options**: Limited to 'opus' and 'sonnet' models

@@ -116,6 +116,7 @@ ai-sdk-provider-claude-code/
 │   ├── README.md                         # Examples guide
 │   ├── abort-signal.ts                   # Cancellation
 │   ├── basic-usage.ts                    # Simple generation (v5 pattern)
+│   ├── bull.webp                         # Default test image for images.ts
 │   ├── check-cli.ts                      # Setup verification
 │   ├── conversation-history.ts           # Multi-turn conversations (v5 format)
 │   ├── custom-config.ts                  # Configuration options
@@ -124,12 +125,14 @@ ai-sdk-provider-claude-code/
 │   ├── generate-object-nested.ts         # Object generation (nested)
 │   ├── generate-object.ts                # Object generation (general)
 │   ├── hooks-callbacks.ts                # Hooks example (PreToolUse/PostToolUse)
+│   ├── images.ts                         # Image input with streaming mode
 │   ├── integration-test.ts               # Test suite
 │   ├── limitations.ts                    # Limitations walkthrough
 │   ├── long-running-tasks.ts             # Timeout handling
 │   ├── sdk-tools-callbacks.ts            # In-process SDK tools example
 │   ├── streaming.ts                      # Streaming demo (v5 pattern)
-│   └── tool-management.ts                # Tool access control
+│   ├── tool-management.ts                # Tool access control
+│   └── tool-streaming.ts                 # Tool streaming events demo
 ├── vitest.config.ts                      # Test configuration
 ├── tsup.config.ts                        # Build configuration
 ├── package.json                          # Package metadata
@@ -172,7 +175,8 @@ The provider now meets all requirements for v5 community provider status:
 ## Version Strategy
 
 - **0.x versions**: AI SDK v4 compatibility (maintained on `ai-sdk-v4` branch)
-- **1.x versions**: AI SDK v5 compatibility (maintained on `main` branch)
+- **1.x versions**: AI SDK v5 with `@anthropic-ai/claude-code` (maintained on `v1` branch)
+- **2.x versions**: AI SDK v5 with `@anthropic-ai/claude-agent-sdk` (maintained on `main` branch)
 
 ## Next Steps for Community Submission
 
@@ -195,7 +199,7 @@ The provider now meets all requirements for v5 community provider status:
 ````mdx
 ---
 title: Claude Code (v5)
-description: Use Claude via the official Claude Code SDK with your Pro/Max subscription
+description: Use Claude via the official Claude Agent SDK with your Pro/Max subscription
 ---
 
 # Claude Code Provider (v5)
@@ -226,7 +230,7 @@ The Claude Code provider is available in the `ai-sdk-provider-claude-code` modul
 
 ### Prerequisites
 
-Install and authenticate the Claude Code SDK:
+Install and authenticate the Claude CLI:
 
 ```bash
 npm install -g @anthropic-ai/claude-code
@@ -265,14 +269,16 @@ console.log(result.text);
 
 | Model  | Text Generation | Object Generation | Image Input | AI SDK Tool Calling | MCP Tools |
 | ------ | --------------- | ----------------- | ----------- | ------------------- | --------- |
-| opus   | ✅              | ✅                | ❌          | ❌                  | ✅        |
-| sonnet | ✅              | ✅                | ❌          | ❌                  | ✅        |
+| opus   | ✅              | ✅                | ✅\*        | ❌                  | ✅        |
+| sonnet | ✅              | ✅                | ✅\*        | ❌                  | ✅        |
+
+\*Image inputs supported via streaming mode with base64/data URLs. Remote HTTP(S) URLs not supported.
 
 <Note>
-  The provider uses the official Claude Code SDK. While the models support tool use, this provider 
-  doesn't implement the AI SDK's tool calling interface. However, you can configure MCP servers 
-  for tool functionality, and Claude can use built-in tools (Bash, Read, Write, etc.) through 
-  the Claude Code SDK.
+  The provider uses the official Claude Agent SDK. While the models support tool use, this provider
+  doesn't implement the AI SDK's tool calling interface. However, you can configure MCP servers
+  for tool functionality, and Claude can use built-in tools (Bash, Read, Write, etc.) through
+  the Claude Agent SDK.
 </Note>
 
 ## v5 Specific Features

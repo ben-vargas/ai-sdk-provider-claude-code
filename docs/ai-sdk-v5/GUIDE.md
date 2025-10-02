@@ -1013,12 +1013,13 @@ ai-sdk-provider-claude-code/
 ├── src/                               # Source code
 │   ├── index.ts                       # Main exports
 │   ├── claude-code-provider.ts        # Provider factory
-│   ├── claude-code-language-model.ts  # AI SDK implementation using SDK
+│   ├── claude-code-language-model.ts  # AI SDK implementation using Agent SDK
 │   ├── convert-to-claude-code-messages.ts # Message format converter
 │   ├── extract-json.ts                # JSON extraction for object generation
 │   ├── errors.ts                      # Error handling utilities
 │   ├── logger.ts                      # Configurable logger support
 │   ├── map-claude-code-finish-reason.ts # Finish reason mapping utilities
+│   ├── mcp-helpers.ts                 # Helper for creating SDK MCP servers
 │   ├── types.ts                       # TypeScript types and interfaces
 │   ├── validation.ts                  # Input validation utilities
 │   ├── *.test.ts                      # Test files for each module
@@ -1027,6 +1028,7 @@ ai-sdk-provider-claude-code/
 │   ├── README.md                      # Examples documentation
 │   ├── abort-signal.ts                # Request cancellation examples
 │   ├── basic-usage.ts                 # Simple text generation with metadata
+│   ├── bull.webp                      # Default test image for images.ts example
 │   ├── check-cli.ts                   # CLI installation verification
 │   ├── conversation-history.ts        # Multi-turn conversation with message history
 │   ├── custom-config.ts               # Provider configuration options
@@ -1034,12 +1036,15 @@ ai-sdk-provider-claude-code/
 │   ├── generate-object-basic.ts       # Basic object generation patterns
 │   ├── generate-object-constraints.ts # Validation and constraints
 │   ├── generate-object-nested.ts      # Complex nested structures
+│   ├── hooks-callbacks.ts             # Hook examples (PreToolUse/PostToolUse)
+│   ├── images.ts                      # Image input with streaming mode
 │   ├── integration-test.ts            # Comprehensive integration tests
 │   ├── limitations.ts                 # Provider limitations demo
 │   ├── long-running-tasks.ts          # Timeout handling with AbortSignal
+│   ├── sdk-tools-callbacks.ts         # In-process SDK tools example
 │   ├── streaming.ts                   # Streaming response demo
-│   ├── test-session.ts                # Session management testing
-│   └── tool-management.ts             # Tool access control (allow/disallow)
+│   ├── tool-management.ts             # Tool access control (allow/disallow)
+│   └── tool-streaming.ts              # Tool streaming events demo
 ├── docs/                              # Documentation
 │   ├── ai-sdk-v4/                     # v4-specific documentation
 │   └── ai-sdk-v5/                     # v5 documentation
@@ -1061,8 +1066,8 @@ ai-sdk-provider-claude-code/
 
 ## Known Limitations
 
-1. **No image support**: The CLI doesn't accept image inputs
-2. **Authentication required**: Requires separate Claude Code SDK authentication (`claude login`)
+1. **Image support requires streaming mode**: Image inputs are supported via streaming mode with base64/data URLs. See `examples/images.ts` for usage. Remote HTTP(S) image URLs are not supported.
+2. **Authentication required**: Requires separate Claude Agent SDK authentication (`claude login`)
 3. **Session IDs change**: Each request gets a new session ID, even when using `--resume`
 4. **No AI SDK tool calling interface**: The AI SDK's function/tool calling interface is not implemented, but Claude can use tools via MCP servers and built-in CLI tools
 
@@ -1094,4 +1099,4 @@ MIT - see [LICENSE](../../LICENSE) for details.
 
 ## Acknowledgments
 
-This provider is built for the [Vercel AI SDK](https://sdk.vercel.ai/) and uses the [Claude Code SDK](https://docs.anthropic.com/claude-code/cli) by Anthropic.
+This provider is built for the [Vercel AI SDK](https://sdk.vercel.ai/) and uses the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) by Anthropic.
