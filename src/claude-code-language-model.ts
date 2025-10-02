@@ -1158,6 +1158,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                     ...(message.total_cost_usd !== undefined && { costUsd: message.total_cost_usd }),
                     ...(message.duration_ms !== undefined && { durationMs: message.duration_ms }),
                     ...(rawUsage !== undefined && { rawUsage: rawUsage as JSONValue }),
+                    // JSON validation warnings are collected during streaming and included
+                    // in providerMetadata since the AI SDK's finish event doesn't support
+                    // a top-level warnings field (unlike stream-start which was already emitted)
                     ...(streamWarnings.length > 0 && { warnings: warningsJson as unknown as JSONValue }),
                   },
                 },
