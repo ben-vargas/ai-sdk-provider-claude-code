@@ -9,7 +9,7 @@ import { claudeCode } from '../dist/index.js';
 
 /**
  * Example: Request Cancellation with AbortController
- * 
+ *
  * This example demonstrates how to cancel in-progress requests using AbortSignal.
  * Useful for implementing timeouts, user cancellations, or cleaning up on unmount.
  */
@@ -31,7 +31,7 @@ async function main() {
   console.log('1. Testing cancellation of generateText after 2 seconds...');
   try {
     const controller = new AbortController();
-    
+
     // Cancel after 2 seconds
     const timeout = setTimeout(() => {
       console.log('   ⏱️  Cancelling request...');
@@ -40,7 +40,8 @@ async function main() {
 
     const { text } = await generateText({
       model: claudeCode('sonnet'),
-      prompt: 'Write a very long detailed essay about the history of computing. Include at least 10 paragraphs.',
+      prompt:
+        'Write a very long detailed essay about the history of computing. Include at least 10 paragraphs.',
       abortSignal: controller.signal,
     });
 
@@ -57,7 +58,7 @@ async function main() {
   console.log('\n2. Testing immediate cancellation (before request starts)...');
   try {
     const controller = new AbortController();
-    
+
     // Cancel immediately
     controller.abort();
 
@@ -91,7 +92,7 @@ async function main() {
     for await (const chunk of textStream) {
       process.stdout.write(chunk);
       charCount += chunk.length;
-      
+
       // Cancel after receiving 100 characters
       if (charCount > 100) {
         console.log('\n   ⏱️  Cancelling stream after', charCount, 'characters...');
@@ -113,10 +114,10 @@ async function main() {
   console.log('- Component unmount cleanup in React/Vue');
   console.log('- Request timeouts');
   console.log('- Rate limiting and request management');
-  
+
   console.log('\nNote: This example suppresses ABORT_ERR uncaught exceptions');
   console.log('      which are expected when cancelling child processes.');
-  
+
   // Exit cleanly
   process.exit(0);
 }

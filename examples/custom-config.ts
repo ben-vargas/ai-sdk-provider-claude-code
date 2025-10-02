@@ -1,6 +1,6 @@
 /**
  * Custom configuration example for Claude Code AI SDK Provider
- * 
+ *
  * This example shows how to configure the provider and models
  * with specific settings for your use case.
  */
@@ -25,7 +25,7 @@ async function main() {
         permissionMode: 'bypassPermissions',
         // Set working directory for file operations
         cwd: process.cwd(),
-      }
+      },
     });
 
     console.log('1️⃣ Using provider with default settings:');
@@ -38,7 +38,7 @@ async function main() {
     // Example 2: Override settings for specific model instance
     console.log('\n2️⃣ Model with custom settings:');
     const { text: response2 } = await generateText({
-      model: customProvider('sonnet', { 
+      model: customProvider('sonnet', {
         // These settings override the provider defaults
         permissionMode: 'default', // Ask for permissions
         maxTurns: 5, // Limit conversation turns
@@ -66,23 +66,22 @@ async function main() {
     console.log('\n4️⃣ Using different models:');
     const opusModel = customProvider('opus');
     const sonnetModel = customProvider('sonnet');
-    
+
     // Quick comparison
     const prompt = 'Explain quantum computing in exactly 10 words.';
-    
+
     const { text: opusResponse } = await generateText({
       model: opusModel,
       prompt,
     });
-    
+
     const { text: sonnetResponse } = await generateText({
       model: sonnetModel,
       prompt,
     });
-    
+
     console.log('Opus:', opusResponse);
     console.log('Sonnet:', sonnetResponse);
-
   } catch (error) {
     console.error('Error:', error);
   }

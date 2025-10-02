@@ -3,6 +3,7 @@
 This document outlines the breaking changes users will encounter when upgrading from v4 to v5 of the ai-sdk-provider-claude-code.
 
 ⚠️ **IMPORTANT**: This is a complete breaking change. The v5 version of this provider ONLY works with AI SDK v5. You cannot use:
+
 - v5 provider with AI SDK v4 ❌
 - v4 provider with AI SDK v5 ❌
 
@@ -48,13 +49,13 @@ The streamText function now returns a result object with promises:
 // V4
 const { text, usage } = await streamText({
   model: claudeCode('opus'),
-  prompt: 'Hello'
+  prompt: 'Hello',
 });
 
 // V5
 const result = streamText({
   model: claudeCode('opus'),
-  prompt: 'Hello'
+  prompt: 'Hello',
 });
 const text = await result.text;
 const usage = await result.usage;
@@ -85,14 +86,14 @@ Some parameter names have changed:
 generateText({
   model: claudeCode('opus'),
   prompt: 'Hello',
-  maxTokens: 100  // ❌ Old
+  maxTokens: 100, // ❌ Old
 });
 
 // V5
 generateText({
   model: claudeCode('opus'),
   prompt: 'Hello',
-  maxOutputTokens: 100  // ✅ New
+  maxOutputTokens: 100, // ✅ New
 });
 ```
 
@@ -119,7 +120,7 @@ import { claudeCode } from 'ai-sdk-provider-claude-code';
 
 const result = streamText({
   model: claudeCode('opus'),
-  prompt: 'Write a haiku'
+  prompt: 'Write a haiku',
 });
 
 // Await the results
@@ -139,12 +140,12 @@ import type { CoreMessage } from 'ai';
 const messages: CoreMessage[] = [
   { role: 'user', content: 'Hello!' },
   { role: 'assistant', content: 'Hi there!' },
-  { role: 'user', content: 'How are you?' }
+  { role: 'user', content: 'How are you?' },
 ];
 
 const result = streamText({
   model: claudeCode('opus'),
-  messages
+  messages,
 });
 
 const response = await result.text;

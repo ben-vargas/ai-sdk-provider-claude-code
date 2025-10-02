@@ -30,9 +30,7 @@ describe('logger integration', () => {
         },
       });
 
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('High maxTurns value')
-      );
+      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('High maxTurns value'));
     });
 
     it('should respect logger: false setting', () => {
@@ -80,9 +78,7 @@ describe('logger integration', () => {
       // Create a model with an unknown ID to trigger warning
       provider('unknown-model-id');
 
-      expect(customLogger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('Unknown model ID')
-      );
+      expect(customLogger.warn).toHaveBeenCalledWith(expect.stringContaining('Unknown model ID'));
     });
 
     it('should allow model-specific logger override', () => {
@@ -107,9 +103,7 @@ describe('logger integration', () => {
         logger: modelLogger,
       });
 
-      expect(modelLogger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('Unknown model ID')
-      );
+      expect(modelLogger.warn).toHaveBeenCalledWith(expect.stringContaining('Unknown model ID'));
       expect(providerLogger.warn).not.toHaveBeenCalled();
     });
 
@@ -130,22 +124,24 @@ describe('logger integration', () => {
       // Mock the query function to prevent actual API calls
       const { ClaudeCodeLanguageModel } = await import('../src/claude-code-language-model.js');
       const proto = ClaudeCodeLanguageModel.prototype as any;
-      
+
       // Access the private method through prototype
       const result = proto.generateAllWarnings.call(
-        { 
+        {
           modelValidationWarning: undefined,
           settingsValidationWarnings: [],
-          logger: customLogger 
+          logger: customLogger,
         },
         {
-          prompt: [{
-            role: 'user',
-            content: [
-              { type: 'text', text: 'Hello' },
-              { type: 'image', image: new Uint8Array([]) }
-            ]
-          }]
+          prompt: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'Hello' },
+                { type: 'image', image: new Uint8Array([]) },
+              ],
+            },
+          ],
         },
         'test prompt'
       );

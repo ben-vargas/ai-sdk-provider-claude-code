@@ -8,13 +8,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
-      exclude: [
-        'node_modules/**',
-        'dist/**',
-        'examples/**',
-        '**/*.test.ts',
-        '**/*.d.ts',
-      ],
+      exclude: ['node_modules/**', 'dist/**', 'examples/**', '**/*.test.ts', '**/*.d.ts'],
     },
     // Define projects for different environments
     projects: [

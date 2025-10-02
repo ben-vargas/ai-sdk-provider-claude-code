@@ -28,7 +28,8 @@ function isAbortError(err: unknown): boolean {
   return false;
 }
 
-const STREAMING_FEATURE_WARNING = "Claude Agent SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
+const STREAMING_FEATURE_WARNING =
+  "Claude Agent SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
 
 type ClaudeToolUse = {
   id: string;
@@ -87,11 +88,13 @@ function toAsyncIterablePrompt(
   messagesPrompt: string,
   outputStreamEnded: Promise<unknown>,
   sessionId?: string,
-  contentParts?: SDKUserMessage['message']['content'],
+  contentParts?: SDKUserMessage['message']['content']
 ): AsyncIterable<SDKUserMessage> {
-  const content = (contentParts && contentParts.length > 0
-    ? contentParts
-    : [{ type: 'text', text: messagesPrompt }]) as SDKUserMessage['message']['content'];
+  const content = (
+    contentParts && contentParts.length > 0
+      ? contentParts
+      : [{ type: 'text', text: messagesPrompt }]
+  ) as SDKUserMessage['message']['content'];
 
   const msg: SDKUserMessage = {
     type: 'user',
@@ -112,7 +115,7 @@ function toAsyncIterablePrompt(
 
 /**
  * Options for creating a Claude Code language model instance.
- * 
+ *
  * @example
  * ```typescript
  * const model = new ClaudeCodeLanguageModel({
@@ -130,12 +133,12 @@ export interface ClaudeCodeLanguageModelOptions {
    * Can be 'opus', 'sonnet', or a custom model string.
    */
   id: ClaudeCodeModelId;
-  
+
   /**
    * Optional settings to configure the model behavior.
    */
   settings?: ClaudeCodeSettings;
-  
+
   /**
    * Validation warnings from settings validation.
    * Used internally to pass warnings from provider.
@@ -148,7 +151,7 @@ export interface ClaudeCodeLanguageModelOptions {
  * - 'opus': Claude 4 Opus model (most capable)
  * - 'sonnet': Claude 4 Sonnet model (balanced performance)
  * - Custom string: Any other model identifier supported by the CLI
- * 
+ *
  * @example
  * ```typescript
  * const opusModel = claudeCode('opus');
@@ -159,33 +162,33 @@ export interface ClaudeCodeLanguageModelOptions {
 export type ClaudeCodeModelId = 'opus' | 'sonnet' | (string & {});
 
 const modelMap: Record<string, string> = {
-  'opus': 'opus',
-  'sonnet': 'sonnet',
+  opus: 'opus',
+  sonnet: 'sonnet',
 };
 
 /**
  * Language model implementation for Claude Code SDK.
  * This class implements the AI SDK's LanguageModelV1 interface to provide
  * integration with Claude models through the Claude Code SDK.
- * 
+ *
  * Features:
  * - Supports streaming and non-streaming generation
  * - Handles JSON object generation mode
  * - Manages CLI sessions for conversation continuity
  * - Provides detailed error handling and retry logic
- * 
+ *
  * Limitations:
  * - Image inputs require streaming mode
  * - Does not support structured outputs (tool mode)
  * - Some parameters like temperature and max tokens are not supported by the CLI
- * 
+ *
  * @example
  * ```typescript
  * const model = new ClaudeCodeLanguageModel({
  *   id: 'opus',
  *   settings: { maxTurns: 5 }
  * });
- * 
+ *
  * const result = await model.doGenerate({
  *   prompt: [{ role: 'user', content: 'Hello!' }],
  *   mode: { type: 'regular' }
@@ -204,12 +207,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
   // Tool input safety limits
   private static readonly MAX_TOOL_INPUT_SIZE = 1_048_576; // 1MB hard limit
-  private static readonly MAX_TOOL_INPUT_WARN = 102_400;   // 100KB warning threshold
-  private static readonly MAX_DELTA_CALC_SIZE = 10_000;    // 10KB delta computation threshold
+  private static readonly MAX_TOOL_INPUT_WARN = 102_400; // 100KB warning threshold
+  private static readonly MAX_DELTA_CALC_SIZE = 10_000; // 10KB delta computation threshold
 
   readonly modelId: ClaudeCodeModelId;
   readonly settings: ClaudeCodeSettings;
-  
+
   private sessionId?: string;
   private modelValidationWarning?: string;
   private settingsValidationWarnings: string[];
@@ -220,7 +223,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     this.settings = options.settings ?? {};
     this.settingsValidationWarnings = options.settingsValidationWarnings ?? [];
     this.logger = getLogger(this.settings.logger);
-    
+
     // Validate model ID format
     if (!this.modelId || typeof this.modelId !== 'string' || this.modelId.trim() === '') {
       throw new NoSuchModelError({
@@ -228,7 +231,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
         modelType: 'languageModel',
       });
     }
-    
+
     // Additional model ID validation
     this.modelValidationWarning = validateModelId(this.modelId);
     if (this.modelValidationWarning) {
@@ -253,13 +256,19 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     return content
       .filter(
         (item): item is { type: string; id?: unknown; name?: unknown; input?: unknown } =>
-          typeof item === 'object' && item !== null && 'type' in item && (item as { type: unknown }).type === 'tool_use',
+          typeof item === 'object' &&
+          item !== null &&
+          'type' in item &&
+          (item as { type: unknown }).type === 'tool_use'
       )
       .map((item) => {
         const { id, name, input } = item as { id?: unknown; name?: unknown; input?: unknown };
         return {
           id: typeof id === 'string' && id.length > 0 ? id : generateId(),
-          name: typeof name === 'string' && name.length > 0 ? name : ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME,
+          name:
+            typeof name === 'string' && name.length > 0
+              ? name
+              : ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME,
           input,
         } satisfies ClaudeToolUse;
       });
@@ -272,18 +281,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
     return content
       .filter(
-        (item): item is {
+        (
+          item
+        ): item is {
           type: string;
           tool_use_id?: unknown;
           content?: unknown;
           is_error?: unknown;
           name?: unknown;
-        } => typeof item === 'object' && item !== null && 'type' in item && (item as { type: unknown }).type === 'tool_result',
+        } =>
+          typeof item === 'object' &&
+          item !== null &&
+          'type' in item &&
+          (item as { type: unknown }).type === 'tool_result'
       )
       .map((item) => {
         const { tool_use_id, content, is_error, name } = item;
         return {
-          id: typeof tool_use_id === 'string' && tool_use_id.length > 0 ? tool_use_id : generateId(),
+          id:
+            typeof tool_use_id === 'string' && tool_use_id.length > 0 ? tool_use_id : generateId(),
           name: typeof name === 'string' && name.length > 0 ? name : undefined,
           result: content,
           isError: Boolean(is_error),
@@ -302,7 +318,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
     return content
       .filter(
-        (item): item is {
+        (
+          item
+        ): item is {
           type: string;
           tool_use_id?: unknown;
           error?: unknown;
@@ -311,7 +329,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           typeof item === 'object' &&
           item !== null &&
           'type' in item &&
-          (item as { type: unknown }).type === 'tool_error',
+          (item as { type: unknown }).type === 'tool_error'
       )
       .map((item) => {
         const { tool_use_id, error, name } = item as {
@@ -321,13 +339,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
         };
         return {
           id:
-            typeof tool_use_id === 'string' && tool_use_id.length > 0
-              ? tool_use_id
-              : generateId(),
-          name:
-            typeof name === 'string' && name.length > 0
-              ? name
-              : undefined,
+            typeof tool_use_id === 'string' && tool_use_id.length > 0 ? tool_use_id : generateId(),
+          name: typeof name === 'string' && name.length > 0 ? name : undefined,
           error,
         };
       });
@@ -356,13 +369,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
     if (length > ClaudeCodeLanguageModel.MAX_TOOL_INPUT_SIZE) {
       throw new Error(
-        `Tool input exceeds maximum size of ${ClaudeCodeLanguageModel.MAX_TOOL_INPUT_SIZE} bytes (got ${length} bytes). This may indicate a malformed request or an attempt to process excessively large data.`,
+        `Tool input exceeds maximum size of ${ClaudeCodeLanguageModel.MAX_TOOL_INPUT_SIZE} bytes (got ${length} bytes). This may indicate a malformed request or an attempt to process excessively large data.`
       );
     }
 
     if (length > ClaudeCodeLanguageModel.MAX_TOOL_INPUT_WARN) {
       console.warn(
-        `[claude-code] Large tool input detected: ${length} bytes. Performance may be impacted. Consider chunking or reducing input size.`,
+        `[claude-code] Large tool input detected: ${length} bytes. Performance may be impacted. Consider chunking or reducing input size.`
       );
     }
 
@@ -382,32 +395,43 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
   }
 
   private generateAllWarnings(
-    options: Parameters<LanguageModelV2['doGenerate']>[0] | Parameters<LanguageModelV2['doStream']>[0],
+    options:
+      | Parameters<LanguageModelV2['doGenerate']>[0]
+      | Parameters<LanguageModelV2['doStream']>[0],
     prompt: string
   ): LanguageModelV2CallWarning[] {
     const warnings: LanguageModelV2CallWarning[] = [];
     const unsupportedParams: string[] = [];
-    
+
     // Check for unsupported parameters
     if (options.temperature !== undefined) unsupportedParams.push('temperature');
     if (options.topP !== undefined) unsupportedParams.push('topP');
     if (options.topK !== undefined) unsupportedParams.push('topK');
     if (options.presencePenalty !== undefined) unsupportedParams.push('presencePenalty');
     if (options.frequencyPenalty !== undefined) unsupportedParams.push('frequencyPenalty');
-    if (options.stopSequences !== undefined && options.stopSequences.length > 0) unsupportedParams.push('stopSequences');
+    if (options.stopSequences !== undefined && options.stopSequences.length > 0)
+      unsupportedParams.push('stopSequences');
     if (options.seed !== undefined) unsupportedParams.push('seed');
-    
+
     if (unsupportedParams.length > 0) {
       // Add a warning for each unsupported parameter
       for (const param of unsupportedParams) {
         warnings.push({
           type: 'unsupported-setting',
-          setting: param as 'temperature' | 'maxTokens' | 'topP' | 'topK' | 'presencePenalty' | 'frequencyPenalty' | 'stopSequences' | 'seed',
+          setting: param as
+            | 'temperature'
+            | 'maxTokens'
+            | 'topP'
+            | 'topK'
+            | 'presencePenalty'
+            | 'frequencyPenalty'
+            | 'stopSequences'
+            | 'seed',
           details: `Claude Code SDK does not support the ${param} parameter. It will be ignored.`,
         });
       }
     }
-    
+
     // Add model validation warning if present
     if (this.modelValidationWarning) {
       warnings.push({
@@ -415,15 +439,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
         message: this.modelValidationWarning,
       });
     }
-    
+
     // Add settings validation warnings
-    this.settingsValidationWarnings.forEach(warning => {
+    this.settingsValidationWarnings.forEach((warning) => {
       warnings.push({
         type: 'other',
         message: warning,
       });
     });
-    
+
     // Validate prompt
     const promptWarning = validatePrompt(prompt);
     if (promptWarning) {
@@ -432,14 +456,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
         message: promptWarning,
       });
     }
-    
+
     return warnings;
   }
 
-  private handleJsonExtraction(
-    text: string,
-    warnings: LanguageModelV2CallWarning[],
-  ): string {
+  private handleJsonExtraction(text: string, warnings: LanguageModelV2CallWarning[]): string {
     const extracted = extractJson(text);
     const validation = this.validateJsonExtraction(text, extracted);
 
@@ -451,7 +472,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
   }
 
   private createQueryOptions(abortController: AbortController): Options {
-  const opts: Partial<Options> & Record<string, unknown> = {
+    const opts: Partial<Options> & Record<string, unknown> = {
       model: this.getModel(),
       abortController,
       resume: this.settings.resume ?? this.sessionId,
@@ -483,7 +504,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       this.logger.warn(
         "[claude-code] 'appendSystemPrompt' is deprecated and will be removed in a future major release. Please use 'systemPrompt: { type: 'preset', preset: 'claude_code', append: <text> }' instead."
       );
-      opts.systemPrompt = { type: 'preset', preset: 'claude_code', append: this.settings.appendSystemPrompt } as const;
+      opts.systemPrompt = {
+        type: 'preset',
+        preset: 'claude_code',
+        append: this.settings.appendSystemPrompt,
+      } as const;
     }
     if (this.settings.settingSources !== undefined) {
       opts.settingSources = this.settings.settingSources;
@@ -517,7 +542,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       opts.hooks = this.settings.hooks;
     }
     if (this.settings.env !== undefined) {
-      opts.env = {...process.env, ...this.settings.env};
+      opts.env = { ...process.env, ...this.settings.env };
     }
     return opts as Options;
   }
@@ -537,7 +562,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       return typeof err === 'object' && err !== null && 'message' in err;
     };
 
-    const isErrorWithCode = (err: unknown): err is { code?: string; exitCode?: number; stderr?: string } => {
+    const isErrorWithCode = (
+      err: unknown
+    ): err is { code?: string; exitCode?: number; stderr?: string } => {
       return typeof err === 'object' && err !== null;
     };
 
@@ -548,38 +575,33 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       'unauthorized',
       'auth failed',
       'please login',
-      'claude login'
+      'claude login',
     ];
-    
-    const errorMessage = isErrorWithMessage(error) && error.message 
-      ? error.message.toLowerCase() 
-      : '';
-    
-    const exitCode = isErrorWithCode(error) && typeof error.exitCode === 'number' 
-      ? error.exitCode 
-      : undefined;
-      
-    const isAuthError = authErrorPatterns.some(pattern => errorMessage.includes(pattern)) ||
-                       exitCode === 401;
+
+    const errorMessage =
+      isErrorWithMessage(error) && error.message ? error.message.toLowerCase() : '';
+
+    const exitCode =
+      isErrorWithCode(error) && typeof error.exitCode === 'number' ? error.exitCode : undefined;
+
+    const isAuthError =
+      authErrorPatterns.some((pattern) => errorMessage.includes(pattern)) || exitCode === 401;
 
     if (isAuthError) {
       return createAuthenticationError({
-        message: isErrorWithMessage(error) && error.message 
-          ? error.message 
-          : 'Authentication failed. Please ensure Claude Code SDK is properly authenticated.',
+        message:
+          isErrorWithMessage(error) && error.message
+            ? error.message
+            : 'Authentication failed. Please ensure Claude Code SDK is properly authenticated.',
       });
     }
 
     // Check for timeout errors
-    const errorCode = isErrorWithCode(error) && typeof error.code === 'string' 
-      ? error.code 
-      : '';
-      
+    const errorCode = isErrorWithCode(error) && typeof error.code === 'string' ? error.code : '';
+
     if (errorCode === 'ETIMEDOUT' || errorMessage.includes('timeout')) {
       return createTimeoutError({
-        message: isErrorWithMessage(error) && error.message 
-          ? error.message 
-          : 'Request timed out',
+        message: isErrorWithMessage(error) && error.message ? error.message : 'Request timed out',
         promptExcerpt: messagesPrompt.substring(0, 200),
         // Don't specify timeoutMs since we don't know the actual timeout value
         // It's controlled by the consumer via AbortSignal
@@ -587,20 +609,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     }
 
     // Create general API call error with appropriate retry flag
-    const isRetryable = errorCode === 'ENOENT' || 
-                       errorCode === 'ECONNREFUSED' ||
-                       errorCode === 'ETIMEDOUT' ||
-                       errorCode === 'ECONNRESET';
+    const isRetryable =
+      errorCode === 'ENOENT' ||
+      errorCode === 'ECONNREFUSED' ||
+      errorCode === 'ETIMEDOUT' ||
+      errorCode === 'ECONNRESET';
 
     return createAPICallError({
-      message: isErrorWithMessage(error) && error.message 
-        ? error.message 
-        : 'Claude Code SDK error',
+      message: isErrorWithMessage(error) && error.message ? error.message : 'Claude Code SDK error',
       code: errorCode || undefined,
       exitCode: exitCode,
-      stderr: isErrorWithCode(error) && typeof error.stderr === 'string' 
-        ? error.stderr 
-        : undefined,
+      stderr: isErrorWithCode(error) && typeof error.stderr === 'string' ? error.stderr : undefined,
       promptExcerpt: messagesPrompt.substring(0, 200),
       isRetryable,
     });
@@ -624,7 +643,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
         valid: false,
         warning: {
           type: 'other',
-          message: 'JSON extraction from model response may be incomplete or modified. The model may not have returned valid JSON.',
+          message:
+            'JSON extraction from model response may be incomplete or modified. The model may not have returned valid JSON.',
         },
       };
     }
@@ -645,20 +665,21 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
   }
 
   async doGenerate(
-    options: Parameters<LanguageModelV2['doGenerate']>[0],
+    options: Parameters<LanguageModelV2['doGenerate']>[0]
   ): Promise<Awaited<ReturnType<LanguageModelV2['doGenerate']>>> {
     // Determine mode based on responseFormat
-    const mode = options.responseFormat?.type === 'json' 
-      ? { type: 'object-json' as const } 
-      : { type: 'regular' as const };
-    
+    const mode =
+      options.responseFormat?.type === 'json'
+        ? { type: 'object-json' as const }
+        : { type: 'regular' as const };
+
     const {
       messagesPrompt,
       warnings: messageWarnings,
       streamingContentParts,
       hasImageParts,
     } = convertToClaudeCodeMessages(
-      options.prompt, 
+      options.prompt,
       mode,
       options.responseFormat?.type === 'json' ? options.responseFormat.schema : undefined
     );
@@ -681,11 +702,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     let costUsd: number | undefined;
     let durationMs: number | undefined;
     let rawUsage: unknown | undefined;
-    const warnings: LanguageModelV2CallWarning[] = this.generateAllWarnings(options, messagesPrompt);
-    
+    const warnings: LanguageModelV2CallWarning[] = this.generateAllWarnings(
+      options,
+      messagesPrompt
+    );
+
     // Add warnings from message conversion
     if (messageWarnings) {
-      messageWarnings.forEach(warning => {
+      messageWarnings.forEach((warning) => {
         warnings.push({
           type: 'other',
           message: warning,
@@ -694,7 +718,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     }
 
     const modeSetting = this.settings.streamingInput ?? 'auto';
-    const wantsStreamInput = modeSetting === 'always' || (modeSetting === 'auto' && !!this.settings.canUseTool);
+    const wantsStreamInput =
+      modeSetting === 'always' || (modeSetting === 'auto' && !!this.settings.canUseTool);
 
     if (!wantsStreamInput && hasImageParts) {
       warnings.push({
@@ -704,10 +729,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     }
 
     let done = () => {};
-    const outputStreamEnded = new Promise(resolve => { done = () => resolve(undefined); });
+    const outputStreamEnded = new Promise((resolve) => {
+      done = () => resolve(undefined);
+    });
     try {
       if (this.settings.canUseTool && this.settings.permissionPromptToolName) {
-        throw new Error("canUseTool requires streamingInput mode ('auto' or 'always') and cannot be used with permissionPromptToolName (SDK constraint). Set streamingInput: 'auto' (or 'always') and remove permissionPromptToolName, or remove canUseTool.");
+        throw new Error(
+          "canUseTool requires streamingInput mode ('auto' or 'always') and cannot be used with permissionPromptToolName (SDK constraint). Set streamingInput: 'auto' (or 'always') and remove permissionPromptToolName, or remove canUseTool."
+        );
       }
       // hold input stream open until results
       // see: https://github.com/anthropics/claude-code/issues/4775
@@ -716,7 +745,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             messagesPrompt,
             outputStreamEnded,
             this.settings.resume ?? this.sessionId,
-            streamingContentParts,
+            streamingContentParts
           )
         : messagesPrompt;
       const response = query({
@@ -726,26 +755,28 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
       for await (const message of response) {
         if (message.type === 'assistant') {
-          text += message.message.content.map((c: { type: string; text?: string }) => 
-            c.type === 'text' ? c.text : ''
-          ).join('');
+          text += message.message.content
+            .map((c: { type: string; text?: string }) => (c.type === 'text' ? c.text : ''))
+            .join('');
         } else if (message.type === 'result') {
           done();
           this.setSessionId(message.session_id);
           costUsd = message.total_cost_usd;
           durationMs = message.duration_ms;
-          
+
           if ('usage' in message) {
             rawUsage = message.usage;
             usage = {
-              inputTokens: (message.usage.cache_creation_input_tokens ?? 0) + 
-                           (message.usage.cache_read_input_tokens ?? 0) +
-                           (message.usage.input_tokens ?? 0),
+              inputTokens:
+                (message.usage.cache_creation_input_tokens ?? 0) +
+                (message.usage.cache_read_input_tokens ?? 0) +
+                (message.usage.input_tokens ?? 0),
               outputTokens: message.usage.output_tokens ?? 0,
-              totalTokens: (message.usage.cache_creation_input_tokens ?? 0) + 
-                           (message.usage.cache_read_input_tokens ?? 0) +
-                           (message.usage.input_tokens ?? 0) + 
-                           (message.usage.output_tokens ?? 0),
+              totalTokens:
+                (message.usage.cache_creation_input_tokens ?? 0) +
+                (message.usage.cache_read_input_tokens ?? 0) +
+                (message.usage.input_tokens ?? 0) +
+                (message.usage.output_tokens ?? 0),
             };
           }
 
@@ -760,7 +791,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       if (isAbortError(error)) {
         throw options.abortSignal?.aborted ? options.abortSignal.reason : error;
       }
-      
+
       // Use unified error handler
       throw this.handleClaudeCodeError(error, messagesPrompt);
     } finally {
@@ -799,20 +830,21 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
   }
 
   async doStream(
-    options: Parameters<LanguageModelV2['doStream']>[0],
+    options: Parameters<LanguageModelV2['doStream']>[0]
   ): Promise<Awaited<ReturnType<LanguageModelV2['doStream']>>> {
     // Determine mode based on responseFormat
-    const mode = options.responseFormat?.type === 'json' 
-      ? { type: 'object-json' as const } 
-      : { type: 'regular' as const };
-    
+    const mode =
+      options.responseFormat?.type === 'json'
+        ? { type: 'object-json' as const }
+        : { type: 'regular' as const };
+
     const {
       messagesPrompt,
       warnings: messageWarnings,
       streamingContentParts,
       hasImageParts,
     } = convertToClaudeCodeMessages(
-      options.prompt, 
+      options.prompt,
       mode,
       options.responseFormat?.type === 'json' ? options.responseFormat.schema : undefined
     );
@@ -829,11 +861,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
     const queryOptions = this.createQueryOptions(abortController);
 
-    const warnings: LanguageModelV2CallWarning[] = this.generateAllWarnings(options, messagesPrompt);
+    const warnings: LanguageModelV2CallWarning[] = this.generateAllWarnings(
+      options,
+      messagesPrompt
+    );
 
     // Add warnings from message conversion
     if (messageWarnings) {
-      messageWarnings.forEach(warning => {
+      messageWarnings.forEach((warning) => {
         warnings.push({
           type: 'other',
           message: warning,
@@ -842,7 +877,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     }
 
     const modeSetting = this.settings.streamingInput ?? 'auto';
-    const wantsStreamInput = modeSetting === 'always' || (modeSetting === 'auto' && !!this.settings.canUseTool);
+    const wantsStreamInput =
+      modeSetting === 'always' || (modeSetting === 'auto' && !!this.settings.canUseTool);
 
     if (!wantsStreamInput && hasImageParts) {
       warnings.push({
@@ -854,7 +890,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     const stream = new ReadableStream<ExtendedStreamPart>({
       start: async (controller) => {
         let done = () => {};
-        const outputStreamEnded = new Promise(resolve => { done = () => resolve(undefined); });
+        const outputStreamEnded = new Promise((resolve) => {
+          done = () => resolve(undefined);
+        });
         const toolStates = new Map<string, ToolStreamState>();
         const streamWarnings: LanguageModelV2CallWarning[] = [];
 
@@ -903,9 +941,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
         try {
           // Emit stream-start with warnings
           controller.enqueue({ type: 'stream-start', warnings });
-          
+
           if (this.settings.canUseTool && this.settings.permissionPromptToolName) {
-            throw new Error("canUseTool requires streamingInput mode ('auto' or 'always') and cannot be used with permissionPromptToolName (SDK constraint). Set streamingInput: 'auto' (or 'always') and remove permissionPromptToolName, or remove canUseTool.");
+            throw new Error(
+              "canUseTool requires streamingInput mode ('auto' or 'always') and cannot be used with permissionPromptToolName (SDK constraint). Set streamingInput: 'auto' (or 'always') and remove permissionPromptToolName, or remove canUseTool."
+            );
           }
           // hold input stream open until results
           // see: https://github.com/anthropics/claude-code/issues/4775
@@ -914,7 +954,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 messagesPrompt,
                 outputStreamEnded,
                 this.settings.resume ?? this.sessionId,
-                streamingContentParts,
+                streamingContentParts
               )
             : messagesPrompt;
           const response = query({
@@ -931,7 +971,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
               if (!message.message?.content) {
                 console.warn(
                   `[claude-code] Unexpected assistant message structure: missing content field. Message type: ${message.type}. This may indicate an SDK protocol violation.`,
-                  message,
+                  message
                 );
                 continue;
               }
@@ -974,7 +1014,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                     }
                   } else if (
                     serializedInput.length <= ClaudeCodeLanguageModel.MAX_DELTA_CALC_SIZE &&
-                    state.lastSerializedInput.length <= ClaudeCodeLanguageModel.MAX_DELTA_CALC_SIZE &&
+                    state.lastSerializedInput.length <=
+                      ClaudeCodeLanguageModel.MAX_DELTA_CALC_SIZE &&
                     serializedInput.startsWith(state.lastSerializedInput)
                   ) {
                     deltaPayload = serializedInput.slice(state.lastSerializedInput.length);
@@ -1012,7 +1053,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                       id: textPartId,
                     });
                   }
-                  
+
                   controller.enqueue({
                     type: 'text-delta',
                     id: textPartId,
@@ -1024,16 +1065,19 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
               if (!message.message?.content) {
                 console.warn(
                   `[claude-code] Unexpected user message structure: missing content field. Message type: ${message.type}. This may indicate an SDK protocol violation.`,
-                  message,
+                  message
                 );
                 continue;
               }
               const content = message.message.content;
               for (const result of this.extractToolResults(content)) {
                 let state = toolStates.get(result.id);
-                const toolName = result.name ?? state?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
+                const toolName =
+                  result.name ?? state?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
                 if (!state) {
-                  console.warn(`[claude-code] Received tool result for unknown tool ID: ${result.id}`);
+                  console.warn(
+                    `[claude-code] Received tool result for unknown tool ID: ${result.id}`
+                  );
                   state = {
                     name: toolName,
                     inputStarted: false,
@@ -1061,15 +1105,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 }
                 state.name = toolName;
                 const normalizedResult = this.normalizeToolResult(result.result);
-                const rawResult = typeof result.result === 'string'
-                  ? result.result
-                  : (() => {
-                      try {
-                        return JSON.stringify(result.result);
-                      } catch {
-                        return String(result.result);
-                      }
-                    })();
+                const rawResult =
+                  typeof result.result === 'string'
+                    ? result.result
+                    : (() => {
+                        try {
+                          return JSON.stringify(result.result);
+                        } catch {
+                          return String(result.result);
+                        }
+                      })();
 
                 emitToolCall(result.id, state);
 
@@ -1093,10 +1138,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
               // Handle tool errors
               for (const error of this.extractToolErrors(content)) {
                 let state = toolStates.get(error.id);
-                const toolName = error.name ?? state?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
+                const toolName =
+                  error.name ?? state?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
 
                 if (!state) {
-                  console.warn(`[claude-code] Received tool error for unknown tool ID: ${error.id}`);
+                  console.warn(
+                    `[claude-code] Received tool error for unknown tool ID: ${error.id}`
+                  );
                   state = {
                     name: toolName,
                     inputStarted: true,
@@ -1141,22 +1189,26 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
               if ('usage' in message) {
                 rawUsage = message.usage;
                 usage = {
-                  inputTokens: (message.usage.cache_creation_input_tokens ?? 0) + 
-                               (message.usage.cache_read_input_tokens ?? 0) +
-                               (message.usage.input_tokens ?? 0),
+                  inputTokens:
+                    (message.usage.cache_creation_input_tokens ?? 0) +
+                    (message.usage.cache_read_input_tokens ?? 0) +
+                    (message.usage.input_tokens ?? 0),
                   outputTokens: message.usage.output_tokens ?? 0,
-                  totalTokens: (message.usage.cache_creation_input_tokens ?? 0) + 
-                               (message.usage.cache_read_input_tokens ?? 0) +
-                               (message.usage.input_tokens ?? 0) + 
-                               (message.usage.output_tokens ?? 0),
+                  totalTokens:
+                    (message.usage.cache_creation_input_tokens ?? 0) +
+                    (message.usage.cache_read_input_tokens ?? 0) +
+                    (message.usage.input_tokens ?? 0) +
+                    (message.usage.output_tokens ?? 0),
                 };
               }
 
-              const finishReason: LanguageModelV2FinishReason = mapClaudeCodeFinishReason(message.subtype);
+              const finishReason: LanguageModelV2FinishReason = mapClaudeCodeFinishReason(
+                message.subtype
+              );
 
               // Store session ID in the model instance
               this.setSessionId(message.session_id);
-              
+
               // Check if we need to extract JSON based on responseFormat
               if (options.responseFormat?.type === 'json' && accumulatedText) {
                 const extractedJson = this.handleJsonExtraction(accumulatedText, streamWarnings);
@@ -1183,7 +1235,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                   id: textPartId,
                 });
               }
-              
+
               finalizeToolCalls();
 
               // Prepare JSON-safe warnings for provider metadata
@@ -1196,20 +1248,24 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 providerMetadata: {
                   'claude-code': {
                     sessionId: message.session_id,
-                    ...(message.total_cost_usd !== undefined && { costUsd: message.total_cost_usd }),
+                    ...(message.total_cost_usd !== undefined && {
+                      costUsd: message.total_cost_usd,
+                    }),
                     ...(message.duration_ms !== undefined && { durationMs: message.duration_ms }),
                     ...(rawUsage !== undefined && { rawUsage: rawUsage as JSONValue }),
                     // JSON validation warnings are collected during streaming and included
                     // in providerMetadata since the AI SDK's finish event doesn't support
                     // a top-level warnings field (unlike stream-start which was already emitted)
-                    ...(streamWarnings.length > 0 && { warnings: warningsJson as unknown as JSONValue }),
+                    ...(streamWarnings.length > 0 && {
+                      warnings: warningsJson as unknown as JSONValue,
+                    }),
                   },
                 },
               });
             } else if (message.type === 'system' && message.subtype === 'init') {
               // Store session ID for future use
               this.setSessionId(message.session_id);
-              
+
               // Emit response metadata when session is initialized
               controller.enqueue({
                 type: 'response-metadata',
@@ -1226,7 +1282,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           done();
           finalizeToolCalls();
           let errorToEmit: unknown;
-          
+
           // Special handling for AbortError to preserve abort signal reason
           if (isAbortError(error)) {
             errorToEmit = options.abortSignal?.aborted ? options.abortSignal.reason : error;
@@ -1234,13 +1290,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             // Use unified error handler
             errorToEmit = this.handleClaudeCodeError(error, messagesPrompt);
           }
-          
+
           // Emit error as a stream part
           controller.enqueue({
             type: 'error',
             error: errorToEmit,
           });
-          
+
           controller.close();
         } finally {
           if (options.abortSignal && abortListener) {
@@ -1263,9 +1319,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     };
   }
 
-  private serializeWarningsForMetadata(
-    warnings: LanguageModelV2CallWarning[],
-  ): JSONValue {
+  private serializeWarningsForMetadata(warnings: LanguageModelV2CallWarning[]): JSONValue {
     const result = warnings.map((w) => {
       const base: Record<string, string> = { type: w.type };
       if ('message' in w) {

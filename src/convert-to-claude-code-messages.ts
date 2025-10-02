@@ -113,7 +113,8 @@ function parseImagePart(part: unknown): { content?: SDKUserContentPart; warning?
 
 function convertBinaryToBase64(data: Uint8Array | ArrayBuffer): string | undefined {
   if (typeof Buffer !== 'undefined') {
-    const buffer = data instanceof Uint8Array ? Buffer.from(data) : Buffer.from(new Uint8Array(data));
+    const buffer =
+      data instanceof Uint8Array ? Buffer.from(data) : Buffer.from(new Uint8Array(data));
     return buffer.toString('base64');
   }
 
@@ -149,7 +150,10 @@ function parseFilePart(part: FileLikePart): { content?: SDKUserContentPart; warn
     return content ? { content } : { warning: IMAGE_CONVERSION_WARNING };
   }
 
-  if (data instanceof Uint8Array || (typeof ArrayBuffer !== 'undefined' && data instanceof ArrayBuffer)) {
+  if (
+    data instanceof Uint8Array ||
+    (typeof ArrayBuffer !== 'undefined' && data instanceof ArrayBuffer)
+  ) {
     const base64 = convertBinaryToBase64(data);
     if (!base64) {
       return { warning: IMAGE_CONVERSION_WARNING };
@@ -164,11 +168,11 @@ function parseFilePart(part: FileLikePart): { content?: SDKUserContentPart; warn
 /**
  * Converts AI SDK prompt format to Claude Code SDK message format.
  * Handles system prompts, user messages, assistant responses, and tool interactions.
- * 
+ *
  * @param prompt - The AI SDK prompt containing messages
  * @param mode - Optional mode for specialized output formats (e.g., JSON generation)
  * @returns An object containing the formatted message prompt and optional system prompt
- * 
+ *
  * @example
  * ```typescript
  * const { messagesPrompt } = convertToClaudeCodeMessages(
@@ -176,7 +180,7 @@ function parseFilePart(part: FileLikePart): { content?: SDKUserContentPart; warn
  *   { type: 'regular' }
  * );
  * ```
- * 
+ *
  * @remarks
  * - Image parts are collected for streaming input; unsupported variants produce warnings
  * - Tool calls are simplified to "[Tool calls made]" notation
@@ -223,7 +227,7 @@ export function convertToClaudeCodeMessages(
           addSegment('');
         }
         break;
-      
+
       case 'user':
         if (typeof message.content === 'string') {
           messages.push(message.content);
@@ -231,10 +235,10 @@ export function convertToClaudeCodeMessages(
         } else {
           // Handle multi-part content
           const textParts = message.content
-            .filter(part => part.type === 'text')
-            .map(part => part.text)
+            .filter((part) => part.type === 'text')
+            .map((part) => part.text)
             .join('\n');
-          
+
           const segmentIndex = addSegment(textParts ? `Human: ${textParts}` : '');
 
           if (textParts) {
@@ -260,23 +264,23 @@ export function convertToClaudeCodeMessages(
           }
         }
         break;
-      
+
       case 'assistant': {
         let assistantContent = '';
         if (typeof message.content === 'string') {
           assistantContent = message.content;
         } else {
           const textParts = message.content
-            .filter(part => part.type === 'text')
-            .map(part => part.text)
+            .filter((part) => part.type === 'text')
+            .map((part) => part.text)
             .join('\n');
-          
+
           if (textParts) {
             assistantContent = textParts;
           }
-          
+
           // Handle tool calls if present
-          const toolCalls = message.content.filter(part => part.type === 'tool-call');
+          const toolCalls = message.content.filter((part) => part.type === 'tool-call');
           if (toolCalls.length > 0) {
             // For now, we'll just note that tool calls were made
             assistantContent += `\n[Tool calls made]`;
@@ -287,16 +291,15 @@ export function convertToClaudeCodeMessages(
         addSegment(formattedAssistant);
         break;
       }
-      
+
       case 'tool':
         // Tool results could be included in the conversation
         for (const tool of message.content) {
-            const resultText = tool.output.type === 'text' 
-              ? tool.output.value 
-              : JSON.stringify(tool.output.value);
-            const formattedToolResult = `Tool Result (${tool.toolName}): ${resultText}`;
-            messages.push(formattedToolResult);
-            addSegment(formattedToolResult);
+          const resultText =
+            tool.output.type === 'text' ? tool.output.value : JSON.stringify(tool.output.value);
+          const formattedToolResult = `Tool Result (${tool.toolName}): ${resultText}`;
+          messages.push(formattedToolResult);
+          addSegment(formattedToolResult);
         }
         break;
     }
@@ -304,15 +307,15 @@ export function convertToClaudeCodeMessages(
 
   // For the SDK, we need to provide a single prompt string
   // Format the conversation history properly
-  
+
   // Combine system prompt with messages
   let finalPrompt = '';
-  
+
   // Add system prompt at the beginning if present
   if (systemPrompt) {
     finalPrompt = systemPrompt;
   }
-  
+
   if (messages.length > 0) {
     // Format messages
     const formattedMessages = [];
@@ -335,7 +338,7 @@ export function convertToClaudeCodeMessages(
       finalPrompt = formattedMessages.join('\n\n');
     }
   }
-  
+
   // For JSON mode, add explicit instruction to ensure JSON output
   let streamingParts: SDKUserContentPart[] = [];
   const imagePartsInOrder: SDKUserContentPart[] = [];
@@ -345,7 +348,7 @@ export function convertToClaudeCodeMessages(
     if (!images) {
       return;
     }
-    images.forEach(image => {
+    images.forEach((image) => {
       streamingParts.push(image);
       imagePartsInOrder.push(image);
     });
@@ -386,7 +389,7 @@ export function convertToClaudeCodeMessages(
   if (mode?.type === 'object-json' && jsonSchema) {
     // Prepend JSON instructions at the very beginning, before any messages
     const schemaStr = JSON.stringify(jsonSchema, null, 2);
-    
+
     finalPrompt = `CRITICAL: You MUST respond with ONLY a JSON object. NO other text, NO explanations, NO questions.
 
 Your response MUST start with { and end with }
@@ -400,22 +403,20 @@ ${finalPrompt}
 
 Remember: Your ENTIRE response must be ONLY the JSON object, starting with { and ending with }`;
 
-    streamingParts = [
-      { type: 'text', text: finalPrompt },
-      ...imagePartsInOrder,
-    ];
+    streamingParts = [{ type: 'text', text: finalPrompt }, ...imagePartsInOrder];
   }
 
   return {
     messagesPrompt: finalPrompt,
     systemPrompt,
     ...(warnings.length > 0 && { warnings }),
-    streamingContentParts: streamingParts.length > 0
-      ? (streamingParts as SDKUserMessage['message']['content'])
-      : ([
-          { type: 'text', text: finalPrompt },
-          ...imagePartsInOrder,
-        ] as SDKUserMessage['message']['content']),
+    streamingContentParts:
+      streamingParts.length > 0
+        ? (streamingParts as SDKUserMessage['message']['content'])
+        : ([
+            { type: 'text', text: finalPrompt },
+            ...imagePartsInOrder,
+          ] as SDKUserMessage['message']['content']),
     hasImageParts,
   };
 }

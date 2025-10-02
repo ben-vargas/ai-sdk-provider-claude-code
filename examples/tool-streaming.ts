@@ -64,7 +64,7 @@ async function main() {
         if (Array.isArray(part.warnings) && part.warnings.length > 0) {
           console.log(
             '  warnings:',
-            part.warnings.map((warning: unknown) => JSON.stringify(warning)),
+            part.warnings.map((warning: unknown) => JSON.stringify(warning))
           );
         }
         break;

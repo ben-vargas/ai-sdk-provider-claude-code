@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 /**
  * Example: Provider Limitations and Unsupported Features
- * 
+ *
  * This example explicitly demonstrates which AI SDK features are NOT supported
  * by the Claude Code provider due to CLI limitations. It shows what happens
  * when you try to use these features and suggests workarounds where possible.
@@ -13,30 +13,36 @@ import { z } from 'zod';
 
 async function main() {
   console.log('🚧 Claude Code Provider Limitations\n');
-  console.log('This example demonstrates features that are NOT supported by the Claude Code SDK.\n');
+  console.log(
+    'This example demonstrates features that are NOT supported by the Claude Code SDK.\n'
+  );
 
   // 1. Parameters that are silently ignored
   console.log('1. Parameters that are silently ignored:');
   console.log('   The following AI SDK parameters have no effect with Claude Code SDK:\n');
-  
+
   try {
     const { text, usage } = await generateText({
       model: claudeCode('sonnet'),
       prompt: 'Write exactly 5 words.',
       // These parameters are part of the AI SDK spec but are ignored by Claude Code SDK
-      temperature: 0.1,        // ❌ Ignored - CLI doesn't support temperature control
-      maxOutputTokens: 10,    // ❌ Ignored - CLI doesn't support output length limits
-      topP: 0.9,              // ❌ Ignored - CLI doesn't support nucleus sampling
-      topK: 50,               // ❌ Ignored - CLI doesn't support top-k sampling
-      presencePenalty: 0.5,   // ❌ Ignored - CLI doesn't support repetition penalties
-      frequencyPenalty: 0.5,  // ❌ Ignored - CLI doesn't support repetition penalties
+      temperature: 0.1, // ❌ Ignored - CLI doesn't support temperature control
+      maxOutputTokens: 10, // ❌ Ignored - CLI doesn't support output length limits
+      topP: 0.9, // ❌ Ignored - CLI doesn't support nucleus sampling
+      topK: 50, // ❌ Ignored - CLI doesn't support top-k sampling
+      presencePenalty: 0.5, // ❌ Ignored - CLI doesn't support repetition penalties
+      frequencyPenalty: 0.5, // ❌ Ignored - CLI doesn't support repetition penalties
       stopSequences: ['END'], // ❌ Ignored - CLI doesn't support custom stop sequences
-      seed: 12345,            // ❌ Ignored - CLI doesn't support deterministic output
+      seed: 12345, // ❌ Ignored - CLI doesn't support deterministic output
     });
 
     console.log('   Result:', text);
     console.log('   Tokens used:', usage.totalTokens);
-    console.log('\n   ⚠️  Note: Despite setting maxTokens:10, the response used', usage.totalTokens, 'tokens');
+    console.log(
+      '\n   ⚠️  Note: Despite setting maxTokens:10, the response used',
+      usage.totalTokens,
+      'tokens'
+    );
     console.log('   ⚠️  All the above parameters were silently ignored by the CLI\n');
   } catch (error) {
     console.error('   Error:', error);
@@ -44,7 +50,7 @@ async function main() {
 
   // 2. Object generation - works via prompt engineering
   console.log('2. Object generation (works with limitations):');
-  
+
   const PersonSchema = z.object({
     name: z.string(),
     age: z.number(),
@@ -81,8 +87,8 @@ async function main() {
     const { textStream } = streamText({
       model: claudeCode('opus'),
       prompt: 'Count to 3',
-      temperature: 0,  // ❌ Still ignored in streaming mode
-      maxOutputTokens: 5,    // ❌ Still ignored in streaming mode
+      temperature: 0, // ❌ Still ignored in streaming mode
+      maxOutputTokens: 5, // ❌ Still ignored in streaming mode
     });
 
     console.log('   Streaming: ');
@@ -99,29 +105,29 @@ async function main() {
   console.log('1. For temperature control:');
   console.log('   - Adjust your prompts to be more specific');
   console.log('   - Use phrases like "be creative" or "be precise"\n');
-  
+
   console.log('2. For output length control:');
   console.log('   - Specify length in your prompt: "Write exactly 50 words"');
   console.log('   - Use explicit instructions: "Keep your response brief"\n');
-  
+
   console.log('3. For structured output:');
   console.log('   - Use generateObject/streamObject (now supported!');
   console.log('   - Provider automatically handles JSON extraction');
   console.log('   - Only object-json mode is supported\n');
-  
+
   console.log('4. For deterministic output:');
   console.log('   - Not possible with Claude Code SDK');
   console.log('   - Each request will produce different results\n');
-  
+
   console.log('5. For function calling:');
   console.log('   - Implement your own prompt-based routing');
-  console.log('   - Parse Claude\'s response to determine actions\n');
+  console.log("   - Parse Claude's response to determine actions\n");
 
   console.log('🔍 Why these limitations exist:');
   console.log('- Claude Code SDK/CLI is mainly designed for interactive coding assistance');
-  console.log('- It lacks the API\'s fine-grained control parameters');
+  console.log("- It lacks the API's fine-grained control parameters");
   console.log('- The provider accurately reflects what the CLI can do\n');
-  
+
   console.log('✅ What DOES work well:');
   console.log('- Basic text generation and streaming');
   console.log('- Object generation via generateObject/streamObject');

@@ -14,7 +14,7 @@ async function checkSetup() {
   try {
     // Try a simple generation to verify everything works
     console.log('Testing SDK connection...');
-    
+
     const { text, usage } = await generateText({
       model: claudeCode('sonnet'),
       prompt: 'Say "Hello from Claude" and nothing else.',
@@ -24,11 +24,10 @@ async function checkSetup() {
     console.log('Response:', text);
     console.log('Tokens used:', usage.totalTokens);
     console.log('\n🎉 You can run all the examples and integration tests!');
-    
   } catch (error: any) {
     console.error('❌ Failed to connect to Claude Code');
     console.error('Error:', error.message);
-    
+
     if (error.message?.includes('not found') || error.message?.includes('ENOENT')) {
       console.log('\n💡 Make sure Claude Code SDK is installed:');
       console.log('   npm install -g @anthropic-ai/claude-code');
@@ -41,7 +40,7 @@ async function checkSetup() {
       console.log('2. Authenticate: claude login');
       console.log('3. Verify installation: claude --version');
     }
-    
+
     process.exit(1);
   }
 }

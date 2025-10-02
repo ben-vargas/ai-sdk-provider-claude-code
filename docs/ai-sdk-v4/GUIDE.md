@@ -90,7 +90,7 @@ try {
     prompt: 'Analyze this complex problem in detail...',
     abortSignal: controller.signal,
   });
-  
+
   clearTimeout(timeoutId);
   console.log(text);
 } catch (error) {
@@ -99,7 +99,6 @@ try {
   }
 }
 ```
-
 
 ### Session Management (Experimental)
 
@@ -155,19 +154,19 @@ const { text } = await generateText({
 
 ### Configuration Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `model` | `'opus' \| 'sonnet'` | `'opus'` | Model to use |
-| `pathToClaudeCodeExecutable` | `string` | `'claude'` | Path to Claude CLI executable |
-| `customSystemPrompt` | `string` | `undefined` | Custom system prompt |
-| `appendSystemPrompt` | `string` | `undefined` | Append to system prompt |
-| `maxTurns` | `number` | `undefined` | Maximum conversation turns |
-| `maxThinkingTokens` | `number` | `undefined` | Maximum thinking tokens |
-| `permissionMode` | `string` | `'default'` | Permission mode for tools |
-| `allowedTools` | `string[]` | `undefined` | Tools to explicitly allow |
-| `disallowedTools` | `string[]` | `undefined` | Tools to restrict |
-| `mcpServers` | `object` | `undefined` | MCP server configuration |
-| `resume` | `string` | `undefined` | Resume an existing session |
+| Option                       | Type                 | Default     | Description                   |
+| ---------------------------- | -------------------- | ----------- | ----------------------------- |
+| `model`                      | `'opus' \| 'sonnet'` | `'opus'`    | Model to use                  |
+| `pathToClaudeCodeExecutable` | `string`             | `'claude'`  | Path to Claude CLI executable |
+| `customSystemPrompt`         | `string`             | `undefined` | Custom system prompt          |
+| `appendSystemPrompt`         | `string`             | `undefined` | Append to system prompt       |
+| `maxTurns`                   | `number`             | `undefined` | Maximum conversation turns    |
+| `maxThinkingTokens`          | `number`             | `undefined` | Maximum thinking tokens       |
+| `permissionMode`             | `string`             | `'default'` | Permission mode for tools     |
+| `allowedTools`               | `string[]`           | `undefined` | Tools to explicitly allow     |
+| `disallowedTools`            | `string[]`           | `undefined` | Tools to restrict             |
+| `mcpServers`                 | `object`             | `undefined` | MCP server configuration      |
+| `resume`                     | `string`             | `undefined` | Resume an existing session    |
 
 ### Custom Configuration
 
@@ -179,7 +178,7 @@ const claude = createClaudeCode({
     pathToClaudeCodeExecutable: '/usr/local/bin/claude',
     permissionMode: 'default', // Ask for permissions
     customSystemPrompt: 'You are a helpful coding assistant.',
-  }
+  },
 });
 
 const { text } = await generateText({
@@ -201,8 +200,8 @@ const defaultClaude = createClaudeCode();
 // Disable all logging
 const silentClaude = createClaudeCode({
   defaultSettings: {
-    logger: false
-  }
+    logger: false,
+  },
 });
 
 // Custom logger
@@ -211,17 +210,18 @@ const customClaude = createClaudeCode({
     logger: {
       warn: (message) => myLogger.warn('Claude:', message),
       error: (message) => myLogger.error('Claude:', message),
-    }
-  }
+    },
+  },
 });
 
 // Model-specific logger override
 const model = customClaude('opus', {
-  logger: false // Disable logging for this model only
+  logger: false, // Disable logging for this model only
 });
 ```
 
 Logger options:
+
 - `undefined` (default): Uses `console.warn` and `console.error`
 - `false`: Disables all logging
 - Custom `Logger` object: Must implement `warn` and `error` methods
@@ -231,10 +231,12 @@ Logger options:
 Control which tools Claude Code can use with either `allowedTools` (allowlist) or `disallowedTools` (denylist). These flags work for **both built-in Claude tools and MCP tools**, providing session-only permission overrides.
 
 #### Tool Types
+
 - **Built-in tools**: `Bash`, `Edit`, `Read`, `Write`, `LS`, `Grep`, etc.
 - **MCP tools**: `mcp__serverName__toolName` format
 
 #### Using allowedTools (Allowlist)
+
 ```typescript
 import { createClaudeCode } from 'ai-sdk-provider-claude-code';
 
@@ -245,49 +247,31 @@ const readOnlyClaude = createClaudeCode({
 
 // Allow specific Bash commands using specifiers
 const gitOnlyClaude = createClaudeCode({
-  allowedTools: [
-    'Bash(git log:*)',
-    'Bash(git diff:*)',
-    'Bash(git status)'
-  ],
+  allowedTools: ['Bash(git log:*)', 'Bash(git diff:*)', 'Bash(git status)'],
 });
 
 // Mix built-in and MCP tools
 const mixedClaude = createClaudeCode({
-  allowedTools: [
-    'Read',
-    'Bash(npm test:*)',
-    'mcp__filesystem__read_file',
-    'mcp__git__status'
-  ],
+  allowedTools: ['Read', 'Bash(npm test:*)', 'mcp__filesystem__read_file', 'mcp__git__status'],
 });
 ```
 
 #### Using disallowedTools (Denylist)
+
 ```typescript
 // Block dangerous operations
 const safeClaude = createClaudeCode({
-  disallowedTools: [
-    'Write',
-    'Edit', 
-    'Delete',
-    'Bash(rm:*)',
-    'Bash(sudo:*)'
-  ],
+  disallowedTools: ['Write', 'Edit', 'Delete', 'Bash(rm:*)', 'Bash(sudo:*)'],
 });
 
 // Block all Bash and MCP write operations
 const restrictedClaude = createClaudeCode({
-  disallowedTools: [
-    'Bash',
-    'mcp__filesystem__write_file',
-    'mcp__git__commit',
-    'mcp__git__push'
-  ],
+  disallowedTools: ['Bash', 'mcp__filesystem__write_file', 'mcp__git__commit', 'mcp__git__push'],
 });
 ```
 
 #### Model-Specific Overrides
+
 ```typescript
 const baseClaude = createClaudeCode({
   disallowedTools: ['Write', 'Edit'],
@@ -303,6 +287,7 @@ const { text } = await generateText({
 ```
 
 **Key Points**:
+
 - These are **session-only permission overrides** (same syntax as settings.json)
 - Higher priority than settings files
 - Works for both built-in tools AND MCP tools
@@ -312,6 +297,7 @@ const { text } = await generateText({
 - Use `/permissions` in Claude to see all available tool names
 
 **Common Patterns**:
+
 - Read-only mode: `disallowedTools: ['Write', 'Edit', 'Delete']`
 - No shell access: `disallowedTools: ['Bash']`
 - Safe git: `allowedTools: ['Bash(git log:*)', 'Bash(git diff:*)']`
@@ -342,7 +328,7 @@ const claude = createClaudeCode({
     github: {
       type: 'sse',
       url: 'https://mcp.github.com/api',
-      headers: { 'Authorization': 'Bearer YOUR_TOKEN' },
+      headers: { Authorization: 'Bearer YOUR_TOKEN' },
     },
   },
 });
@@ -409,6 +395,7 @@ This is especially useful in UI scenarios where users might cancel requests or n
 The SDK provides structured message types for different events:
 
 #### Assistant Message
+
 ```typescript
 {
   type: 'assistant',
@@ -421,6 +408,7 @@ The SDK provides structured message types for different events:
 ```
 
 #### Result Message
+
 ```typescript
 {
   type: 'result',
@@ -433,6 +421,7 @@ The SDK provides structured message types for different events:
 ```
 
 #### System Message
+
 ```typescript
 {
   type: 'system',
@@ -446,6 +435,7 @@ The SDK provides structured message types for different events:
 ### SDK Implementation
 
 The provider uses the official `@anthropic-ai/claude-code` SDK which provides:
+
 - **AsyncGenerator pattern**: Native streaming support with `query()` function
 - **Structured messages**: Rich message types (assistant, result, system, error)
 - **Built-in features**: AbortController, session management, MCP servers
@@ -478,6 +468,7 @@ console.log(providerMetadata);
 ```
 
 **Important Note about Costs**: The `costUsd` field shows the cost of the API usage:
+
 - **For Pro/Max subscribers**: This is informational only - usage is covered by your monthly subscription
 - **For API key users**: This represents actual charges that will be billed to your account
 
@@ -523,6 +514,7 @@ console.log(analysis);
 **How it works**: The provider appends JSON generation instructions to your prompt and uses a tolerant JSON parser to extract valid output from Claude's response. Minor issues like trailing commas or comments are automatically handled, though this is still not as strict as native JSON mode.
 
 **Important notes**:
+
 - **Object mode support**: Only `object-json` mode is supported (via `generateObject`/`streamObject`). The provider uses prompt engineering and JSON extraction to ensure reliable object generation.
 - **Streaming behavior**: While `streamObject` is supported, it accumulates the full response before extracting JSON to ensure validity. Regular text streaming works in real-time.
 
@@ -531,7 +523,9 @@ console.log(analysis);
 ### Quick Start Examples
 
 #### Basic Objects
+
 Start with simple schemas and clear prompts:
+
 ```typescript
 const { object } = await generateObject({
   model: claudeCode('sonnet'),
@@ -543,31 +537,41 @@ const { object } = await generateObject({
   prompt: 'Generate a developer profile',
 });
 ```
+
 [Full example](../examples/generate-object-basic.ts)
 
 #### Nested Structures
+
 Build complex hierarchical data:
+
 ```typescript
 const { object } = await generateObject({
   model: claudeCode('sonnet'),
   schema: z.object({
     company: z.object({
-      departments: z.array(z.object({
-        name: z.string(),
-        teams: z.array(z.object({
+      departments: z.array(
+        z.object({
           name: z.string(),
-          members: z.number(),
-        })),
-      })),
+          teams: z.array(
+            z.object({
+              name: z.string(),
+              members: z.number(),
+            })
+          ),
+        })
+      ),
     }),
   }),
   prompt: 'Generate a company org structure',
 });
 ```
+
 [Full example](../examples/generate-object-nested.ts)
 
 #### Constrained Generation
+
 Use Zod's validation features:
+
 ```typescript
 const { object } = await generateObject({
   model: claudeCode('sonnet'),
@@ -579,8 +583,8 @@ const { object } = await generateObject({
   prompt: 'Generate a task with medium priority',
 });
 ```
-[Full example](../examples/generate-object-constraints.ts)
 
+[Full example](../examples/generate-object-constraints.ts)
 
 ### Best Practices
 
@@ -602,9 +606,11 @@ const { object } = await generateObject({
 ### Common Issues and Solutions
 
 #### 1. Invalid JSON Response
+
 **Problem**: Claude returns text instead of valid JSON
 
 **Solutions**:
+
 - Simplify your schema - start with fewer fields
 - Make your prompt more explicit: "Generate only valid JSON"
 - Check the schema for overly complex constraints
@@ -617,59 +623,74 @@ async function generateWithRetry(schema, prompt, maxRetries = 3) {
       return await generateObject({ model, schema, prompt });
     } catch (error) {
       if (i === maxRetries - 1) throw error;
-      await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
+      await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, i)));
     }
   }
 }
 ```
 
 #### 2. Missing Required Fields
+
 **Problem**: Generated objects missing required properties
 
 **Solutions**:
+
 - Emphasize requirements in your prompt
 - Use descriptive field names
 - Add field descriptions with `.describe()`
 - Example:
+
 ```typescript
 z.object({
   // Bad: vague field name
   val: z.number(),
-  
+
   // Good: clear field name with description
   totalPrice: z.number().describe('Total price in USD'),
-})
+});
 ```
 
 #### 3. Type Mismatches
+
 **Problem**: String when expecting number, wrong date format, etc.
 
 **Solutions**:
+
 - Be explicit in descriptions: "age as a number" not just "age"
 - For dates, specify format: `.describe('Date in YYYY-MM-DD format')`
 - Use regex patterns for strings: `z.string().regex(/^\d{4}-\d{2}-\d{2}$/)`
 
 #### 4. Schema Too Complex
+
 **Problem**: Very complex schemas fail or timeout
 
 **Solutions**:
+
 - Break into smaller parts and combine:
+
 ```typescript
 // Instead of one huge schema, compose smaller ones
-const userSchema = z.object({ /* user fields */ });
-const settingsSchema = z.object({ /* settings */ });
+const userSchema = z.object({
+  /* user fields */
+});
+const settingsSchema = z.object({
+  /* settings */
+});
 const profileSchema = z.object({
   user: userSchema,
   settings: settingsSchema,
 });
 ```
+
 - Generate in steps and merge results
 - Increase timeout for complex generations
 
 #### 5. Inconsistent Results
+
 **Problem**: Same prompt gives different structure each time
 
 **Solutions**:
+
 - Make schemas more constrained (use enums, min/max)
 - Provide example in prompt
 - Use consistent field naming conventions
@@ -678,6 +699,7 @@ const profileSchema = z.object({
 ### Debugging Tips
 
 1. **Enable Debug Logging**:
+
 ```typescript
 const { object, usage, warnings } = await generateObject({
   model: claudeCode('sonnet'),
@@ -689,9 +711,12 @@ console.log('Warnings:', warnings);
 ```
 
 2. **Test Schema Separately**:
+
 ```typescript
 // Validate your schema works
-const testData = { /* your test object */ };
+const testData = {
+  /* your test object */
+};
 try {
   schema.parse(testData);
   console.log('Schema is valid');
@@ -701,10 +726,10 @@ try {
 ```
 
 3. **Progressive Enhancement**:
-Start with minimal schema, test, then add fields one by one
+   Start with minimal schema, test, then add fields one by one
 
 4. **Check Examples**:
-Review our examples for implementation patterns
+   Review our examples for implementation patterns
 
 ## Limitations
 
@@ -728,11 +753,11 @@ The provider uses standard AI SDK error classes for better ecosystem compatibili
 ```typescript
 import { generateText } from 'ai';
 import { APICallError, LoadAPIKeyError } from '@ai-sdk/provider';
-import { 
-  claudeCode, 
-  isAuthenticationError, 
+import {
+  claudeCode,
+  isAuthenticationError,
   isTimeoutError,
-  getErrorMetadata 
+  getErrorMetadata,
 } from 'ai-sdk-provider-claude-code';
 
 try {
@@ -771,6 +796,7 @@ try {
 ## Troubleshooting
 
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for solutions to common issues including:
+
 - Authentication problems
 - SDK installation issues
 - Session management
@@ -832,7 +858,7 @@ ai-sdk-provider-claude-code/
 
 1. **No image support**: The CLI doesn't accept image inputs
 2. **Authentication required**: Requires separate Claude Code SDK authentication (`claude login`)
-3. **Session IDs change**: Each request gets a new session ID, even when using `--resume` 
+3. **Session IDs change**: Each request gets a new session ID, even when using `--resume`
 4. **No AI SDK tool calling interface**: The AI SDK's function/tool calling interface is not implemented, but Claude can use tools via MCP servers and built-in CLI tools
 
 ## Contributing
@@ -840,6 +866,7 @@ ai-sdk-provider-claude-code/
 Contributions are welcome! Please read our contributing guidelines before submitting a PR.
 
 **Alpha Focus Areas:**
+
 - Code structure improvements (AI-generated code cleanup)
 - Performance optimizations
 - Better error handling patterns

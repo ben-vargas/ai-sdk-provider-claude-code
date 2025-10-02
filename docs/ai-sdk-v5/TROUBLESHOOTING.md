@@ -8,7 +8,8 @@ This guide documents common issues and solutions for the Claude Code AI SDK Prov
 
 **Problem**: Getting authentication errors when trying to use the provider.
 
-**Solution**: 
+**Solution**:
+
 ```bash
 # Install Claude Code SDK globally
 npm install -g @anthropic-ai/claude-code
@@ -18,6 +19,7 @@ claude login
 ```
 
 **Verification**:
+
 ```bash
 # Check if authenticated
 npx tsx ../examples/check-cli.ts
@@ -28,6 +30,7 @@ npx tsx ../examples/check-cli.ts
 **Problem**: Error about `@anthropic-ai/claude-agent-sdk` module not found.
 
 **Solution**: The SDK is a dependency of this provider and should be installed automatically. If not:
+
 ```bash
 npm install @anthropic-ai/claude-agent-sdk
 ```
@@ -124,6 +127,7 @@ try {
 ```
 
 **Guidelines**:
+
 - Simple queries: Default timeout is sufficient
 - Complex reasoning: 5-10 minutes may be needed
 - Very long tasks: Consider breaking into smaller chunks
@@ -133,6 +137,7 @@ try {
 **Problem**: Claude returns text instead of valid JSON when using `generateObject`.
 
 **Solutions**:
+
 1. **Simplify your schema** - Start with fewer fields
 2. **Clear prompts** - Be explicit: "Generate a user profile with name and age"
 3. **Use descriptions** - Add `.describe()` to schema fields
@@ -142,14 +147,14 @@ try {
 async function generateWithRetry(schema, prompt, maxRetries = 3) {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      return await generateObject({ 
-        model: claudeCode('sonnet'), 
-        schema, 
-        prompt 
+      return await generateObject({
+        model: claudeCode('sonnet'),
+        schema,
+        prompt,
       });
     } catch (error) {
       if (i === maxRetries - 1) throw error;
-      await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
+      await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, i)));
     }
   }
 }
@@ -167,7 +172,7 @@ import { ModelMessage } from 'ai';
 const messages: ModelMessage[] = [
   { role: 'user', content: [{ type: 'text', text: 'My name is Alice' }] },
   { role: 'assistant', content: [{ type: 'text', text: 'Nice to meet you, Alice!' }] },
-  { role: 'user', content: [{ type: 'text', text: 'What is my name?' }] }
+  { role: 'user', content: [{ type: 'text', text: 'What is my name?' }] },
 ];
 
 const result = await generateText({
@@ -259,10 +264,14 @@ for await (const chunk of result.fullStream) {
 
 ```typescript
 // ❌ v4 setting names
-{ maxTokens: 1000 }
+{
+  maxTokens: 1000;
+}
 
 // ✅ v5 setting names
-{ maxOutputTokens: 1000 }
+{
+  maxOutputTokens: 1000;
+}
 
 // Note: Many settings like temperature, topP, etc. are still not supported by Claude Code SDK
 ```
@@ -270,6 +279,7 @@ for await (const chunk of result.fullStream) {
 ## Debugging Tips
 
 ### 1. Verify Setup
+
 ```bash
 # Check Claude CLI version
 claude --version
@@ -282,6 +292,7 @@ npx tsx ../examples/integration-test.ts
 ```
 
 ### 2. Enable Debug Logging
+
 ```typescript
 // Log provider metadata to debug issues
 const result = await generateText({
@@ -294,6 +305,7 @@ console.log('Metadata:', result.providerMetadata);
 ```
 
 ### 3. Test Specific Features
+
 ```bash
 # Test streaming
 npx tsx ../examples/streaming.ts
@@ -311,14 +323,17 @@ npx tsx ../examples/long-running-tasks.ts
 ## Platform-Specific Issues
 
 ### Windows
+
 - Ensure Claude CLI is in your PATH
 - Use PowerShell or Command Prompt (not WSL) for installation
 
 ### macOS
+
 - May need to allow CLI in Security & Privacy settings
 - Use Homebrew or direct npm installation
 
 ### Linux
+
 - Ensure Node.js ≥ 18 is installed
 - May need to use `sudo` for global npm installs
 
@@ -354,12 +369,12 @@ npx tsx ../examples/long-running-tasks.ts
 
 ## Common Error Messages
 
-| Error | Cause | Solution |
-|-------|-------|----------|
-| "Claude Code executable not found" | CLI not installed | Run `npm install -g @anthropic-ai/claude-code` |
-| "Authentication required" | Not logged in | Run `claude login` |
-| "No object generated" | Invalid JSON response | Simplify schema, improve prompt |
-| "Request timeout" | Task took too long | Increase timeout with AbortSignal |
-| "Session not found" | Invalid session ID | Use message history instead |
-| "Invalid message content" | v4 message format | Update to v5 array format |
-| "promptTokens is undefined" | v4 property names | Use inputTokens/outputTokens |
+| Error                              | Cause                 | Solution                                       |
+| ---------------------------------- | --------------------- | ---------------------------------------------- |
+| "Claude Code executable not found" | CLI not installed     | Run `npm install -g @anthropic-ai/claude-code` |
+| "Authentication required"          | Not logged in         | Run `claude login`                             |
+| "No object generated"              | Invalid JSON response | Simplify schema, improve prompt                |
+| "Request timeout"                  | Task took too long    | Increase timeout with AbortSignal              |
+| "Session not found"                | Invalid session ID    | Use message history instead                    |
+| "Invalid message content"          | v4 message format     | Update to v5 array format                      |
+| "promptTokens is undefined"        | v4 property names     | Use inputTokens/outputTokens                   |

@@ -9,9 +9,9 @@ The migration focused on the following key areas:
 1.  **Dependency Upgrades:** The first step was to update all relevant `@ai-sdk` and `ai` packages to their `@beta` versions. This brought in the new `LanguageModelV2` architecture and other breaking changes.
 
 2.  **`LanguageModelV2` Adoption:** The core of the migration was to rewrite the `ClaudeCodeLanguageModel` to conform to the new `LanguageModelV2` interface. This involved the following:
-    *   Changing the `doStream` and `doGenerate` methods to handle the new `UIMessage` and `ModelMessage` formats.
-    *   Adopting the "content-first" design, where all outputs are treated as ordered content parts.
-    *   Ensuring type safety with the new `LanguageModelV2` types.
+    - Changing the `doStream` and `doGenerate` methods to handle the new `UIMessage` and `ModelMessage` formats.
+    - Adopting the "content-first" design, where all outputs are treated as ordered content parts.
+    - Ensuring type safety with the new `LanguageModelV2` types.
 
 3.  **Message Overhaul:** The provider was updated to handle the new `UIMessage` and `ModelMessage` types. This meant that the `convertToClaudeCodeMessages` function was updated to accept `ModelMessage`s and convert them to the format that the Claude API expects.
 

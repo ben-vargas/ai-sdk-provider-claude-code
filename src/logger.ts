@@ -18,7 +18,7 @@ const noopLogger: Logger = {
 
 /**
  * Gets the appropriate logger based on configuration.
- * 
+ *
  * @param logger - Logger configuration from settings
  * @returns The logger to use
  */
@@ -26,10 +26,10 @@ export function getLogger(logger: Logger | false | undefined): Logger {
   if (logger === false) {
     return noopLogger;
   }
-  
+
   if (logger === undefined) {
     return defaultLogger;
   }
-  
+
   return logger;
 }

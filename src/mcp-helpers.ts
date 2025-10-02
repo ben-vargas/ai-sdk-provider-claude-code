@@ -12,15 +12,16 @@ export type MinimalCallToolResult = {
   structuredContent?: unknown;
 };
 
-export function createCustomMcpServer<Tools extends Record<string, {
-  description: string;
-  inputSchema: ZodObject<ZodRawShape>;
-  handler: (args: Record<string, unknown>, extra: unknown) => Promise<MinimalCallToolResult>;
-}>>(config: {
-  name: string;
-  version?: string;
-  tools: Tools;
-}): McpSdkServerConfigWithInstance {
+export function createCustomMcpServer<
+  Tools extends Record<
+    string,
+    {
+      description: string;
+      inputSchema: ZodObject<ZodRawShape>;
+      handler: (args: Record<string, unknown>, extra: unknown) => Promise<MinimalCallToolResult>;
+    }
+  >,
+>(config: { name: string; version?: string; tools: Tools }): McpSdkServerConfigWithInstance {
   const defs = Object.entries(config.tools).map(([name, def]) =>
     tool(
       name,

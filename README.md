@@ -15,21 +15,23 @@
 
 ## Version Compatibility
 
-| Provider Version | AI SDK Version | NPM Tag | Status | Branch |
-|-----------------|----------------|---------|---------|--------|
-| 1.x.x | v5 | `latest` | Stable | `main` |
-| 0.x.x | v4 | `ai-sdk-v4` | Maintenance | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
+| Provider Version | AI SDK Version | NPM Tag     | Status      | Branch                                                                                  |
+| ---------------- | -------------- | ----------- | ----------- | --------------------------------------------------------------------------------------- |
+| 1.x.x            | v5             | `latest`    | Stable      | `main`                                                                                  |
+| 0.x.x            | v4             | `ai-sdk-v4` | Maintenance | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
 
 ### Installing the Right Version
 
 **For AI SDK v5 (recommended):**
+
 ```bash
 npm install ai-sdk-provider-claude-code ai
 # or explicitly: npm install ai-sdk-provider-claude-code@latest
 ```
 
 **For AI SDK v4 (legacy):**
-```bash
+
+````bash
 npm install ai-sdk-provider-claude-code@ai-sdk-v4 ai@^4.3.16
 # or use specific version: npm install ai-sdk-provider-claude-code@^0.2.2
 
@@ -39,9 +41,10 @@ npm install ai-sdk-provider-claude-code@ai-sdk-v4 ai@^4.3.16
 ```bash
 npm install -g @anthropic-ai/claude-code
 claude login
-```
+````
 
 ### 2. Add the provider
+
 ```bash
 # For v5 (recommended)
 npm install ai-sdk-provider-claude-code ai
@@ -63,13 +66,14 @@ Please ensure you have appropriate permissions and comply with all applicable te
 ## Quick Start
 
 ### AI SDK v5
+
 ```typescript
 import { streamText } from 'ai';
 import { claudeCode } from 'ai-sdk-provider-claude-code';
 
 const result = streamText({
   model: claudeCode('sonnet'),
-  prompt: 'Hello, Claude!'
+  prompt: 'Hello, Claude!',
 });
 
 const text = await result.text;
@@ -77,13 +81,14 @@ console.log(text);
 ```
 
 ### AI SDK v4
+
 ```typescript
 import { generateText } from 'ai';
 import { claudeCode } from 'ai-sdk-provider-claude-code';
 
 const { text } = await generateText({
   model: claudeCode('sonnet'),
-  prompt: 'Hello, Claude!'
+  prompt: 'Hello, Claude!',
 });
 
 console.log(text);
@@ -94,6 +99,7 @@ console.log(text);
 See [Breaking Changes Guide](docs/ai-sdk-v5/V5_BREAKING_CHANGES.md) for details on migrating from v0.x to v1.x.
 
 Key changes:
+
 - Requires AI SDK v5
 - New streaming API pattern
 - Updated token usage properties
@@ -110,7 +116,7 @@ Key changes:
 - **[Breaking Changes](docs/ai-sdk-v5/V5_BREAKING_CHANGES.md)** - v0.x to v1.x migration guide
 - **[Troubleshooting](docs/ai-sdk-v5/TROUBLESHOOTING.md)** - Common issues and solutions
 - **[Examples](examples/)** - Sample scripts and patterns
- - **[Tool Streaming Support](docs/ai-sdk-v5/TOOL_STREAMING_SUPPORT.md)** - Event semantics and performance notes
+- **[Tool Streaming Support](docs/ai-sdk-v5/TOOL_STREAMING_SUPPORT.md)** - Event semantics and performance notes
 
 ## Migrating to Claude Agent SDK
 
@@ -159,7 +165,7 @@ claude login
 - 🎯 Object generation with JSON schemas
 - 🛑 AbortSignal support
 - 🔧 Tool management (MCP servers, permissions)
- - 🧩 Callbacks (hooks, canUseTool)
+- 🧩 Callbacks (hooks, canUseTool)
 
 ## Image Inputs (Streaming Only)
 
@@ -186,6 +192,7 @@ claude login
 ## Contributing
 
 We welcome contributions, especially:
+
 - Code structure improvements
 - Performance optimizations
 - Better error handling

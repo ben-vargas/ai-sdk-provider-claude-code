@@ -28,7 +28,10 @@ export { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
  * @see {@link ClaudeCodeModelId} for supported model identifiers
  * @see {@link ClaudeCodeLanguageModelOptions} for model configuration options
  */
-export type { ClaudeCodeModelId, ClaudeCodeLanguageModelOptions } from './claude-code-language-model.js';
+export type {
+  ClaudeCodeModelId,
+  ClaudeCodeLanguageModelOptions,
+} from './claude-code-language-model.js';
 
 /**
  * Settings for configuring Claude Code behavior.
@@ -62,7 +65,7 @@ export type {
 /**
  * Error handling utilities for Claude Code.
  * These functions help create and identify specific error types.
- * 
+ *
  * @see {@link isAuthenticationError} to check for authentication failures
  * @see {@link isTimeoutError} to check for timeout errors
  * @see {@link getErrorMetadata} to extract error metadata
@@ -70,13 +73,13 @@ export type {
  * @see {@link createAuthenticationError} to create authentication errors
  * @see {@link createTimeoutError} to create timeout errors
  */
-export { 
-  isAuthenticationError, 
-  isTimeoutError, 
+export {
+  isAuthenticationError,
+  isTimeoutError,
   getErrorMetadata,
   createAPICallError,
   createAuthenticationError,
-  createTimeoutError
+  createTimeoutError,
 } from './errors.js';
 
 /**

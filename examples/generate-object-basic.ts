@@ -2,10 +2,10 @@
 
 /**
  * Basic Object Generation Examples
- * 
+ *
  * This example demonstrates fundamental object generation patterns using
  * the Claude Code provider with JSON schema validation.
- * 
+ *
  * Topics covered:
  * - Simple objects with primitive types
  * - Basic arrays
@@ -30,7 +30,7 @@ console.log('=== Claude Code: Basic Object Generation ===\n');
 // Example 1: Simple object with primitives
 async function example1_simpleObject() {
   console.log('1️⃣  Simple Object with Primitives\n');
-  
+
   const { object } = await generateObject({
     model: claudeCode('sonnet'),
     schema: z.object({
@@ -50,7 +50,7 @@ async function example1_simpleObject() {
 // Example 2: Object with arrays
 async function example2_arrays() {
   console.log('2️⃣  Object with Arrays\n');
-  
+
   const { object } = await generateObject({
     model: claudeCode('sonnet'),
     schema: z.object({
@@ -70,7 +70,7 @@ async function example2_arrays() {
 // Example 3: Optional fields
 async function example3_optionalFields() {
   console.log('3️⃣  Object with Optional Fields\n');
-  
+
   const { object } = await generateObject({
     model: claudeCode('sonnet'),
     schema: z.object({
@@ -92,7 +92,7 @@ async function example3_optionalFields() {
 // Example 4: Building complexity gradually
 async function example4_gradualComplexity() {
   console.log('4️⃣  Building Complexity Gradually\n');
-  
+
   // Start simple
   console.log('Step 1 - Basic user:');
   const { object: basicUser } = await generateObject({
@@ -104,7 +104,7 @@ async function example4_gradualComplexity() {
     prompt: 'Generate a basic user account.',
   });
   console.log(JSON.stringify(basicUser, null, 2));
-  
+
   // Add more fields
   console.log('\nStep 2 - Enhanced user:');
   const { object: enhancedUser } = await generateObject({
@@ -131,7 +131,7 @@ async function example4_gradualComplexity() {
 // Example 5: Best practices demonstration
 async function example5_bestPractices() {
   console.log('5️⃣  Best Practices\n');
-  
+
   // Good: Clear descriptions and specific prompt
   const { object: good } = await generateObject({
     model: claudeCode('sonnet'),
@@ -141,7 +141,8 @@ async function example5_bestPractices() {
       readingTime: z.number().describe('Estimated reading time in minutes'),
       tags: z.array(z.string()).describe('3-5 relevant tags').min(3).max(5),
     }),
-    prompt: 'Generate metadata for a technical blog post about TypeScript best practices. Make it engaging and informative.',
+    prompt:
+      'Generate metadata for a technical blog post about TypeScript best practices. Make it engaging and informative.',
   });
 
   console.log('Well-structured generation:');
@@ -157,7 +158,7 @@ async function main() {
     await example3_optionalFields();
     await example4_gradualComplexity();
     await example5_bestPractices();
-    
+
     console.log('✅ All basic examples completed successfully!');
     console.log('\n📚 Next steps:');
     console.log('- Try generate-object-nested.ts for complex structures');

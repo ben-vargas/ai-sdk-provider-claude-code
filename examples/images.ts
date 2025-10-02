@@ -16,7 +16,9 @@ function toDataUrl(filePath: string): string {
   const ext = extname(filePath).toLowerCase();
   const mediaType = SUPPORTED_EXTENSIONS[ext];
   if (!mediaType) {
-    throw new Error(`Unsupported image extension "${ext}". Supported: ${Object.keys(SUPPORTED_EXTENSIONS).join(', ')}`);
+    throw new Error(
+      `Unsupported image extension "${ext}". Supported: ${Object.keys(SUPPORTED_EXTENSIONS).join(', ')}`
+    );
   }
 
   const contents = readFileSync(filePath);
@@ -32,7 +34,9 @@ async function main() {
   const filePath = process.argv[2] || defaultImagePath;
   if (!process.argv[2]) {
     console.log(`Using default image: ${defaultImagePath}`);
-    console.log('Tip: Pass a custom image path as argument: npx tsx examples/images.ts /path/to/image.png\n');
+    console.log(
+      'Tip: Pass a custom image path as argument: npx tsx examples/images.ts /path/to/image.png\n'
+    );
   }
 
   const dataUrl = toDataUrl(filePath);
@@ -43,7 +47,10 @@ async function main() {
       {
         role: 'user',
         content: [
-          { type: 'text', text: `Describe the mood conveyed by "${basename(filePath)}" in one sentence.` },
+          {
+            type: 'text',
+            text: `Describe the mood conveyed by "${basename(filePath)}" in one sentence.`,
+          },
           { type: 'image', image: dataUrl },
         ],
       },
@@ -57,7 +64,7 @@ async function main() {
   process.stdout.write('\n');
 }
 
-main().catch(error => {
+main().catch((error) => {
   console.error('Error while streaming image prompt:', error);
   process.exitCode = 1;
 });

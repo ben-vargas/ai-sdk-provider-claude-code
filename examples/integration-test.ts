@@ -1,6 +1,6 @@
 /**
  * Integration tests for the Claude Code AI SDK Provider
- * 
+ *
  * These tests verify core functionality of the provider
  * including text generation, conversations, and error handling.
  */
@@ -21,7 +21,7 @@ async function testBasicGeneration() {
       model: claudeCode('sonnet'),
       prompt: 'Say "Hello from Claude Code Provider!" and nothing else.',
     });
-    
+
     if (text.includes('Hello from Claude Code Provider')) {
       console.log('✅ Success:', text);
     } else {
@@ -40,11 +40,14 @@ async function testWithSystemMessage() {
     const { text } = await generateText({
       model: claudeCode('sonnet'),
       messages: [
-        { role: 'system', content: 'You are a helpful assistant. Answer with just the number, no explanation.' },
+        {
+          role: 'system',
+          content: 'You are a helpful assistant. Answer with just the number, no explanation.',
+        },
         { role: 'user', content: 'What is 2+2?' },
       ],
     });
-    
+
     const cleanText = text.trim();
     if (cleanText === '4' || cleanText.includes('4')) {
       console.log('✅ Success:', text);
@@ -65,7 +68,11 @@ async function testConversation() {
     const { text: response1 } = await generateText({
       model: claudeCode('sonnet'),
       messages: [
-        { role: 'user', content: 'My favorite color is purple and I live in Seattle. Just acknowledge this information.' },
+        {
+          role: 'user',
+          content:
+            'My favorite color is purple and I live in Seattle. Just acknowledge this information.',
+        },
       ],
     });
     console.log('✅ First turn:', response1);
@@ -74,7 +81,11 @@ async function testConversation() {
     const { text: response2 } = await generateText({
       model: claudeCode('sonnet'),
       messages: [
-        { role: 'user', content: 'My favorite color is purple and I live in Seattle. Just acknowledge this information.' },
+        {
+          role: 'user',
+          content:
+            'My favorite color is purple and I live in Seattle. Just acknowledge this information.',
+        },
         { role: 'assistant', content: response1 },
         { role: 'user', content: 'What is my favorite color?' },
       ],
@@ -91,14 +102,18 @@ async function testConversation() {
     const { text: response3 } = await generateText({
       model: claudeCode('sonnet'),
       messages: [
-        { role: 'user', content: 'My favorite color is purple and I live in Seattle. Just acknowledge this information.' },
+        {
+          role: 'user',
+          content:
+            'My favorite color is purple and I live in Seattle. Just acknowledge this information.',
+        },
         { role: 'assistant', content: response1 },
         { role: 'user', content: 'What is my favorite color?' },
         { role: 'assistant', content: response2 },
         { role: 'user', content: 'Where do I live?' },
       ],
     });
-    
+
     if (response3.toLowerCase().includes('seattle')) {
       console.log('✅ Third turn (remembered location):', response3);
       console.log('✅ Conversation context maintained successfully!');
@@ -106,7 +121,6 @@ async function testConversation() {
       console.error('❌ Failed to remember location:', response3);
       throw new Error('Conversation memory test failed');
     }
-    
   } catch (error) {
     console.error('❌ Failed:', error);
     throw error;
@@ -116,15 +130,15 @@ async function testConversation() {
 async function testErrorHandling() {
   console.log('\n🧪 Test 4: Error handling with invalid executable path...');
   try {
-    const badClaude = claudeCode('sonnet', { 
-      pathToClaudeCodeExecutable: 'claude-nonexistent-binary-12345' 
+    const badClaude = claudeCode('sonnet', {
+      pathToClaudeCodeExecutable: 'claude-nonexistent-binary-12345',
     });
-    
+
     await generateText({
       model: badClaude,
       prompt: 'This should fail',
     });
-    
+
     console.error('❌ Expected error but got success');
     throw new Error('Error handling test failed - should have thrown an error');
   } catch (error: any) {
@@ -145,7 +159,7 @@ async function testStreaming() {
       model: claudeCode('sonnet'),
       prompt: 'Count from 1 to 5, one number per line.',
     });
-    
+
     let fullText = '';
     process.stdout.write('Streaming: ');
     for await (const chunk of textStream) {
@@ -153,9 +167,9 @@ async function testStreaming() {
       fullText += chunk;
     }
     console.log('\n✅ Streaming completed');
-    
+
     // Verify we got numbers
-    const hasNumbers = ['1', '2', '3', '4', '5'].every(num => fullText.includes(num));
+    const hasNumbers = ['1', '2', '3', '4', '5'].every((num) => fullText.includes(num));
     if (!hasNumbers) {
       throw new Error('Streaming test failed - missing expected numbers');
     }
@@ -170,11 +184,11 @@ import { streamText } from 'ai';
 
 async function runAllTests() {
   console.log('🚀 Running Claude Code AI SDK Provider Integration Tests\n');
-  
+
   const startTime = Date.now();
   let testsRun = 0;
   let testsPassed = 0;
-  
+
   const tests = [
     { name: 'Basic Generation', fn: testBasicGeneration },
     { name: 'System Message', fn: testWithSystemMessage },
@@ -182,7 +196,7 @@ async function runAllTests() {
     { name: 'Error Handling', fn: testErrorHandling },
     { name: 'Streaming', fn: testStreaming },
   ];
-  
+
   for (const test of tests) {
     testsRun++;
     try {
@@ -196,11 +210,11 @@ async function runAllTests() {
       }
     }
   }
-  
+
   const duration = Date.now() - startTime;
   console.log('\n' + '='.repeat(50));
   console.log(`📊 Test Results: ${testsPassed}/${testsRun} passed (${duration}ms)`);
-  
+
   if (testsPassed === testsRun) {
     console.log('✅ All tests passed!');
     process.exit(0);
@@ -217,9 +231,11 @@ const timeoutId = setTimeout(() => {
   process.exit(1);
 }, TIMEOUT_MS);
 
-runAllTests().then(() => {
-  clearTimeout(timeoutId);
-}).catch(error => {
-  console.error('Fatal error:', error);
-  process.exit(1);
-});
+runAllTests()
+  .then(() => {
+    clearTimeout(timeoutId);
+  })
+  .catch((error) => {
+    console.error('Fatal error:', error);
+    process.exit(1);
+  });

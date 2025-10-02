@@ -2,7 +2,7 @@
 
 /**
  * Example: Handling Long-Running Tasks
- * 
+ *
  * Shows how to implement custom timeouts using AbortSignal
  * for complex tasks that may take longer than usual.
  */
@@ -18,7 +18,7 @@ import { claudeCode } from '../dist/index.js';
 
 async function withTimeout() {
   console.log('🕐 Example 1: Custom timeout for long task\n');
-  
+
   // Create an AbortController with a 5-minute timeout
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
@@ -36,7 +36,7 @@ async function withTimeout() {
     console.log('Response:', text);
   } catch (error: any) {
     clearTimeout(timeoutId);
-    
+
     if (error.name === 'AbortError' || error.message?.includes('timeout')) {
       console.log('❌ Request timed out after 5 minutes');
       console.log('Consider breaking the task into smaller parts');
@@ -48,9 +48,9 @@ async function withTimeout() {
 
 async function withUserCancellation() {
   console.log('\n🛑 Example 2: User-cancellable request\n');
-  
+
   const controller = new AbortController();
-  
+
   // Simulate user cancellation after 2 seconds
   setTimeout(() => {
     console.log('User clicked cancel...');
@@ -59,7 +59,7 @@ async function withUserCancellation() {
 
   try {
     console.log('Starting long task (will be cancelled in 2 seconds)...');
-    
+
     const { text } = await generateText({
       model: claudeCode('sonnet'),
       prompt: 'Write a comprehensive guide to machine learning...',
@@ -78,7 +78,7 @@ async function withUserCancellation() {
 
 async function withGracefulTimeout() {
   console.log('\n⏰ Example 3: Graceful timeout with retry option\n');
-  
+
   async function attemptWithTimeout(timeoutMs: number) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -94,7 +94,7 @@ async function withGracefulTimeout() {
       return { success: true, text };
     } catch (error: any) {
       clearTimeout(timeoutId);
-      
+
       if (error.name === 'AbortError') {
         return { success: false, timeout: true };
       }
@@ -105,10 +105,10 @@ async function withGracefulTimeout() {
   // Try with 30-second timeout first
   console.log('Attempting with 30-second timeout...');
   let result = await attemptWithTimeout(30000);
-  
+
   if (!result.success && result.timeout) {
     console.log('⏱️ First attempt timed out, trying with longer timeout...');
-    
+
     // Retry with 2-minute timeout
     result = await attemptWithTimeout(120000);
   }
@@ -126,18 +126,18 @@ function createTimeoutController(ms: number, reason = 'Request timeout'): AbortC
   const timeoutId = setTimeout(() => {
     controller.abort(new Error(`${reason} after ${ms}ms`));
   }, ms);
-  
+
   // Add cleanup method
   (controller as any).clearTimeout = () => clearTimeout(timeoutId);
-  
+
   return controller;
 }
 
 async function withHelper() {
   console.log('\n🔧 Example 4: Using timeout helper\n');
-  
+
   const controller = createTimeoutController(60000, 'Complex analysis timeout');
-  
+
   try {
     const { text } = await generateText({
       model: claudeCode('opus'),

@@ -4,13 +4,13 @@ import {
   validateModelId,
   validateSettings,
   validatePrompt,
-  validateSessionId
+  validateSessionId,
 } from './validation.js';
 import * as fs from 'fs';
 
 // Mock fs module
 vi.mock('fs', () => ({
-  existsSync: vi.fn()
+  existsSync: vi.fn(),
 }));
 
 describe('claudeCodeSettingsSchema', () => {
@@ -27,9 +27,9 @@ describe('claudeCodeSettingsSchema', () => {
       allowedTools: ['Read', 'Write'],
       disallowedTools: ['Bash'],
       verbose: true,
-      env: { BASH_DEFAULT_TIMEOUT_MS: '10' }
+      env: { BASH_DEFAULT_TIMEOUT_MS: '10' },
     };
-    
+
     const result = claudeCodeSettingsSchema.safeParse(validSettings);
     expect(result.success).toBe(true);
   });
@@ -90,7 +90,7 @@ describe('validateModelId', () => {
 
   it('should warn about unknown models', () => {
     const warning = validateModelId('gpt-4');
-    expect(warning).toContain('Unknown model ID: \'gpt-4\'');
+    expect(warning).toContain("Unknown model ID: 'gpt-4'");
     expect(warning).toContain('Known models are: opus, sonnet');
   });
 
@@ -117,9 +117,9 @@ describe('validateSettings', () => {
   it('should validate correct settings', () => {
     const settings = {
       maxTurns: 10,
-      maxThinkingTokens: 30000
+      maxThinkingTokens: 30000,
     };
-    
+
     const result = validateSettings(settings);
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
@@ -129,7 +129,7 @@ describe('validateSettings', () => {
   it('should warn about high maxTurns', () => {
     const settings = { maxTurns: 50 };
     const result = validateSettings(settings);
-    
+
     expect(result.valid).toBe(true);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain('High maxTurns value (50)');
@@ -138,7 +138,7 @@ describe('validateSettings', () => {
   it('should warn about very high maxThinkingTokens', () => {
     const settings = { maxThinkingTokens: 80000 };
     const result = validateSettings(settings);
-    
+
     expect(result.valid).toBe(true);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain('Very high maxThinkingTokens (80000)');
@@ -147,10 +147,10 @@ describe('validateSettings', () => {
   it('should warn when both allowedTools and disallowedTools are specified', () => {
     const settings = {
       allowedTools: ['Read'],
-      disallowedTools: ['Write']
+      disallowedTools: ['Write'],
     };
     const result = validateSettings(settings);
-    
+
     expect(result.valid).toBe(true);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain('Both allowedTools and disallowedTools are specified');
@@ -159,24 +159,26 @@ describe('validateSettings', () => {
   it('should validate tool name formats', () => {
     const settings = {
       allowedTools: ['Read', 'Write', 'Bash(git log:*)', 'mcp__server__tool'],
-      disallowedTools: ['123invalid', '@#$bad']
+      disallowedTools: ['123invalid', '@#$bad'],
     };
     const result = validateSettings(settings);
-    
+
     expect(result.valid).toBe(true);
     // The function also validates allowed tools, so we may get warnings for non-standard names
     expect(result.warnings.length).toBeGreaterThanOrEqual(2);
     // Check that we get warnings about unusual tool names
-    const toolWarnings = result.warnings.filter(w => w.includes('Unusual') && w.includes('tool name format'));
+    const toolWarnings = result.warnings.filter(
+      (w) => w.includes('Unusual') && w.includes('tool name format')
+    );
     expect(toolWarnings.length).toBeGreaterThanOrEqual(2);
   });
 
   it('should validate working directory exists', () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
-    
+
     const settings = { cwd: '/nonexistent/path' };
     const result = validateSettings(settings);
-    
+
     expect(result.valid).toBe(false);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain('Working directory must exist');
@@ -192,10 +194,10 @@ describe('validateSettings', () => {
     vi.mocked(fs.existsSync).mockImplementation(() => {
       throw new Error('FS error');
     });
-    
+
     const settings = { cwd: '/some/path' };
     const result = validateSettings(settings);
-    
+
     expect(result.valid).toBe(false);
     expect(result.errors[0]).toContain('Validation error: FS error');
   });
@@ -203,7 +205,7 @@ describe('validateSettings', () => {
   it('should validate permissionMode values', () => {
     // Valid permission modes
     const validModes = ['default', 'acceptEdits', 'bypassPermissions', 'plan'];
-    validModes.forEach(mode => {
+    validModes.forEach((mode) => {
       const result = validateSettings({ permissionMode: mode });
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
@@ -222,9 +224,9 @@ describe('validateSettings', () => {
         filesystem: {
           command: 'npx',
           args: ['@modelcontextprotocol/server-filesystem'],
-          env: { PATH: '/usr/bin' }
-        }
-      }
+          env: { PATH: '/usr/bin' },
+        },
+      },
     };
     expect(validateSettings(validStdio).valid).toBe(true);
 
@@ -232,9 +234,9 @@ describe('validateSettings', () => {
     const validStdioNoType = {
       mcpServers: {
         filesystem: {
-          command: 'npx'
-        }
-      }
+          command: 'npx',
+        },
+      },
     };
     expect(validateSettings(validStdioNoType).valid).toBe(true);
 
@@ -244,9 +246,9 @@ describe('validateSettings', () => {
         apiServer: {
           type: 'sse',
           url: 'https://example.com/sse',
-          headers: { 'Authorization': 'Bearer token' }
-        }
-      }
+          headers: { Authorization: 'Bearer token' },
+        },
+      },
     };
     expect(validateSettings(validSSE).valid).toBe(true);
 
@@ -256,9 +258,9 @@ describe('validateSettings', () => {
         apiServer: {
           type: 'http',
           url: 'https://example.com/api',
-          headers: { 'Authorization': 'Bearer token' }
-        }
-      }
+          headers: { Authorization: 'Bearer token' },
+        },
+      },
     };
     expect(validateSettings(validHTTP).valid).toBe(true);
 
@@ -266,9 +268,9 @@ describe('validateSettings', () => {
     const invalidMissingCommand = {
       mcpServers: {
         invalid: {
-          args: ['test']
-        }
-      }
+          args: ['test'],
+        },
+      },
     };
     const result1 = validateSettings(invalidMissingCommand);
     expect(result1.valid).toBe(false);
@@ -279,9 +281,9 @@ describe('validateSettings', () => {
       mcpServers: {
         invalid: {
           type: 'sse',
-          headers: { 'test': 'value' }
-        }
-      }
+          headers: { test: 'value' },
+        },
+      },
     };
     const result2 = validateSettings(invalidSSEMissingUrl);
     expect(result2.valid).toBe(false);
@@ -292,9 +294,9 @@ describe('validateSettings', () => {
       mcpServers: {
         invalid: {
           type: 'http',
-          headers: { 'test': 'value' }
-        }
-      }
+          headers: { test: 'value' },
+        },
+      },
     };
     const result3 = validateSettings(invalidHTTPMissingUrl);
     expect(result3.valid).toBe(false);
@@ -303,7 +305,9 @@ describe('validateSettings', () => {
 
   it('should validate hooks and canUseTool settings', () => {
     // Valid canUseTool function
-    const valid1 = validateSettings({ canUseTool: async () => ({ behavior: 'allow', updatedInput: {} }) });
+    const valid1 = validateSettings({
+      canUseTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+    });
     expect(valid1.valid).toBe(true);
 
     // Invalid canUseTool
@@ -312,7 +316,9 @@ describe('validateSettings', () => {
     expect(invalid1.errors[0]).toContain('canUseTool');
 
     // Valid hooks
-    const validHooks = validateSettings({ hooks: { PreToolUse: [{ hooks: [async () => ({ continue: true })] }] } });
+    const validHooks = validateSettings({
+      hooks: { PreToolUse: [{ hooks: [async () => ({ continue: true })] }] },
+    });
     expect(validHooks.valid).toBe(true);
   });
 
@@ -324,8 +330,8 @@ describe('validateSettings', () => {
           type: 'sdk',
           name: 'local',
           instance: {},
-        }
-      }
+        },
+      },
     };
     expect(validateSettings(validSdk).valid).toBe(true);
 
@@ -335,8 +341,8 @@ describe('validateSettings', () => {
         bad: {
           type: 'sdk',
           instance: {},
-        }
-      }
+        },
+      },
     } as any;
     const res = validateSettings(invalidSdk);
     expect(res.valid).toBe(false);
@@ -348,7 +354,7 @@ describe('validatePrompt', () => {
   it('should not warn for normal prompts', () => {
     const normalPrompt = 'Write a function to calculate fibonacci numbers';
     expect(validatePrompt(normalPrompt)).toBeUndefined();
-    
+
     const longButOkPrompt = 'a'.repeat(50000);
     expect(validatePrompt(longButOkPrompt)).toBeUndefined();
   });
@@ -356,7 +362,7 @@ describe('validatePrompt', () => {
   it('should warn for very long prompts', () => {
     const veryLongPrompt = 'x'.repeat(100001);
     const warning = validatePrompt(veryLongPrompt);
-    
+
     expect(warning).toContain('Very long prompt (100001 characters)');
     expect(warning).toContain('may cause performance issues or timeouts');
   });
@@ -373,10 +379,10 @@ describe('validateSessionId', () => {
       'session_12345',
       'UUID-4a5b6c7d-8e9f',
       '123456789',
-      'test-session'
+      'test-session',
     ];
-    
-    validIds.forEach(id => {
+
+    validIds.forEach((id) => {
       expect(validateSessionId(id)).toBeUndefined();
     });
   });
@@ -387,10 +393,10 @@ describe('validateSessionId', () => {
       'special@characters#',
       'unicode-🔥-session',
       'new\nline',
-      'tab\tcharacter'
+      'tab\tcharacter',
     ];
-    
-    unusualIds.forEach(id => {
+
+    unusualIds.forEach((id) => {
       const warning = validateSessionId(id);
       expect(warning).toContain('Unusual session ID format');
       expect(warning).toContain('may cause issues with session resumption');

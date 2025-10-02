@@ -1,6 +1,7 @@
 # Community Provider Status Analysis
 
 ## Overview
+
 This document analyzes the requirements for ai-sdk-provider-claude-code to achieve community provider status in the Vercel AI SDK ecosystem.
 
 ## Current Implementation Status
@@ -8,6 +9,7 @@ This document analyzes the requirements for ai-sdk-provider-claude-code to achie
 ### ✅ What We Have
 
 #### Core Functionality
+
 - **SDK Integration**: Uses official `@anthropic-ai/claude-code` SDK for all Claude interactions
 - **Text Generation**: Full support for both streaming and non-streaming text generation
 - **Object Generation**: Reliable JSON generation through prompt engineering and extraction
@@ -17,18 +19,21 @@ This document analyzes the requirements for ai-sdk-provider-claude-code to achie
 - **AbortSignal Support**: Standard AI SDK pattern for timeouts and cancellation
 
 #### Build & Distribution
+
 - **TypeScript**: Full TypeScript support with proper type definitions
 - **Dual Formats**: Both CommonJS and ES Module builds via tsup
 - **Source Maps**: Generated for debugging support
 - **Package Structure**: Proper exports configuration for modern Node.js
 
 #### Testing
+
 - **Unit Tests**: Comprehensive test coverage with Vitest
 - **Integration Tests**: Full integration test suite
 - **Edge/Node Tests**: Separate configurations for different environments
 - **Examples**: Extensive example collection demonstrating all features
 
 #### Documentation
+
 - **README**: Comprehensive documentation with examples
 - **CHANGELOG**: Proper version history following Keep a Changelog format
 - **Examples README**: Detailed guide for all example files
@@ -108,6 +113,7 @@ ai-sdk-provider-claude-code/
 The provider now meets all requirements for community provider status:
 
 ### Technical Requirements ✅
+
 - Implements LanguageModelV1 specification
 - Follows provider factory pattern
 - Uses standard error handling
@@ -116,12 +122,14 @@ The provider now meets all requirements for community provider status:
 - Includes comprehensive tests
 
 ### Build Requirements ✅
+
 - Uses tsup for builds
 - Generates both CJS and ESM
 - Includes source maps
 - Has proper package.json configuration
 
 ### Documentation Requirements ✅
+
 - Comprehensive README
 - CHANGELOG with version history
 - Extensive examples
@@ -130,6 +138,7 @@ The provider now meets all requirements for community provider status:
 ## Next Steps for Community Submission
 
 1. **Publish to npm**
+
    ```bash
    npm publish
    ```
@@ -144,7 +153,7 @@ The provider now meets all requirements for community provider status:
 
 ## Example Community Provider MDX
 
-```mdx
+````mdx
 ---
 title: Claude Code
 description: Use Claude via the official Claude Code SDK with your Pro/Max subscription
@@ -152,8 +161,8 @@ description: Use Claude via the official Claude Code SDK with your Pro/Max subsc
 
 # Claude Code Provider
 
-[ben-vargas/ai-sdk-provider-claude-code](https://github.com/ben-vargas/ai-sdk-provider-claude-code) 
-is a community provider that uses the official [Claude Code SDK](https://www.npmjs.com/package/@anthropic-ai/claude-code) 
+[ben-vargas/ai-sdk-provider-claude-code](https://github.com/ben-vargas/ai-sdk-provider-claude-code)
+is a community provider that uses the official [Claude Code SDK](https://www.npmjs.com/package/@anthropic-ai/claude-code)
 to provide language model support for the AI SDK.
 
 ## Setup
@@ -180,6 +189,7 @@ Install and authenticate the Claude Code SDK:
 npm install -g @anthropic-ai/claude-code
 claude login
 ```
+````
 
 ## Provider Instance
 
@@ -208,10 +218,10 @@ const { text } = await generateText({
 
 ### Model Capabilities
 
-| Model | Text Generation | Object Generation | Image Input | AI SDK Tool Calling | MCP Tools |
-|-------|----------------|-------------------|-------------|---------------------|-----------|
-| opus  | ✅ | ✅ | ❌ | ❌ | ✅ |
-| sonnet | ✅ | ✅ | ❌ | ❌ | ✅ |
+| Model  | Text Generation | Object Generation | Image Input | AI SDK Tool Calling | MCP Tools |
+| ------ | --------------- | ----------------- | ----------- | ------------------- | --------- |
+| opus   | ✅              | ✅                | ❌          | ❌                  | ✅        |
+| sonnet | ✅              | ✅                | ❌          | ❌                  | ✅        |
 
 <Note>
   The provider uses the official Claude Code SDK. While the models support tool use, this provider 

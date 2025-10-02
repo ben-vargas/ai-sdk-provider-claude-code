@@ -2,10 +2,10 @@
 
 /**
  * Nested Object Generation Examples
- * 
+ *
  * This example demonstrates how to generate complex nested structures
  * using the Claude Code provider.
- * 
+ *
  * Topics covered:
  * - Deeply nested objects
  * - Arrays of objects
@@ -24,7 +24,7 @@ console.log('=== Claude Code: Nested Object Generation ===\n');
 // Example 1: Company structure with departments
 async function example1_companyStructure() {
   console.log('1️⃣  Company with Departments and Teams\n');
-  
+
   const companySchema = z.object({
     company: z.object({
       name: z.string().describe('Company name'),
@@ -34,24 +34,31 @@ async function example1_companyStructure() {
         country: z.string(),
         timezone: z.string(),
       }),
-      departments: z.array(z.object({
-        name: z.string().describe('Department name'),
-        budget: z.number().describe('Annual budget in USD'),
-        headCount: z.number().describe('Number of employees'),
-        teams: z.array(z.object({
-          name: z.string(),
-          lead: z.string().describe('Team lead name'),
-          members: z.number().describe('Team size'),
-          projects: z.array(z.string()).describe('Active project names'),
-        })),
-      })).describe('Company departments'),
+      departments: z
+        .array(
+          z.object({
+            name: z.string().describe('Department name'),
+            budget: z.number().describe('Annual budget in USD'),
+            headCount: z.number().describe('Number of employees'),
+            teams: z.array(
+              z.object({
+                name: z.string(),
+                lead: z.string().describe('Team lead name'),
+                members: z.number().describe('Team size'),
+                projects: z.array(z.string()).describe('Active project names'),
+              })
+            ),
+          })
+        )
+        .describe('Company departments'),
     }),
   });
 
   const { object } = await generateObject({
     model: claudeCode('sonnet'),
     schema: companySchema,
-    prompt: 'Generate a structure for a mid-sized software company with 3 departments: Engineering, Product, and Marketing. Each should have 2-3 teams.',
+    prompt:
+      'Generate a structure for a mid-sized software company with 3 departments: Engineering, Product, and Marketing. Each should have 2-3 teams.',
   });
 
   console.log('Generated company structure:');
@@ -62,7 +69,7 @@ async function example1_companyStructure() {
 // Example 2: E-commerce order with nested items
 async function example2_ecommerceOrder() {
   console.log('2️⃣  E-commerce Order with Nested Details\n');
-  
+
   const orderSchema = z.object({
     order: z.object({
       orderId: z.string().describe('Unique order ID'),
@@ -78,26 +85,35 @@ async function example2_ecommerceOrder() {
           country: z.string(),
         }),
       }),
-      items: z.array(z.object({
-        productId: z.string(),
-        name: z.string(),
-        category: z.string(),
-        quantity: z.number().positive(),
-        unitPrice: z.number().positive(),
-        variations: z.object({
-          size: z.string().optional(),
-          color: z.string().optional(),
-          customization: z.string().optional(),
-        }).optional(),
-        subtotal: z.number().positive(),
-      })).min(1).describe('Order items'),
+      items: z
+        .array(
+          z.object({
+            productId: z.string(),
+            name: z.string(),
+            category: z.string(),
+            quantity: z.number().positive(),
+            unitPrice: z.number().positive(),
+            variations: z
+              .object({
+                size: z.string().optional(),
+                color: z.string().optional(),
+                customization: z.string().optional(),
+              })
+              .optional(),
+            subtotal: z.number().positive(),
+          })
+        )
+        .min(1)
+        .describe('Order items'),
       payment: z.object({
         method: z.string().describe('Payment method'),
         status: z.string().describe('Payment status'),
-        card: z.object({
-          last4: z.string().length(4),
-          brand: z.string(),
-        }).optional(),
+        card: z
+          .object({
+            last4: z.string().length(4),
+            brand: z.string(),
+          })
+          .optional(),
       }),
       totals: z.object({
         subtotal: z.number(),
@@ -112,7 +128,8 @@ async function example2_ecommerceOrder() {
   const { object } = await generateObject({
     model: claudeCode('sonnet'),
     schema: orderSchema,
-    prompt: 'Generate an e-commerce order for a customer buying 3 different clothing items with variations. Include a discount.',
+    prompt:
+      'Generate an e-commerce order for a customer buying 3 different clothing items with variations. Include a discount.',
   });
 
   console.log('Generated order:');
@@ -123,7 +140,7 @@ async function example2_ecommerceOrder() {
 // Example 3: Configuration file with nested settings
 async function example3_configurationFile() {
   console.log('3️⃣  Application Configuration with Nested Settings\n');
-  
+
   const configSchema = z.object({
     application: z.object({
       name: z.string(),
@@ -189,7 +206,8 @@ async function example3_configurationFile() {
   const { object } = await generateObject({
     model: claudeCode('sonnet'),
     schema: configSchema,
-    prompt: 'Generate a production configuration for a SaaS application with comprehensive security and monitoring settings.',
+    prompt:
+      'Generate a production configuration for a SaaS application with comprehensive security and monitoring settings.',
   });
 
   console.log('Generated configuration:');
@@ -200,7 +218,7 @@ async function example3_configurationFile() {
 // Example 4: Social media post with nested engagement data
 async function example4_socialMediaPost() {
   console.log('4️⃣  Social Media Post with Engagement Hierarchy\n');
-  
+
   const postSchema = z.object({
     post: z.object({
       id: z.string(),
@@ -213,15 +231,21 @@ async function example4_socialMediaPost() {
       }),
       content: z.object({
         text: z.string().max(280),
-        media: z.array(z.object({
-          type: z.string().describe('image, video, or gif'),
-          url: z.string().url(),
-          alt: z.string().optional(),
-          dimensions: z.object({
-            width: z.number(),
-            height: z.number(),
-          }).optional(),
-        })).optional(),
+        media: z
+          .array(
+            z.object({
+              type: z.string().describe('image, video, or gif'),
+              url: z.string().url(),
+              alt: z.string().optional(),
+              dimensions: z
+                .object({
+                  width: z.number(),
+                  height: z.number(),
+                })
+                .optional(),
+            })
+          )
+          .optional(),
         mentions: z.array(z.string()).optional(),
         hashtags: z.array(z.string()).optional(),
       }),
@@ -230,28 +254,36 @@ async function example4_socialMediaPost() {
         reposts: z.number(),
         comments: z.object({
           count: z.number(),
-          topComments: z.array(z.object({
-            id: z.string(),
-            author: z.object({
-              username: z.string(),
-              displayName: z.string(),
-            }),
-            text: z.string(),
-            likes: z.number(),
-            replies: z.number(),
-          })).max(3),
+          topComments: z
+            .array(
+              z.object({
+                id: z.string(),
+                author: z.object({
+                  username: z.string(),
+                  displayName: z.string(),
+                }),
+                text: z.string(),
+                likes: z.number(),
+                replies: z.number(),
+              })
+            )
+            .max(3),
         }),
       }),
       metadata: z.object({
         createdAt: z.string().describe('ISO 8601 datetime'),
         source: z.string().describe('Platform or app used'),
-        location: z.object({
-          name: z.string(),
-          coordinates: z.object({
-            lat: z.number(),
-            lng: z.number(),
-          }).optional(),
-        }).optional(),
+        location: z
+          .object({
+            name: z.string(),
+            coordinates: z
+              .object({
+                lat: z.number(),
+                lng: z.number(),
+              })
+              .optional(),
+          })
+          .optional(),
       }),
     }),
   });
@@ -259,7 +291,8 @@ async function example4_socialMediaPost() {
   const { object } = await generateObject({
     model: claudeCode('sonnet'),
     schema: postSchema,
-    prompt: 'Generate a viral tech announcement post with high engagement, media attachments, and top comments.',
+    prompt:
+      'Generate a viral tech announcement post with high engagement, media attachments, and top comments.',
   });
 
   console.log('Generated social media post:');
@@ -270,7 +303,7 @@ async function example4_socialMediaPost() {
 // Example 5: File system structure
 async function example5_fileSystemStructure() {
   console.log('5️⃣  File System Directory Tree\n');
-  
+
   // Simplified non-recursive schema to avoid infinite loops
   const fileNodeSchema = z.object({
     name: z.string().describe('File or directory name'),
@@ -278,19 +311,28 @@ async function example5_fileSystemStructure() {
     size: z.number().optional().describe('Size in bytes for files'),
     extension: z.string().optional().describe('File extension without dot'),
     // Limited depth to prevent recursion issues
-    children: z.array(z.object({
-      name: z.string(),
-      type: z.enum(['file', 'directory']),
-      size: z.number().optional(),
-      extension: z.string().optional(),
-      // Only go 2 levels deep
-      children: z.array(z.object({
-        name: z.string(),
-        type: z.enum(['file', 'directory']),
-        size: z.number().optional(),
-        extension: z.string().optional(),
-      })).optional(),
-    })).optional().describe('Subdirectories and files'),
+    children: z
+      .array(
+        z.object({
+          name: z.string(),
+          type: z.enum(['file', 'directory']),
+          size: z.number().optional(),
+          extension: z.string().optional(),
+          // Only go 2 levels deep
+          children: z
+            .array(
+              z.object({
+                name: z.string(),
+                type: z.enum(['file', 'directory']),
+                size: z.number().optional(),
+                extension: z.string().optional(),
+              })
+            )
+            .optional(),
+        })
+      )
+      .optional()
+      .describe('Subdirectories and files'),
   });
 
   const projectSchema = z.object({
@@ -306,14 +348,17 @@ async function example5_fileSystemStructure() {
     const { object } = await generateObject({
       model: claudeCode('sonnet'),
       schema: projectSchema,
-      prompt: 'Generate a typical Next.js project file structure with src directory, showing 2 levels deep. Include common files like package.json, tsconfig.json, and directories like src, public, and components.',
+      prompt:
+        'Generate a typical Next.js project file structure with src directory, showing 2 levels deep. Include common files like package.json, tsconfig.json, and directories like src, public, and components.',
     });
 
     console.log('Generated file structure:');
     console.log(JSON.stringify(object, null, 2));
   } catch (error: any) {
     console.error('❌ Error generating file structure:', error.message);
-    console.log('💡 Tip: Complex recursive schemas can be challenging. Consider using fixed-depth schemas instead.');
+    console.log(
+      '💡 Tip: Complex recursive schemas can be challenging. Consider using fixed-depth schemas instead.'
+    );
   }
   console.log();
 }
@@ -326,7 +371,7 @@ async function main() {
     await example3_configurationFile();
     await example4_socialMediaPost();
     await example5_fileSystemStructure();
-    
+
     console.log('✅ All nested structure examples completed!');
     console.log('\n💡 Key takeaways:');
     console.log('- Break complex structures into logical sub-objects');

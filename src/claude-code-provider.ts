@@ -8,14 +8,14 @@ import { getLogger } from './logger.js';
 /**
  * Claude Code provider interface that extends the AI SDK's ProviderV1.
  * Provides methods to create language models for interacting with Claude via the CLI.
- * 
+ *
  * @example
  * ```typescript
  * import { claudeCode } from 'ai-sdk-provider-claude-code';
- * 
+ *
  * // Create a model instance
  * const model = claudeCode('opus');
- * 
+ *
  * // Or use the explicit methods
  * const chatModel = claudeCode.chat('sonnet');
  * const languageModel = claudeCode.languageModel('opus', { maxTurns: 10 });
@@ -25,7 +25,7 @@ export interface ClaudeCodeProvider extends ProviderV2 {
   /**
    * Creates a language model instance for the specified model ID.
    * This is a shorthand for calling `languageModel()`.
-   * 
+   *
    * @param modelId - The Claude model to use ('opus' or 'sonnet')
    * @param settings - Optional settings to configure the model
    * @returns A language model instance
@@ -34,27 +34,21 @@ export interface ClaudeCodeProvider extends ProviderV2 {
 
   /**
    * Creates a language model instance for text generation.
-   * 
+   *
    * @param modelId - The Claude model to use ('opus' or 'sonnet')
    * @param settings - Optional settings to configure the model
    * @returns A language model instance
    */
-  languageModel(
-    modelId: ClaudeCodeModelId,
-    settings?: ClaudeCodeSettings,
-  ): LanguageModelV2;
+  languageModel(modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV2;
 
   /**
    * Alias for `languageModel()` to maintain compatibility with AI SDK patterns.
-   * 
+   *
    * @param modelId - The Claude model to use ('opus' or 'sonnet')
    * @param settings - Optional settings to configure the model
    * @returns A language model instance
    */
-  chat(
-    modelId: ClaudeCodeModelId,
-    settings?: ClaudeCodeSettings,
-  ): LanguageModelV2;
+  chat(modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV2;
 
   imageModel(modelId: string): never;
 }
@@ -62,7 +56,7 @@ export interface ClaudeCodeProvider extends ProviderV2 {
 /**
  * Configuration options for creating a Claude Code provider instance.
  * These settings will be applied as defaults to all models created by the provider.
- * 
+ *
  * @example
  * ```typescript
  * const provider = createClaudeCode({
@@ -87,7 +81,7 @@ export interface ClaudeCodeProviderSettings {
  *
  * @param options - Provider configuration options
  * @returns Claude Code provider instance
- * 
+ *
  * @example
  * ```typescript
  * const provider = createClaudeCode({
@@ -96,16 +90,14 @@ export interface ClaudeCodeProviderSettings {
  *     maxTurns: 10
  *   }
  * });
- * 
+ *
  * const model = provider('opus');
  * ```
  */
-export function createClaudeCode(
-  options: ClaudeCodeProviderSettings = {},
-): ClaudeCodeProvider {
+export function createClaudeCode(options: ClaudeCodeProviderSettings = {}): ClaudeCodeProvider {
   // Get logger from default settings if provided
   const logger = getLogger(options.defaultSettings?.logger);
-  
+
   // Validate default settings if provided
   if (options.defaultSettings) {
     const validation = validateSettings(options.defaultSettings);
@@ -113,25 +105,25 @@ export function createClaudeCode(
       throw new Error(`Invalid default settings: ${validation.errors.join(', ')}`);
     }
     if (validation.warnings.length > 0) {
-      validation.warnings.forEach(warning => logger.warn(`Claude Code Provider: ${warning}`));
+      validation.warnings.forEach((warning) => logger.warn(`Claude Code Provider: ${warning}`));
     }
   }
 
   const createModel = (
     modelId: ClaudeCodeModelId,
-    settings: ClaudeCodeSettings = {},
+    settings: ClaudeCodeSettings = {}
   ): LanguageModelV2 => {
     const mergedSettings = {
       ...options.defaultSettings,
       ...settings,
     };
-    
+
     // Validate merged settings
     const validation = validateSettings(mergedSettings);
     if (!validation.valid) {
       throw new Error(`Invalid settings: ${validation.errors.join(', ')}`);
     }
-    
+
     return new ClaudeCodeLanguageModel({
       id: modelId,
       settings: mergedSettings,
@@ -139,14 +131,9 @@ export function createClaudeCode(
     });
   };
 
-  const provider = function (
-    modelId: ClaudeCodeModelId,
-    settings?: ClaudeCodeSettings,
-  ) {
+  const provider = function (modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings) {
     if (new.target) {
-      throw new Error(
-        'The Claude Code model function cannot be called with the new keyword.',
-      );
+      throw new Error('The Claude Code model function cannot be called with the new keyword.');
     }
 
     return createModel(modelId, settings);
@@ -176,12 +163,12 @@ export function createClaudeCode(
 /**
  * Default Claude Code provider instance.
  * Pre-configured provider for quick usage without custom settings.
- * 
+ *
  * @example
  * ```typescript
  * import { claudeCode } from 'ai-sdk-provider-claude-code';
  * import { generateText } from 'ai';
- * 
+ *
  * const { text } = await generateText({
  *   model: claudeCode('sonnet'),
  *   prompt: 'Hello, Claude!'
