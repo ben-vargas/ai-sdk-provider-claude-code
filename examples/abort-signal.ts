@@ -63,7 +63,7 @@ async function main() {
     controller.abort();
 
     await generateText({
-      model: claudeCode('opus'),
+      model: claudeCode('sonnet'),
       prompt: 'This should not execute',
       abortSignal: controller.signal,
     });

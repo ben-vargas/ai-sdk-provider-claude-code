@@ -85,7 +85,7 @@ async function main() {
   console.log('5. Streaming with ignored parameters:');
   try {
     const { textStream } = streamText({
-      model: claudeCode('opus'),
+      model: claudeCode('sonnet'),
       prompt: 'Count to 3',
       temperature: 0, // ❌ Still ignored in streaming mode
       maxOutputTokens: 5, // ❌ Still ignored in streaming mode

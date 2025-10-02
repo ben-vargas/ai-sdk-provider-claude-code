@@ -27,7 +27,7 @@ async function withTimeout() {
 
   try {
     const { text } = await generateText({
-      model: claudeCode('opus'),
+      model: claudeCode('sonnet'),
       prompt: 'Analyze the implications of quantum computing on cryptography...',
       abortSignal: controller.signal,
     });
@@ -85,7 +85,7 @@ async function withGracefulTimeout() {
 
     try {
       const { text } = await generateText({
-        model: claudeCode('opus'),
+        model: claudeCode('sonnet'),
         prompt: 'Explain the theory of relativity',
         abortSignal: controller.signal,
       });
@@ -140,7 +140,7 @@ async function withHelper() {
 
   try {
     const { text } = await generateText({
-      model: claudeCode('opus'),
+      model: claudeCode('sonnet'),
       prompt: 'Analyze this code for security vulnerabilities...',
       abortSignal: controller.signal,
     });
@@ -167,7 +167,7 @@ async function main() {
   console.log('- Set custom timeouts based on task complexity');
   console.log('- Always clear timeouts on success');
   console.log('- Consider retry logic for timeout scenarios');
-  console.log('- Claude Opus 4 may need 5-10 minute timeouts for complex reasoning');
+  console.log('- Claude Sonnet 4.5 may need 5-10 minute timeouts for complex reasoning');
 }
 
 main().catch(console.error);

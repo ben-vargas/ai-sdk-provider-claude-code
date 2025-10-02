@@ -287,7 +287,7 @@ const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minutes
 
 try {
   const { text } = await generateText({
-    model: claudeCode('opus'),
+    model: claudeCode('sonnet'),
     prompt: 'Complex analysis...',
     abortSignal: controller.signal,
   });
