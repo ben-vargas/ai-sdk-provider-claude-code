@@ -7,6 +7,12 @@
 
 import { generateText } from 'ai';
 import { claudeCode, isAuthenticationError } from '../dist/index.js';
+// NOTE: Migrating to Claude Agent SDK:
+// - System prompt is not applied by default
+// - Filesystem settings (CLAUDE.md, settings.json) are not loaded by default
+// To restore old behavior, set:
+//   systemPrompt: { type: 'preset', preset: 'claude_code' }
+//   settingSources: ['user', 'project', 'local']
 
 async function testBasicGeneration() {
   console.log('🧪 Test 1: Basic text generation with Sonnet...');

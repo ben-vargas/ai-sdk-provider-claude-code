@@ -638,7 +638,7 @@ The SDK provides structured message types for different events:
 
 ### SDK Implementation
 
-The provider uses the official `@anthropic-ai/claude-code` SDK which provides:
+The provider uses the official `@anthropic-ai/claude-agent-sdk` which provides:
 - **AsyncGenerator pattern**: Native streaming support with `query()` function
 - **Structured messages**: Rich message types (assistant, result, system, error)
 - **Built-in features**: AbortController, session management, MCP servers

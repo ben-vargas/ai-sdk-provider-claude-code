@@ -11,7 +11,7 @@
  */
 
 import { streamText } from 'ai';
-import type { CanUseTool } from '@anthropic-ai/claude-code';
+import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import { claudeCode } from '../dist/index.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -86,7 +86,7 @@ async function main() {
       case 'tool-error':
         console.error('⚠️ tool-error:', part.toolName, part.error);
         break;
-      case 'tool-result':
+      case 'tool-result': {
         console.log(`📄 tool-result ← ${part.toolName} (${part.toolCallId})`);
         const toolResult = part.result ?? part.output;
         if (toolResult !== undefined) {
@@ -95,6 +95,7 @@ async function main() {
           console.log('   (provider reported no structured result)');
         }
         break;
+      }
       case 'text-start':
         console.log('💬 text-start');
         break;

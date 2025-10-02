@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2025-10-02
+
+### BREAKING CHANGES
+
+#### Migrate to Claude Agent SDK
+
+This release migrates from `@anthropic-ai/claude-code` to `@anthropic-ai/claude-agent-sdk`.
+
+- System prompt is no longer applied by default.
+  - Migration: set `systemPrompt: { type: 'preset', preset: 'claude_code' }` to restore the previous default.
+- Filesystem settings (CLAUDE.md, settings.json) are not loaded by default.
+  - Migration: set `settingSources: ['user','project','local']` to restore the previous default.
+- All imports referring to the SDK should now use `@anthropic-ai/claude-agent-sdk`.
+
+#### Legacy fields deprecated
+
+- `customSystemPrompt` and `appendSystemPrompt` are deprecated in favor of `systemPrompt`.
+  - For append-only behavior, use `{ type: 'preset', preset: 'claude_code', append: '<text>' }`.
+  - In 2.x, these fields are mapped internally to `systemPrompt` for compatibility and may log a deprecation warning; they will be removed in 3.0.
+
+### Changed
+
+- Switched SDK dependency to `@anthropic-ai/claude-agent-sdk` and updated re-exports accordingly.
+- Added support for Agent SDK `systemPrompt` (string or preset with optional `append`) and `settingSources`.
+- Updated documentation and examples to reflect new defaults and migration steps.
+- Streaming warning text updated to mention “Claude Agent SDK features …”.
+
+### Notes
+
+- Provider ID and `providerMetadata` keys remain `claude-code` for compatibility. This may change in a future major release.
+
 ## [1.1.3] - 2025-09-03
 
 ### Fixed

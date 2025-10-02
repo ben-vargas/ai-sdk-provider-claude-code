@@ -16,8 +16,8 @@ import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
 import { validateModelId, validatePrompt, validateSessionId } from './validation.js';
 import { getLogger } from './logger.js';
 
-import { query, type Options } from '@anthropic-ai/claude-code';
-import type { SDKUserMessage } from '@anthropic-ai/claude-code';
+import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 function isAbortError(err: unknown): boolean {
   if (err && typeof err === 'object') {
@@ -28,7 +28,7 @@ function isAbortError(err: unknown): boolean {
   return false;
 }
 
-const STREAMING_FEATURE_WARNING = "Claude Code SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
+const STREAMING_FEATURE_WARNING = "Claude Agent SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
 
 type ClaudeToolUse = {
   id: string;
@@ -451,13 +451,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
   }
 
   private createQueryOptions(abortController: AbortController): Options {
-    const opts: Partial<Options> & Record<string, unknown> = {
+  const opts: Partial<Options> & Record<string, unknown> = {
       model: this.getModel(),
       abortController,
       resume: this.settings.resume ?? this.sessionId,
       pathToClaudeCodeExecutable: this.settings.pathToClaudeCodeExecutable,
-      customSystemPrompt: this.settings.customSystemPrompt,
-      appendSystemPrompt: this.settings.appendSystemPrompt,
       maxTurns: this.settings.maxTurns,
       maxThinkingTokens: this.settings.maxThinkingTokens,
       cwd: this.settings.cwd,
@@ -471,6 +469,49 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       mcpServers: this.settings.mcpServers,
       canUseTool: this.settings.canUseTool,
     };
+    // NEW: Agent SDK options with legacy mapping
+    if (this.settings.systemPrompt !== undefined) {
+      opts.systemPrompt = this.settings.systemPrompt;
+    } else if (this.settings.customSystemPrompt !== undefined) {
+      // Deprecation warning for legacy field
+      this.logger.warn(
+        "[claude-code] 'customSystemPrompt' is deprecated and will be removed in a future major release. Please use 'systemPrompt' instead (string or { type: 'preset', preset: 'claude_code', append? })."
+      );
+      opts.systemPrompt = this.settings.customSystemPrompt;
+    } else if (this.settings.appendSystemPrompt !== undefined) {
+      // Deprecation warning for legacy field
+      this.logger.warn(
+        "[claude-code] 'appendSystemPrompt' is deprecated and will be removed in a future major release. Please use 'systemPrompt: { type: 'preset', preset: 'claude_code', append: <text> }' instead."
+      );
+      opts.systemPrompt = { type: 'preset', preset: 'claude_code', append: this.settings.appendSystemPrompt } as const;
+    }
+    if (this.settings.settingSources !== undefined) {
+      opts.settingSources = this.settings.settingSources;
+    }
+    if (this.settings.additionalDirectories !== undefined) {
+      opts.additionalDirectories = this.settings.additionalDirectories;
+    }
+    if (this.settings.agents !== undefined) {
+      opts.agents = this.settings.agents;
+    }
+    if (this.settings.includePartialMessages !== undefined) {
+      opts.includePartialMessages = this.settings.includePartialMessages;
+    }
+    if (this.settings.fallbackModel !== undefined) {
+      opts.fallbackModel = this.settings.fallbackModel;
+    }
+    if (this.settings.forkSession !== undefined) {
+      opts.forkSession = this.settings.forkSession;
+    }
+    if (this.settings.stderr !== undefined) {
+      opts.stderr = this.settings.stderr;
+    }
+    if (this.settings.strictMcpConfig !== undefined) {
+      opts.strictMcpConfig = this.settings.strictMcpConfig;
+    }
+    if (this.settings.extraArgs !== undefined) {
+      opts.extraArgs = this.settings.extraArgs;
+    }
     // hooks is supported in newer SDKs; include it if provided
     if (this.settings.hooks) {
       opts.hooks = this.settings.hooks;

@@ -1,10 +1,10 @@
 {
     "name": "ai-sdk-provider-claude-code",
-    "version": "1.2.0",
-    "description": "AI SDK v5 provider for Claude via Claude Code SDK (use Pro/Max subscription)",
+    "version": "2.0.0",
+    "description": "AI SDK v5 provider for Claude via Claude Agent SDK (use Pro/Max subscription)",
     "keywords": [
         "ai-sdk",
-        "claude-code",
+        "claude-agent-sdk",
         "anthropic",
         "cli",
         "language-model",
@@ -66,7 +66,7 @@
     "dependencies": {
         "@ai-sdk/provider": "2.0.0",
         "@ai-sdk/provider-utils": "3.0.9",
-        "@anthropic-ai/claude-code": "^1.0.128",
+        "@anthropic-ai/claude-agent-sdk": "^0.1.0",
         "jsonc-parser": "^3.3.1"
     },
     "devDependencies": {

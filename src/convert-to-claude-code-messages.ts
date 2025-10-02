@@ -1,5 +1,5 @@
 import type { ModelMessage } from 'ai';
-import type { SDKUserMessage } from '@anthropic-ai/claude-code';
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 type SDKUserContentPart = SDKUserMessage['message']['content'][number];
 

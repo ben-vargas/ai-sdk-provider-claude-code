@@ -8,7 +8,7 @@ This document analyzes the requirements for ai-sdk-provider-claude-code to achie
 ### ✅ What We Have
 
 #### Core Functionality
-- **SDK Integration**: Uses official `@anthropic-ai/claude-code` SDK for all Claude interactions
+- **SDK Integration**: Uses official `@anthropic-ai/claude-agent-sdk` for all Claude interactions
 - **Text Generation**: Full support for both streaming and non-streaming text generation with v5 patterns
 - **Object Generation**: Reliable JSON generation through prompt engineering and extraction
 - **Multi-turn Conversations**: Proper message history support with v5 message format
@@ -191,7 +191,7 @@ description: Use Claude via the official Claude Code SDK with your Pro/Max subsc
 # Claude Code Provider (v5)
 
 [ben-vargas/ai-sdk-provider-claude-code](https://github.com/ben-vargas/ai-sdk-provider-claude-code) 
-is a community provider that uses the official [Claude Code SDK](https://www.npmjs.com/package/@anthropic-ai/claude-code) 
+is a community provider that uses the official [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) 
 to provide language model support for the AI SDK v5.
 
 <Note type="warning">

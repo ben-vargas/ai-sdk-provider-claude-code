@@ -11,7 +11,7 @@
 
 > **Stable Release**: Version 1.x is now stable and compatible with AI SDK v5. For AI SDK v4 support, use the `ai-sdk-v4` tag or version 0.2.x.
 
-**ai-sdk-provider-claude-code** lets you use Claude via the [Vercel AI SDK](https://sdk.vercel.ai/docs) through the official `@anthropic-ai/claude-code` SDK/CLI.
+**ai-sdk-provider-claude-code** lets you use Claude via the [Vercel AI SDK](https://sdk.vercel.ai/docs) through the official `@anthropic-ai/claude-agent-sdk` (SDK) and the Claude Code CLI.
 
 ## Version Compatibility
 
@@ -111,6 +111,45 @@ Key changes:
 - **[Troubleshooting](docs/ai-sdk-v5/TROUBLESHOOTING.md)** - Common issues and solutions
 - **[Examples](examples/)** - Sample scripts and patterns
  - **[Tool Streaming Support](docs/ai-sdk-v5/TOOL_STREAMING_SUPPORT.md)** - Event semantics and performance notes
+
+## Migrating to Claude Agent SDK
+
+This provider now uses `@anthropic-ai/claude-agent-sdk` (formerly `@anthropic-ai/claude-code`). Two defaults changed:
+
+- System prompt is no longer applied by default.
+- Filesystem settings (CLAUDE.md, settings.json) are not loaded by default.
+
+Restore old behavior explicitly:
+
+```ts
+import { claudeCode } from 'ai-sdk-provider-claude-code';
+
+const model = claudeCode('sonnet', {
+  systemPrompt: { type: 'preset', preset: 'claude_code' },
+  settingSources: ['user', 'project', 'local'],
+});
+```
+
+CLAUDE.md requires:
+
+- `systemPrompt: { type: 'preset', preset: 'claude_code' }`
+- `settingSources` includes `'project'`
+
+New recommended behavior (explicit config):
+
+```ts
+const model = claudeCode('sonnet', {
+  systemPrompt: 'You are a helpful assistant specialized in ...',
+  settingSources: ['project'], // or omit for no filesystem settings
+});
+```
+
+CLI install and auth are unchanged:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude login
+```
 
 ## Core Features
 

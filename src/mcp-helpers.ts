@@ -1,5 +1,5 @@
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-code';
-import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-code';
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { type ZodRawShape, type ZodObject } from 'zod';
 
 /**

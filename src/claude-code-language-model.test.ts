@@ -14,7 +14,7 @@ type ToolErrorPart = {
 type ExtendedStreamPart = LanguageModelV2StreamPart | ToolErrorPart;
 
 // Mock the SDK module with factory function
-vi.mock('@anthropic-ai/claude-code', () => {
+vi.mock('@anthropic-ai/claude-agent-sdk', () => {
   return {
     query: vi.fn(),
     // Note: real SDK may not export AbortError at runtime; test mock provides it
@@ -23,10 +23,10 @@ vi.mock('@anthropic-ai/claude-code', () => {
 });
 
 // Import the mocked module to get typed references
-import { query as mockQuery, AbortError as MockAbortError } from '@anthropic-ai/claude-code';
-import type { SDKUserMessage } from '@anthropic-ai/claude-code';
+import { query as mockQuery, AbortError as MockAbortError } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
-const STREAMING_WARNING_MESSAGE = "Claude Code SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
+const STREAMING_WARNING_MESSAGE = "Claude Agent SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
 
 describe('ClaudeCodeLanguageModel', () => {
   let model: ClaudeCodeLanguageModel;

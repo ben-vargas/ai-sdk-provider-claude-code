@@ -25,6 +25,14 @@ export const claudeCodeSettingsSchema = z.object({
   pathToClaudeCodeExecutable: z.string().optional(),
   customSystemPrompt: z.string().optional(),
   appendSystemPrompt: z.string().optional(),
+  systemPrompt: z.union([
+    z.string(),
+    z.object({
+      type: z.literal('preset'),
+      preset: z.literal('claude_code'),
+      append: z.string().optional(),
+    })
+  ]).optional(),
   maxTurns: z.number().int().min(1).max(100).optional(),
   maxThinkingTokens: z.number().int().positive().max(100000).optional(),
   cwd: z.string().refine(
@@ -45,6 +53,7 @@ export const claudeCodeSettingsSchema = z.object({
   resume: z.string().optional(),
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
+  settingSources: z.array(z.enum(['user','project','local'])).optional(),
   streamingInput: z.enum(['auto', 'always', 'off']).optional(),
   // Hooks and tool-permission callback (permissive validation of shapes)
   canUseTool: z.any().refine((v) => v === undefined || typeof v === 'function', {
@@ -87,6 +96,19 @@ export const claudeCodeSettingsSchema = z.object({
     loggerFunctionSchema
   ]).optional(),
   env: z.record(z.string(), z.string().optional()).optional(),
+  additionalDirectories: z.array(z.string()).optional(),
+  agents: z.record(z.string(), z.object({
+    description: z.string(),
+    tools: z.array(z.string()).optional(),
+    prompt: z.string(),
+    model: z.enum(['sonnet','opus','haiku','inherit']).optional(),
+  })).optional(),
+  includePartialMessages: z.boolean().optional(),
+  fallbackModel: z.string().optional(),
+  forkSession: z.boolean().optional(),
+  stderr: z.function().args(z.string()).returns(z.void()).optional(),
+  strictMcpConfig: z.boolean().optional(),
+  extraArgs: z.record(z.string(), z.union([z.string(), z.null()])).optional(),
 }).strict();
 
 /**

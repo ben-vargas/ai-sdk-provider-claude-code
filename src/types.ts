@@ -1,5 +1,5 @@
 // Import types from the SDK
-import type { PermissionMode, McpServerConfig, CanUseTool } from '@anthropic-ai/claude-code';
+import type { PermissionMode, McpServerConfig, CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 
 export type StreamingInputMode = 'auto' | 'always' | 'off';
 
@@ -60,6 +60,13 @@ export interface ClaudeCodeSettings {
    * Append additional content to the system prompt
    */
   appendSystemPrompt?: string;
+
+  /**
+   * Agent SDK system prompt configuration. Preferred over legacy fields.
+   * - string: custom system prompt
+   * - preset object: Claude Code preset, with optional append
+   */
+  systemPrompt?: string | { type: 'preset'; preset: 'claude_code'; append?: string };
 
   /**
    * Maximum number of turns for the conversation
@@ -126,6 +133,12 @@ export interface ClaudeCodeSettings {
   mcpServers?: Record<string, McpServerConfig>;
 
   /**
+   * Filesystem settings sources to load (CLAUDE.md, settings.json, etc.)
+   * When omitted, the Agent SDK loads no filesystem settings.
+   */
+  settingSources?: Array<'user' | 'project' | 'local'>;
+
+  /**
    * Hook callbacks for lifecycle events (e.g., PreToolUse, PostToolUse).
    * Note: typed loosely to support multiple SDK versions.
    */
@@ -177,4 +190,49 @@ export interface ClaudeCodeSettings {
    * Environment variables to set
    */
   env?: Record<string, string | undefined>;
+
+  /**
+   * Additional directories Claude can access.
+   */
+  additionalDirectories?: string[];
+
+  /**
+   * Programmatically defined subagents.
+   */
+  agents?: Record<string, {
+    description: string;
+    tools?: string[];
+    prompt: string;
+    model?: 'sonnet' | 'opus' | 'haiku' | 'inherit';
+  }>;
+
+  /**
+   * Include partial message events from the SDK stream.
+   */
+  includePartialMessages?: boolean;
+
+  /**
+   * Model to use if primary fails.
+   */
+  fallbackModel?: string;
+
+  /**
+   * When resuming, fork to a new session ID instead of continuing the original.
+   */
+  forkSession?: boolean;
+
+  /**
+   * Callback for stderr output from the underlying process.
+   */
+  stderr?: (data: string) => void;
+
+  /**
+   * Enforce strict MCP validation.
+   */
+  strictMcpConfig?: boolean;
+
+  /**
+   * Additional CLI arguments.
+   */
+  extraArgs?: Record<string, string | null>;
 }

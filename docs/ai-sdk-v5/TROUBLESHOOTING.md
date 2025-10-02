@@ -25,11 +25,11 @@ npx tsx ../examples/check-cli.ts
 
 ### 2. SDK Not Found
 
-**Problem**: Error about `@anthropic-ai/claude-code` module not found.
+**Problem**: Error about `@anthropic-ai/claude-agent-sdk` module not found.
 
 **Solution**: The SDK is a dependency of this provider and should be installed automatically. If not:
 ```bash
-npm install @anthropic-ai/claude-code
+npm install @anthropic-ai/claude-agent-sdk
 ```
 
 ### 3. v5 Message Format Errors

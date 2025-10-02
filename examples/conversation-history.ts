@@ -4,6 +4,12 @@
 
 import { generateText } from 'ai';
 import { claudeCode } from '../dist/index.js';
+// NOTE: Migrating to Claude Agent SDK:
+// - System prompt is not applied by default
+// - Filesystem settings (CLAUDE.md, settings.json) are not loaded by default
+// To restore old behavior, set:
+//   systemPrompt: { type: 'preset', preset: 'claude_code' }
+//   settingSources: ['user', 'project', 'local']
 import type { CoreMessage } from 'ai';
 
 async function testConversation() {

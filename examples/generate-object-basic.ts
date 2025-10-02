@@ -14,6 +14,12 @@
  */
 
 import { createClaudeCode } from '../dist/index.js';
+// NOTE: Migrating to Claude Agent SDK:
+// - System prompt is not applied by default
+// - Filesystem settings (CLAUDE.md, settings.json) are not loaded by default
+// To restore old behavior, set when creating model instances, e.g.:
+//   systemPrompt: { type: 'preset', preset: 'claude_code' }
+//   settingSources: ['user', 'project', 'local']
 import { generateObject } from 'ai';
 import { z } from 'zod';
 

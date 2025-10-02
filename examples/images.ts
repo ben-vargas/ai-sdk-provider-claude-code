@@ -24,12 +24,8 @@ function toDataUrl(filePath: string): string {
 }
 
 async function main() {
-  const filePath = process.argv[2];
-  if (!filePath) {
-    console.error('Usage: npx tsx examples/images.ts /absolute/path/to/image.(png|jpg|jpeg|gif|webp)');
-    process.exitCode = 1;
-    return;
-  }
+  // Default to bull.webp in examples directory if no path provided
+  const filePath = process.argv[2] || new URL('bull.webp', import.meta.url).pathname;
 
   const dataUrl = toDataUrl(filePath);
 
@@ -57,3 +53,9 @@ main().catch(error => {
   console.error('Error while streaming image prompt:', error);
   process.exitCode = 1;
 });
+// NOTE: Migrating to Claude Agent SDK:
+// - System prompt is not applied by default
+// - Filesystem settings (CLAUDE.md, settings.json) are not loaded by default
+// To restore old behavior, set:
+//   systemPrompt: { type: 'preset', preset: 'claude_code' }
+//   settingSources: ['user', 'project', 'local']
