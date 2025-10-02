@@ -15,7 +15,10 @@ export { createClaudeCode, claudeCode } from './claude-code-provider.js';
  * @see {@link ClaudeCodeProvider} for the provider interface
  * @see {@link ClaudeCodeProviderSettings} for provider configuration options
  */
-export type { ClaudeCodeProvider, ClaudeCodeProviderSettings } from './claude-code-provider.js';
+export type {
+  ClaudeCodeProvider,
+  ClaudeCodeProviderSettings,
+} from './claude-code-provider.js';
 
 /**
  * Language model implementation for Claude Code.

@@ -50,12 +50,16 @@ Result:
       'Response: {"user": {"name": "Alice", "emails": ["alice@example.com", "alice2@example.com"]}}';
     const result = extractJson(text);
     expect(JSON.parse(result)).toEqual({
-      user: { name: 'Alice', emails: ['alice@example.com', 'alice2@example.com'] },
+      user: {
+        name: 'Alice',
+        emails: ['alice@example.com', 'alice2@example.com'],
+      },
     });
   });
 
   it('should extract JSON with special characters', () => {
-    const text = 'Result: {"message": "Hello\\nWorld", "path": "C:/Users/test"}';
+    const text =
+      'Result: {"message": "Hello\\nWorld", "path": "C:/Users/test"}';
     const result = extractJson(text);
     expect(JSON.parse(result)).toEqual({
       message: 'Hello\nWorld',
@@ -199,7 +203,9 @@ Please process accordingly.
 
     it('should handle large JSON with trailing garbage efficiently', () => {
       // Generate JSON with lots of trailing garbage
-      const validJson = { data: Array.from({ length: 100 }, (_, i) => ({ id: i })) };
+      const validJson = {
+        data: Array.from({ length: 100 }, (_, i) => ({ id: i })),
+      };
       const text = `Result: ${JSON.stringify(validJson)}` + 'x'.repeat(10000);
 
       const start = performance.now();

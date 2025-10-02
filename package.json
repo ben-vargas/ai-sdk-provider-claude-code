@@ -51,6 +51,7 @@
     "prepare": "npm run build",
     "prepublishOnly": "npm run clean && npm run build",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:edge": "vitest run --project=edge",
     "test:node": "vitest run --project=node",
     "test:watch": "vitest",

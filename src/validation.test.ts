@@ -42,7 +42,9 @@ describe('claudeCodeSettingsSchema', () => {
       // Support both Zod v3 (errors) and v4 (issues)
       const issues = (result.error as any).errors || result.error.issues;
       // Support both v3 and v4 error message formats
-      expect(issues[0].message).toMatch(/greater than or equal to 1|Too small.*>=1/);
+      expect(issues[0].message).toMatch(
+        /greater than or equal to 1|Too small.*>=1/
+      );
     }
   });
 
@@ -100,8 +102,12 @@ describe('validateModelId', () => {
   });
 
   it('should throw error for null/undefined model ID', () => {
-    expect(() => validateModelId(null as any)).toThrow('Model ID cannot be empty');
-    expect(() => validateModelId(undefined as any)).toThrow('Model ID cannot be empty');
+    expect(() => validateModelId(null as any)).toThrow(
+      'Model ID cannot be empty'
+    );
+    expect(() => validateModelId(undefined as any)).toThrow(
+      'Model ID cannot be empty'
+    );
   });
 });
 
@@ -153,7 +159,9 @@ describe('validateSettings', () => {
 
     expect(result.valid).toBe(true);
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toContain('Both allowedTools and disallowedTools are specified');
+    expect(result.warnings[0]).toContain(
+      'Both allowedTools and disallowedTools are specified'
+    );
   });
 
   it('should validate tool name formats', () => {

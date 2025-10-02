@@ -43,7 +43,9 @@ describe('logger', () => {
     });
 
     it('should handle error logging with default logger', () => {
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleSpy = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {});
       const logger = getLogger(undefined);
 
       logger.error('test error');

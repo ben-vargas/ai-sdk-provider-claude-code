@@ -19,9 +19,9 @@ jobs:
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: read
-      issues: read
+      contents: write
+      pull-requests: write
+      issues: write
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
     steps:
@@ -32,16 +32,18 @@ jobs:
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@beta
+        uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
-          # This is an optional setting that allows Claude to read CI results on PRs
-          additional_permissions: |
-            actions: read
+          # Use sticky comments (updates one comment instead of creating multiple)
+          use_sticky_comment: true
 
-          # Optional: Specify model (defaults to Claude Sonnet 4, uncomment for Claude Opus 4)
-          # model: "claude-opus-4-20250514"
+          # Enable commit signing for verified commits
+          use_commit_signing: true
+
+          # Optional: Allow specific bots to trigger Claude (uncomment to enable)
+          # allowed_bots: "renovate"  # Or use "*" for all bots, or comma-separated list
 
           # Optional: Customize the trigger phrase (default: @claude)
           # trigger_phrase: "/claude"
@@ -49,15 +51,20 @@ jobs:
           # Optional: Trigger when specific user is assigned to an issue
           # assignee_trigger: "claude-bot"
 
-          # Optional: Allow Claude to run specific commands
-          # allowed_tools: "Bash(npm install),Bash(npm run build),Bash(npm run test:*),Bash(npm run lint:*)"
+          # Optional: Trigger when a specific label is added
+          # label_trigger: "claude"
 
-          # Optional: Add custom instructions for Claude to customize its behavior for your project
-          # custom_instructions: |
-          #   Follow our coding standards
-          #   Ensure all new code has tests
-          #   Use TypeScript for new files
+          # Optional: Configure Claude's behavior with CLI arguments
+          # claude_args: |
+          #   --model claude-opus-4-1-20250805
+          #   --max-turns 10
+          #   --allowedTools "Bash(npm install),Bash(npm run build),Bash(npm run test:*),Bash(npm run lint:*)"
+          #   --system-prompt "Follow our coding standards. Ensure all new code has tests. Use TypeScript for new files."
 
-          # Optional: Custom environment variables for Claude
-          # claude_env: |
-          #   NODE_ENV: test
+          # Optional: Advanced settings configuration
+          # settings: |
+          #   {
+          #     "env": {
+          #       "NODE_ENV": "test"
+          #     }
+          #   }
