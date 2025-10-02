@@ -191,6 +191,84 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.hooks).toBe(hooks);
       expect(call?.options?.canUseTool).toBe(canUseTool);
     });
+
+    it('should merge process.env with settings.env and allow undefined values', async () => {
+      const originalMerge = process.env.C2_TEST_MERGE;
+      const originalOverride = process.env.C2_TEST_OVERRIDE;
+      try {
+        process.env.C2_TEST_MERGE = 'from-process';
+        process.env.C2_TEST_OVERRIDE = 'original';
+
+        const modelWithEnv = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: {
+            env: {
+              CUSTOM_ENV: 'custom',
+              C2_TEST_OVERRIDE: 'override',
+              C2_TEST_UNDEF: undefined,
+            },
+          } as any,
+        });
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield { type: 'result', subtype: 'success', session_id: 's-env', usage: { input_tokens: 0, output_tokens: 0 } };
+          },
+        };
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        await modelWithEnv.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+
+        const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        expect(call).toBeDefined();
+        expect(call.options).toBeDefined();
+        expect(call.options.env).toBeDefined();
+        // Provided vars
+        expect(call.options.env.CUSTOM_ENV).toBe('custom');
+        expect(call.options.env.C2_TEST_OVERRIDE).toBe('override');
+        // Merged from process.env
+        expect(call.options.env.C2_TEST_MERGE).toBe('from-process');
+        // Undefined values are preserved (key exists with undefined)
+        expect('C2_TEST_UNDEF' in call.options.env).toBe(true);
+        expect(call.options.env.C2_TEST_UNDEF).toBeUndefined();
+      } finally {
+        if (originalMerge === undefined) {
+          delete process.env.C2_TEST_MERGE;
+        } else {
+          process.env.C2_TEST_MERGE = originalMerge;
+        }
+        if (originalOverride === undefined) {
+          delete process.env.C2_TEST_OVERRIDE;
+        } else {
+          process.env.C2_TEST_OVERRIDE = originalOverride;
+        }
+      }
+    });
+
+    it('should omit env in SDK options when settings.env is undefined', async () => {
+      const modelNoEnv = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {},
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'result', subtype: 'success', session_id: 's-noenv', usage: { input_tokens: 0, output_tokens: 0 } };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelNoEnv.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call).toBeDefined();
+      expect(call.options).toBeDefined();
+      expect(call.options.env).toBeUndefined();
+    });
     it('should generate text from SDK response', async () => {
       const mockResponse = {
         async *[Symbol.asyncIterator]() {

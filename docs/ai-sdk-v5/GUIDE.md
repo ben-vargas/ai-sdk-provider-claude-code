@@ -222,6 +222,7 @@ const result = await generateText({
 | `allowedTools` | `string[]` | `undefined` | Tools to explicitly allow |
 | `disallowedTools` | `string[]` | `undefined` | Tools to restrict |
 | `mcpServers` | `object` | `undefined` | MCP server configuration |
+| `env` | `Record<string, string>` | `undefined` | Environment variables passed to CLI |
 | `resume` | `string` | `undefined` | Resume an existing session |
 | `hooks` | `object` | `undefined` | Lifecycle hooks (e.g., PreToolUse, PostToolUse) |
 | `canUseTool` | `(name, input, opts) => Promise` | `undefined` | Runtime permission callback. Requires streaming input at SDK level |
@@ -537,6 +538,27 @@ const claude = createClaudeCode({
   customSystemPrompt: 'You are an expert Python developer.',
   // Or append to existing prompt:
   appendSystemPrompt: 'Always use type hints in Python code.',
+});
+```
+
+### Environment Configuration
+
+Set an `env` key in the options to configure Claude Code's environment using any of the keys in Claude's [settings documentation](https://docs.claude.com/en/docs/claude-code/settings#environment-variables). The env object will be merged with `process.env` to maintain you existing environment.
+
+```typescript
+const env = {
+  // e.g. to prevent a system key from interfering with auth
+  ANTHROPIC_API_KEY: undefined,
+  // e.g. any Claude Code setting from:
+  // https://docs.claude.com/en/docs/claude-code/settings#environment-variables
+  BASH_DEFAULT_TIMEOUT_MS: '10',
+};
+
+const customProvider = createClaudeCode({
+  defaultSettings: {
+    // Provide custom environment variables to the CLI
+    env,
+  }
 });
 ```
 

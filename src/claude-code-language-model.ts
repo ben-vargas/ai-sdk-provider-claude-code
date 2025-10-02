@@ -475,6 +475,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     if (this.settings.hooks) {
       opts.hooks = this.settings.hooks;
     }
+    if (this.settings.env !== undefined) {
+      opts.env = {...process.env, ...this.settings.env};
+    }
     return opts as Options;
   }
 
