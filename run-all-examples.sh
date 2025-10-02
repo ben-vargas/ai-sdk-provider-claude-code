@@ -23,6 +23,7 @@ examples=(
   "hooks-callbacks"
   "sdk-tools-callbacks"
   "tool-streaming"
+  "images"
 )
 
 # Run each example
@@ -31,25 +32,19 @@ for example in "${examples[@]}"; do
   echo "========================================="
   echo "Running: $example.ts"
   echo "========================================="
-  npx tsx "examples/$example.ts"
-  
+
+  # images.ts optionally accepts a path argument
+  if [ "$example" = "images" ] && [ -n "$EXAMPLE_IMAGE_PATH" ]; then
+    npx tsx "examples/$example.ts" "$EXAMPLE_IMAGE_PATH"
+  else
+    npx tsx "examples/$example.ts"
+  fi
+
   # Check if the command succeeded
   if [ $? -ne 0 ]; then
     echo "❌ Failed: $example.ts"
   fi
 done
-
-# Conditionally run images example if EXAMPLE_IMAGE_PATH is set
-if [ -n "$EXAMPLE_IMAGE_PATH" ]; then
-  echo ""
-  echo "========================================="
-  echo "Running: images.ts ($EXAMPLE_IMAGE_PATH)"
-  echo "========================================="
-  npx tsx examples/images.ts "$EXAMPLE_IMAGE_PATH" || echo "❌ Failed: images.ts"
-else
-  echo ""
-  echo "⚠️  Skipping images.ts (set EXAMPLE_IMAGE_PATH to run)"
-fi
 
 echo ""
 echo "✅ All examples completed!"

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { extname, basename } from 'node:path';
+import { extname, basename, join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { streamText } from 'ai';
 import { claudeCode } from '../dist/index.js';
 
@@ -24,8 +25,15 @@ function toDataUrl(filePath: string): string {
 }
 
 async function main() {
-  // Default to bull.webp in examples directory if no path provided
-  const filePath = process.argv[2] || new URL('bull.webp', import.meta.url).pathname;
+  // Use bundled bull.webp as default if no path provided
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const defaultImagePath = join(__dirname, 'bull.webp');
+
+  const filePath = process.argv[2] || defaultImagePath;
+  if (!process.argv[2]) {
+    console.log(`Using default image: ${defaultImagePath}`);
+    console.log('Tip: Pass a custom image path as argument: npx tsx examples/images.ts /path/to/image.png\n');
+  }
 
   const dataUrl = toDataUrl(filePath);
 
