@@ -9,7 +9,7 @@ export interface ClaudeCodeErrorMetadata {
    * Error code from the CLI process (e.g., 'ENOENT', 'ETIMEDOUT').
    */
   code?: string;
-  
+
   /**
    * Exit code from the Claude Code SDK process.
    * Common codes:
@@ -17,12 +17,12 @@ export interface ClaudeCodeErrorMetadata {
    * - 1: General error
    */
   exitCode?: number;
-  
+
   /**
    * Standard error output from the CLI process.
    */
   stderr?: string;
-  
+
   /**
    * Excerpt from the prompt that caused the error.
    * Limited to first 200 characters for debugging.
@@ -33,7 +33,7 @@ export interface ClaudeCodeErrorMetadata {
 /**
  * Creates an APICallError with Claude Code specific metadata.
  * Used for general CLI execution errors.
- * 
+ *
  * @param options - Error details and metadata
  * @param options.message - Human-readable error message
  * @param options.code - Error code from the CLI process
@@ -42,7 +42,7 @@ export interface ClaudeCodeErrorMetadata {
  * @param options.promptExcerpt - Excerpt of the prompt that caused the error
  * @param options.isRetryable - Whether the error is potentially retryable
  * @returns An APICallError instance with Claude Code metadata
- * 
+ *
  * @example
  * ```typescript
  * throw createAPICallError({
@@ -81,11 +81,11 @@ export function createAPICallError({
 
 /**
  * Creates an authentication error for Claude Code SDK login failures.
- * 
+ *
  * @param options - Error configuration
  * @param options.message - Error message describing the authentication failure
  * @returns A LoadAPIKeyError instance
- * 
+ *
  * @example
  * ```typescript
  * throw createAuthenticationError({
@@ -99,19 +99,21 @@ export function createAuthenticationError({
   message: string;
 }): LoadAPIKeyError {
   return new LoadAPIKeyError({
-    message: message || 'Authentication failed. Please ensure Claude Code SDK is properly authenticated.',
+    message:
+      message ||
+      'Authentication failed. Please ensure Claude Code SDK is properly authenticated.',
   });
 }
 
 /**
  * Creates a timeout error for Claude Code SDK operations.
- * 
+ *
  * @param options - Timeout error details
  * @param options.message - Error message describing the timeout
  * @param options.promptExcerpt - Excerpt of the prompt that timed out
  * @param options.timeoutMs - Timeout duration in milliseconds
  * @returns An APICallError instance configured as a timeout error
- * 
+ *
  * @example
  * ```typescript
  * throw createTimeoutError({
@@ -134,7 +136,7 @@ export function createTimeoutError({
     code: 'TIMEOUT',
     promptExcerpt,
   };
-  
+
   return new APICallError({
     message,
     isRetryable: true,
@@ -147,10 +149,10 @@ export function createTimeoutError({
 /**
  * Checks if an error is an authentication error.
  * Returns true for LoadAPIKeyError instances or APICallError with exit code 401.
- * 
+ *
  * @param error - The error to check
  * @returns True if the error is an authentication error
- * 
+ *
  * @example
  * ```typescript
  * try {
@@ -164,17 +166,21 @@ export function createTimeoutError({
  */
 export function isAuthenticationError(error: unknown): boolean {
   if (error instanceof LoadAPIKeyError) return true;
-  if (error instanceof APICallError && (error.data as ClaudeCodeErrorMetadata)?.exitCode === 401) return true;
+  if (
+    error instanceof APICallError &&
+    (error.data as ClaudeCodeErrorMetadata)?.exitCode === 401
+  )
+    return true;
   return false;
 }
 
 /**
  * Checks if an error is a timeout error.
  * Returns true for APICallError instances with code 'TIMEOUT'.
- * 
+ *
  * @param error - The error to check
  * @returns True if the error is a timeout error
- * 
+ *
  * @example
  * ```typescript
  * try {
@@ -187,16 +193,20 @@ export function isAuthenticationError(error: unknown): boolean {
  * ```
  */
 export function isTimeoutError(error: unknown): boolean {
-  if (error instanceof APICallError && (error.data as ClaudeCodeErrorMetadata)?.code === 'TIMEOUT') return true;
+  if (
+    error instanceof APICallError &&
+    (error.data as ClaudeCodeErrorMetadata)?.code === 'TIMEOUT'
+  )
+    return true;
   return false;
 }
 
 /**
  * Extracts Claude Code error metadata from an error object.
- * 
+ *
  * @param error - The error to extract metadata from
  * @returns The error metadata if available, undefined otherwise
- * 
+ *
  * @example
  * ```typescript
  * try {
@@ -209,7 +219,9 @@ export function isTimeoutError(error: unknown): boolean {
  * }
  * ```
  */
-export function getErrorMetadata(error: unknown): ClaudeCodeErrorMetadata | undefined {
+export function getErrorMetadata(
+  error: unknown
+): ClaudeCodeErrorMetadata | undefined {
   if (error instanceof APICallError && error.data) {
     return error.data as ClaudeCodeErrorMetadata;
   }

@@ -19,7 +19,10 @@ describe('convertToClaudeCodeMessages (images)', () => {
     expect(result.warnings).toBeUndefined();
     expect(result.hasImageParts).toBe(true);
     expect(result.streamingContentParts).toHaveLength(2);
-    expect(result.streamingContentParts[0]).toEqual({ type: 'text', text: 'Human: Here is a sample image.' });
+    expect(result.streamingContentParts[0]).toEqual({
+      type: 'text',
+      text: 'Human: Here is a sample image.',
+    });
     expect(result.streamingContentParts[1]).toEqual({
       type: 'image',
       source: {
@@ -69,7 +72,9 @@ describe('convertToClaudeCodeMessages (images)', () => {
     const result = convertToClaudeCodeMessages(prompt);
 
     expect(result.hasImageParts).toBe(false);
-    expect(result.warnings).toContain('Image URLs are not supported by this provider; supply base64/data URLs.');
+    expect(result.warnings).toContain(
+      'Image URLs are not supported by this provider; supply base64/data URLs.'
+    );
     expect(result.streamingContentParts).toHaveLength(1);
   });
 

@@ -1,5 +1,9 @@
 // Import types from the SDK
-import type { PermissionMode, McpServerConfig, CanUseTool } from '@anthropic-ai/claude-code';
+import type {
+  PermissionMode,
+  McpServerConfig,
+  CanUseTool,
+} from '@anthropic-ai/claude-code';
 
 export type StreamingInputMode = 'auto' | 'always' | 'off';
 
@@ -7,7 +11,7 @@ export type StreamingInputMode = 'auto' | 'always' | 'off';
  * Logger interface for custom logging.
  * Allows consumers to provide their own logging implementation
  * or disable logging entirely.
- * 
+ *
  * @example
  * ```typescript
  * const customLogger: Logger = {
@@ -21,7 +25,7 @@ export interface Logger {
    * Log a warning message.
    */
   warn: (message: string) => void;
-  
+
   /**
    * Log an error message.
    */
@@ -32,7 +36,7 @@ export interface Logger {
  * Configuration settings for Claude Code SDK behavior.
  * These settings control how the CLI executes, what permissions it has,
  * and which tools are available during conversations.
- * 
+ *
  * @example
  * ```typescript
  * const settings: ClaudeCodeSettings = {
@@ -129,7 +133,15 @@ export interface ClaudeCodeSettings {
    * Hook callbacks for lifecycle events (e.g., PreToolUse, PostToolUse).
    * Note: typed loosely to support multiple SDK versions.
    */
-  hooks?: Partial<Record<string, Array<{ matcher?: string; hooks: Array<(...args: unknown[]) => Promise<unknown>> }>>>;
+  hooks?: Partial<
+    Record<
+      string,
+      Array<{
+        matcher?: string;
+        hooks: Array<(...args: unknown[]) => Promise<unknown>>;
+      }>
+    >
+  >;
 
   /**
    * Dynamic permission callback invoked before a tool is executed.
@@ -155,13 +167,13 @@ export interface ClaudeCodeSettings {
    * - Set to `false` to disable all logging
    * - Provide a Logger object to use custom logging
    * - Leave undefined to use console (default)
-   * 
+   *
    * @default console
    * @example
    * ```typescript
    * // Disable logging
    * const settings = { logger: false };
-   * 
+   *
    * // Custom logger
    * const settings = {
    *   logger: {

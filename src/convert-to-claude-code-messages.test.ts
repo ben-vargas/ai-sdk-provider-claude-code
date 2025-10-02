@@ -5,27 +5,27 @@ import type { CoreMessage } from 'ai';
 describe('convertToClaudeCodeMessages', () => {
   it('should convert a simple user message', () => {
     const result = convertToClaudeCodeMessages([
-      { role: 'user', content: 'Hello, Claude!' }
+      { role: 'user', content: 'Hello, Claude!' },
     ] as CoreMessage[]);
-    
+
     expect(result.messagesPrompt).toBe('Human: Hello, Claude!');
     expect(result.systemPrompt).toBeUndefined();
   });
 
   it('should convert a simple assistant message', () => {
     const result = convertToClaudeCodeMessages([
-      { role: 'assistant', content: 'Hello! How can I help you?' }
+      { role: 'assistant', content: 'Hello! How can I help you?' },
     ] as CoreMessage[]);
-    
+
     expect(result.messagesPrompt).toBe('Assistant: Hello! How can I help you?');
     expect(result.systemPrompt).toBeUndefined();
   });
 
   it('should handle system message', () => {
     const result = convertToClaudeCodeMessages([
-      { role: 'system', content: 'You are a helpful assistant.' }
+      { role: 'system', content: 'You are a helpful assistant.' },
     ] as CoreMessage[]);
-    
+
     expect(result.messagesPrompt).toBe('You are a helpful assistant.');
     expect(result.systemPrompt).toBe('You are a helpful assistant.');
   });
@@ -35,11 +35,13 @@ describe('convertToClaudeCodeMessages', () => {
       { role: 'system', content: 'Be helpful.' },
       { role: 'user', content: 'What is 2+2?' },
       { role: 'assistant', content: '2+2 equals 4.' },
-      { role: 'user', content: 'Thanks!' }
+      { role: 'user', content: 'Thanks!' },
     ] as CoreMessage[]);
-    
+
     expect(result.systemPrompt).toBe('Be helpful.');
-    expect(result.messagesPrompt).toBe('Be helpful.\n\nHuman: What is 2+2?\n\nAssistant: 2+2 equals 4.\n\nHuman: Thanks!');
+    expect(result.messagesPrompt).toBe(
+      'Be helpful.\n\nHuman: What is 2+2?\n\nAssistant: 2+2 equals 4.\n\nHuman: Thanks!'
+    );
   });
 
   it('should handle multi-part text messages', () => {
@@ -49,11 +51,11 @@ describe('convertToClaudeCodeMessages', () => {
         content: [
           { type: 'text', text: 'Hello' },
           { type: 'text', text: ', ' },
-          { type: 'text', text: 'world!' }
-        ]
-      }
+          { type: 'text', text: 'world!' },
+        ],
+      },
     ] as CoreMessage[]);
-    
+
     expect(result.messagesPrompt).toBe('Human: Hello\n, \nworld!');
   });
 
@@ -63,13 +65,15 @@ describe('convertToClaudeCodeMessages', () => {
         role: 'user',
         content: [
           { type: 'text', text: 'Look at this:' },
-          { type: 'image', image: new Uint8Array([1, 2, 3]) }
-        ]
-      }
+          { type: 'image', image: new Uint8Array([1, 2, 3]) },
+        ],
+      },
     ] as CoreMessage[]);
-    
+
     expect(result.warnings).toBeDefined();
-    expect(result.warnings).toContain('Unable to convert image content; supply base64/data URLs.');
+    expect(result.warnings).toContain(
+      'Unable to convert image content; supply base64/data URLs.'
+    );
     expect(result.messagesPrompt).toBe('Human: Look at this:');
     expect(result.hasImageParts).toBe(false);
   });
@@ -80,11 +84,15 @@ describe('convertToClaudeCodeMessages', () => {
         role: 'user',
         content: [
           { type: 'text', text: 'Check this file:' },
-          { type: 'file', data: 'data:text/plain;base64,AQID', mimeType: 'text/plain' }
-        ]
-      }
+          {
+            type: 'file',
+            data: 'data:text/plain;base64,AQID',
+            mimeType: 'text/plain',
+          },
+        ],
+      },
     ] as any);
-    
+
     // Unknown content types are filtered out
     expect(result.messagesPrompt).toBe('Human: Check this file:');
   });
@@ -98,13 +106,15 @@ describe('convertToClaudeCodeMessages', () => {
             type: 'tool-result',
             toolCallId: 'call-123',
             toolName: 'calculator',
-            output: { type: 'json', value: { answer: 42 } }
-          }
-        ]
-      }
+            output: { type: 'json', value: { answer: 42 } },
+          },
+        ],
+      },
     ] as any);
-    
-    expect(result.messagesPrompt).toBe('Tool Result (calculator): {"answer":42}');
+
+    expect(result.messagesPrompt).toBe(
+      'Tool Result (calculator): {"answer":42}'
+    );
   });
 
   it('should handle tool error messages', () => {
@@ -116,12 +126,12 @@ describe('convertToClaudeCodeMessages', () => {
             type: 'tool-result',
             toolCallId: 'call-456',
             toolName: 'search',
-            output: { type: 'text', value: 'Network error' }
-          }
-        ]
-      }
+            output: { type: 'text', value: 'Network error' },
+          },
+        ],
+      },
     ] as any);
-    
+
     expect(result.messagesPrompt).toBe('Tool Result (search): Network error');
   });
 
@@ -129,10 +139,10 @@ describe('convertToClaudeCodeMessages', () => {
     const result = convertToClaudeCodeMessages([
       {
         role: 'user',
-        content: []
-      }
+        content: [],
+      },
     ] as CoreMessage[]);
-    
+
     expect(result.messagesPrompt).toBe('');
   });
 
@@ -140,12 +150,10 @@ describe('convertToClaudeCodeMessages', () => {
     const result = convertToClaudeCodeMessages([
       {
         role: 'user',
-        content: [
-          { type: 'text', text: undefined as any }
-        ]
-      }
+        content: [{ type: 'text', text: undefined as any }],
+      },
     ] as CoreMessage[]);
-    
+
     expect(result.messagesPrompt).toBe('');
   });
 
@@ -163,17 +171,19 @@ describe('convertToClaudeCodeMessages', () => {
               value: {
                 users: [
                   { id: 1, name: 'Alice' },
-                  { id: 2, name: 'Bob' }
+                  { id: 2, name: 'Bob' },
                 ],
-                count: 2
-              }
-            }
-          }
-        ]
-      }
+                count: 2,
+              },
+            },
+          },
+        ],
+      },
     ] as any);
-    
-    expect(result.messagesPrompt).toBe('Tool Result (database): {"users":[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}],"count":2}');
+
+    expect(result.messagesPrompt).toBe(
+      'Tool Result (database): {"users":[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}],"count":2}'
+    );
   });
 
   it('should handle consecutive messages properly', () => {
@@ -181,9 +191,11 @@ describe('convertToClaudeCodeMessages', () => {
       { role: 'user', content: 'First message' },
       { role: 'user', content: 'Second message' },
       { role: 'assistant', content: 'Response' },
-      { role: 'user', content: 'Third message' }
+      { role: 'user', content: 'Third message' },
     ] as CoreMessage[]);
-    
-    expect(result.messagesPrompt).toBe('Human: First message\n\nHuman: Second message\n\nAssistant: Response\n\nHuman: Third message');
+
+    expect(result.messagesPrompt).toBe(
+      'Human: First message\n\nHuman: Second message\n\nAssistant: Response\n\nHuman: Third message'
+    );
   });
 });

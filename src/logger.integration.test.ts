@@ -128,31 +128,37 @@ describe('logger integration', () => {
       provider('opus');
 
       // Mock the query function to prevent actual API calls
-      const { ClaudeCodeLanguageModel } = await import('../src/claude-code-language-model.js');
+      const { ClaudeCodeLanguageModel } = await import(
+        '../src/claude-code-language-model.js'
+      );
       const proto = ClaudeCodeLanguageModel.prototype as any;
-      
+
       // Access the private method through prototype
       const result = proto.generateAllWarnings.call(
-        { 
+        {
           modelValidationWarning: undefined,
           settingsValidationWarnings: [],
-          logger: customLogger 
+          logger: customLogger,
         },
         {
-          prompt: [{
-            role: 'user',
-            content: [
-              { type: 'text', text: 'Hello' },
-              { type: 'image', image: new Uint8Array([]) }
-            ]
-          }]
+          prompt: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'Hello' },
+                { type: 'image', image: new Uint8Array([]) },
+              ],
+            },
+          ],
         },
         'test prompt'
       );
 
       // The warning should be in the warnings array, not logged directly
       expect(customLogger.warn).not.toHaveBeenCalled();
-      expect(result.some((w: any) => w.message?.includes('image inputs'))).toBe(false);
+      expect(result.some((w: any) => w.message?.includes('image inputs'))).toBe(
+        false
+      );
     });
   });
 });

@@ -46,15 +46,20 @@ Result:
   });
 
   it('should extract nested JSON', () => {
-    const text = 'Response: {"user": {"name": "Alice", "emails": ["alice@example.com", "alice2@example.com"]}}';
+    const text =
+      'Response: {"user": {"name": "Alice", "emails": ["alice@example.com", "alice2@example.com"]}}';
     const result = extractJson(text);
     expect(JSON.parse(result)).toEqual({
-      user: { name: 'Alice', emails: ['alice@example.com', 'alice2@example.com'] },
+      user: {
+        name: 'Alice',
+        emails: ['alice@example.com', 'alice2@example.com'],
+      },
     });
   });
 
   it('should extract JSON with special characters', () => {
-    const text = 'Result: {"message": "Hello\\nWorld", "path": "C:/Users/test"}';
+    const text =
+      'Result: {"message": "Hello\\nWorld", "path": "C:/Users/test"}';
     const result = extractJson(text);
     expect(JSON.parse(result)).toEqual({
       message: 'Hello\nWorld',
@@ -86,9 +91,16 @@ Result:
   });
 
   it('should extract JSON with numbers and booleans', () => {
-    const text = 'Config: {"count": 42, "enabled": true, "ratio": 3.14, "flag": false, "data": null}';
+    const text =
+      'Config: {"count": 42, "enabled": true, "ratio": 3.14, "flag": false, "data": null}';
     const result = extractJson(text);
-    expect(JSON.parse(result)).toEqual({ count: 42, enabled: true, ratio: 3.14, flag: false, data: null });
+    expect(JSON.parse(result)).toEqual({
+      count: 42,
+      enabled: true,
+      ratio: 3.14,
+      flag: false,
+      data: null,
+    });
   });
 
   it('should handle JSON within other text', () => {
@@ -161,7 +173,7 @@ Please process accordingly.
       '` {"test": true} `',
     ];
 
-    variations.forEach(text => {
+    variations.forEach((text) => {
       const result = extractJson(text);
       expect(JSON.parse(result)).toEqual({ test: true });
     });
@@ -175,15 +187,15 @@ Please process accordingly.
           id: i,
           name: `Item ${i}`,
           value: Math.random(),
-          nested: { a: i, b: i * 2 }
-        }))
+          nested: { a: i, b: i * 2 },
+        })),
       };
       const text = `Response: ${JSON.stringify(largeObject)}`;
-      
+
       const start = performance.now();
       const result = extractJson(text);
       const duration = performance.now() - start;
-      
+
       // Should be fast for valid JSON (< 100ms)
       expect(duration).toBeLessThan(100);
       expect(JSON.parse(result)).toEqual(largeObject);
@@ -191,13 +203,15 @@ Please process accordingly.
 
     it('should handle large JSON with trailing garbage efficiently', () => {
       // Generate JSON with lots of trailing garbage
-      const validJson = { data: Array.from({ length: 100 }, (_, i) => ({ id: i })) };
+      const validJson = {
+        data: Array.from({ length: 100 }, (_, i) => ({ id: i })),
+      };
       const text = `Result: ${JSON.stringify(validJson)}` + 'x'.repeat(10000);
-      
+
       const start = performance.now();
       const result = extractJson(text);
       const duration = performance.now() - start;
-      
+
       // Should still be reasonably fast (< 100ms)
       expect(duration).toBeLessThan(100);
       expect(JSON.parse(result)).toEqual(validJson);
@@ -210,7 +224,7 @@ Please process accordingly.
         nested = { level: i, child: nested };
       }
       const text = `Nested: ${JSON.stringify(nested)}`;
-      
+
       const result = extractJson(text);
       expect(JSON.parse(result)).toEqual(nested);
     });
@@ -234,21 +248,19 @@ Please process accordingly.
     });
 
     it('should handle JSON with escaped quotes in strings', () => {
-      const text = 'Result: {"message": "He said \\"Hello\\" to me", "path": "C:\\\\Users\\\\test"}';
+      const text =
+        'Result: {"message": "He said \\"Hello\\" to me", "path": "C:\\\\Users\\\\test"}';
       const result = extractJson(text);
       expect(JSON.parse(result)).toEqual({
         message: 'He said "Hello" to me',
-        path: 'C:\\Users\\test'
+        path: 'C:\\Users\\test',
       });
     });
 
     it('should handle mixed array and object nesting', () => {
       const text = 'Complex: [{"a": [1, 2, {"b": 3}]}, {"c": 4}]';
       const result = extractJson(text);
-      expect(JSON.parse(result)).toEqual([
-        { a: [1, 2, { b: 3 }] },
-        { c: 4 }
-      ]);
+      expect(JSON.parse(result)).toEqual([{ a: [1, 2, { b: 3 }] }, { c: 4 }]);
     });
   });
 });

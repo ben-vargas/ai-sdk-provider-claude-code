@@ -18,22 +18,31 @@ vi.mock('@anthropic-ai/claude-code', () => {
   return {
     query: vi.fn(),
     // Note: real SDK may not export AbortError at runtime; test mock provides it
-    AbortError: class AbortError extends Error { constructor(message?: string) { super(message); this.name = 'AbortError'; } },
+    AbortError: class AbortError extends Error {
+      constructor(message?: string) {
+        super(message);
+        this.name = 'AbortError';
+      }
+    },
   };
 });
 
 // Import the mocked module to get typed references
-import { query as mockQuery, AbortError as MockAbortError } from '@anthropic-ai/claude-code';
+import {
+  query as mockQuery,
+  AbortError as MockAbortError,
+} from '@anthropic-ai/claude-code';
 import type { SDKUserMessage } from '@anthropic-ai/claude-code';
 
-const STREAMING_WARNING_MESSAGE = "Claude Code SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
+const STREAMING_WARNING_MESSAGE =
+  "Claude Code SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
 
 describe('ClaudeCodeLanguageModel', () => {
   let model: ClaudeCodeLanguageModel;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    
+
     model = new ClaudeCodeLanguageModel({
       id: 'sonnet',
       settings: {},
@@ -51,7 +60,12 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
-          yield { type: 'result', subtype: 'success', session_id: 's2', usage: { input_tokens: 0, output_tokens: 0 } };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's2',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
         },
       };
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
@@ -85,19 +99,28 @@ describe('ClaudeCodeLanguageModel', () => {
 
       let promptContentPromise: Promise<any> | undefined;
 
-      const isAsyncIterable = (value: unknown): value is AsyncIterable<unknown> => {
+      const isAsyncIterable = (
+        value: unknown
+      ): value is AsyncIterable<unknown> => {
         return Boolean(
           value &&
-          typeof value === 'object' &&
-          Symbol.asyncIterator in value &&
-          typeof (value as Record<PropertyKey, unknown>)[Symbol.asyncIterator] === 'function'
+            typeof value === 'object' &&
+            Symbol.asyncIterator in value &&
+            typeof (value as Record<PropertyKey, unknown>)[
+              Symbol.asyncIterator
+            ] === 'function'
         );
       };
 
       vi.mocked(mockQuery).mockImplementation(({ prompt }) => {
         if (isAsyncIterable(prompt)) {
           const iterator = prompt[Symbol.asyncIterator]();
-          promptContentPromise = iterator.next().then(({ value }) => (value as SDKUserMessage | undefined)?.message?.content);
+          promptContentPromise = iterator
+            .next()
+            .then(
+              ({ value }) =>
+                (value as SDKUserMessage | undefined)?.message?.content
+            );
         }
         return mockResponse as any;
       });
@@ -118,7 +141,10 @@ describe('ClaudeCodeLanguageModel', () => {
       const content = await promptContentPromise!;
       expect(Array.isArray(content)).toBe(true);
       expect(content).toHaveLength(2);
-      expect(content[0]).toEqual({ type: 'text', text: 'Human: Describe this image.' });
+      expect(content[0]).toEqual({
+        type: 'text',
+        text: 'Human: Describe this image.',
+      });
       expect(content[1]).toEqual({
         type: 'image',
         source: {
@@ -132,11 +158,19 @@ describe('ClaudeCodeLanguageModel', () => {
     it('keeps string prompt when streamingInput off even if canUseTool provided', async () => {
       const modelWithOff = new ClaudeCodeLanguageModel({
         id: 'sonnet',
-        settings: { canUseTool: async () => ({ behavior: 'allow', updatedInput: {} }), streamingInput: 'off' } as any,
+        settings: {
+          canUseTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+          streamingInput: 'off',
+        } as any,
       });
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
-          yield { type: 'result', subtype: 'success', session_id: 's3', usage: { input_tokens: 0, output_tokens: 0 } };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's3',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
         },
       };
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
@@ -162,7 +196,9 @@ describe('ClaudeCodeLanguageModel', () => {
       const promise = model.doGenerate({
         prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
       } as any);
-      await expect(promise).rejects.toThrow(/cannot be used with permissionPromptToolName/);
+      await expect(promise).rejects.toThrow(
+        /cannot be used with permissionPromptToolName/
+      );
     });
     it('should pass through hooks and canUseTool to SDK query options', async () => {
       const preToolHook = async () => ({ continue: true });
@@ -176,7 +212,12 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
-          yield { type: 'result', subtype: 'success', session_id: 's1', usage: { input_tokens: 0, output_tokens: 0 } };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's1',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
         },
       };
 
@@ -212,7 +253,12 @@ describe('ClaudeCodeLanguageModel', () => {
 
         const mockResponse = {
           async *[Symbol.asyncIterator]() {
-            yield { type: 'result', subtype: 'success', session_id: 's-env', usage: { input_tokens: 0, output_tokens: 0 } };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 's-env',
+              usage: { input_tokens: 0, output_tokens: 0 },
+            };
           },
         };
         vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
@@ -255,7 +301,12 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
-          yield { type: 'result', subtype: 'success', session_id: 's-noenv', usage: { input_tokens: 0, output_tokens: 0 } };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-noenv',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
         },
       };
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
@@ -305,7 +356,9 @@ describe('ClaudeCodeLanguageModel', () => {
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
       const result = await model.doGenerate({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+        prompt: [
+          { role: 'user', content: [{ type: 'text', text: 'Say hello' }] },
+        ],
       });
 
       expect(result.content).toEqual([{ type: 'text', text: 'Hello, world!' }]);
@@ -341,7 +394,9 @@ describe('ClaudeCodeLanguageModel', () => {
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
       const result = await model.doGenerate({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Complex task' }] }],
+        prompt: [
+          { role: 'user', content: [{ type: 'text', text: 'Complex task' }] },
+        ],
       });
 
       expect(result.finishReason).toBe('length');
@@ -350,7 +405,7 @@ describe('ClaudeCodeLanguageModel', () => {
     it('should handle AbortError correctly', async () => {
       const abortController = new AbortController();
       const abortReason = new Error('User cancelled');
-      
+
       // Set up the mock to throw AbortError when called
       vi.mocked(mockQuery).mockImplementation(() => {
         throw new MockAbortError('Operation aborted');
@@ -360,7 +415,9 @@ describe('ClaudeCodeLanguageModel', () => {
       abortController.abort(abortReason);
 
       const promise = model.doGenerate({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test abort' }] }],
+        prompt: [
+          { role: 'user', content: [{ type: 'text', text: 'Test abort' }] },
+        ],
         abortSignal: abortController.signal,
       });
 
@@ -402,12 +459,14 @@ describe('ClaudeCodeLanguageModel', () => {
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
       const result = await model.doStream({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+        prompt: [
+          { role: 'user', content: [{ type: 'text', text: 'Say hello' }] },
+        ],
       });
 
       const chunks: any[] = [];
       const reader = result.stream.getReader();
-      
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -526,7 +585,9 @@ describe('ClaudeCodeLanguageModel', () => {
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
       const result = await model.doStream({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Return JSON' }] }],
+        prompt: [
+          { role: 'user', content: [{ type: 'text', text: 'Return JSON' }] },
+        ],
         temperature: 0.5, // This will trigger a warning
         responseFormat: { type: 'json' }, // Add responseFormat to trigger JSON mode
       });
@@ -591,7 +652,9 @@ describe('ClaudeCodeLanguageModel', () => {
           yield {
             type: 'assistant',
             message: {
-              content: [{ type: 'text', text: 'Here is the JSON: {"a": 1, "b": ' }],
+              content: [
+                { type: 'text', text: 'Here is the JSON: {"a": 1, "b": ' },
+              ],
             },
           };
           yield {
@@ -615,7 +678,12 @@ describe('ClaudeCodeLanguageModel', () => {
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
       const result = await model.doStream({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Return invalid JSON' }] }],
+        prompt: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Return invalid JSON' }],
+          },
+        ],
         responseFormat: { type: 'json' }, // Add responseFormat to trigger JSON mode
       });
 
@@ -710,7 +778,9 @@ describe('ClaudeCodeLanguageModel', () => {
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
       const { stream } = await model.doStream({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'List files' }] }],
+        prompt: [
+          { role: 'user', content: [{ type: 'text', text: 'List files' }] },
+        ],
       });
 
       const events: ExtendedStreamPart[] = [];
@@ -722,9 +792,15 @@ describe('ClaudeCodeLanguageModel', () => {
         events.push(value);
       }
 
-      const toolInputStart = events.find((event) => event.type === 'tool-input-start');
-      const toolInputDelta = events.find((event) => event.type === 'tool-input-delta');
-      const toolInputEnd = events.find((event) => event.type === 'tool-input-end');
+      const toolInputStart = events.find(
+        (event) => event.type === 'tool-input-start'
+      );
+      const toolInputDelta = events.find(
+        (event) => event.type === 'tool-input-delta'
+      );
+      const toolInputEnd = events.find(
+        (event) => event.type === 'tool-input-end'
+      );
       const toolCall = events.find((event) => event.type === 'tool-call');
       const toolResult = events.find((event) => event.type === 'tool-result');
 
@@ -746,7 +822,9 @@ describe('ClaudeCodeLanguageModel', () => {
         id: toolUseId,
       });
 
-      expect(events.indexOf(toolInputDelta!)).toBeLessThan(events.indexOf(toolInputEnd!));
+      expect(events.indexOf(toolInputDelta!)).toBeLessThan(
+        events.indexOf(toolInputEnd!)
+      );
 
       expect(toolCall).toMatchObject({
         type: 'tool-call',
@@ -761,8 +839,12 @@ describe('ClaudeCodeLanguageModel', () => {
         },
       });
 
-      expect(events.indexOf(toolInputEnd!)).toBeLessThan(events.indexOf(toolCall!));
-      expect(events.indexOf(toolCall!)).toBeLessThan(events.indexOf(toolResult!));
+      expect(events.indexOf(toolInputEnd!)).toBeLessThan(
+        events.indexOf(toolCall!)
+      );
+      expect(events.indexOf(toolCall!)).toBeLessThan(
+        events.indexOf(toolResult!)
+      );
 
       expect(toolResult).toMatchObject({
         type: 'tool-result',
@@ -815,7 +897,9 @@ describe('ClaudeCodeLanguageModel', () => {
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
       const { stream } = await model.doStream({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read file' }] }],
+        prompt: [
+          { role: 'user', content: [{ type: 'text', text: 'Read file' }] },
+        ],
       });
 
       const events: ExtendedStreamPart[] = [];
@@ -826,10 +910,18 @@ describe('ClaudeCodeLanguageModel', () => {
         events.push(value);
       }
 
-      const toolInputStartIndex = events.findIndex((event) => event.type === 'tool-input-start');
-      const toolInputEndIndex = events.findIndex((event) => event.type === 'tool-input-end');
-      const toolCallIndex = events.findIndex((event) => event.type === 'tool-call');
-      const toolResultIndex = events.findIndex((event) => event.type === 'tool-result');
+      const toolInputStartIndex = events.findIndex(
+        (event) => event.type === 'tool-input-start'
+      );
+      const toolInputEndIndex = events.findIndex(
+        (event) => event.type === 'tool-input-end'
+      );
+      const toolCallIndex = events.findIndex(
+        (event) => event.type === 'tool-call'
+      );
+      const toolResultIndex = events.findIndex(
+        (event) => event.type === 'tool-result'
+      );
       const finishIndex = events.findIndex((event) => event.type === 'finish');
 
       expect(toolInputStartIndex).toBeGreaterThan(-1);
@@ -895,7 +987,12 @@ describe('ClaudeCodeLanguageModel', () => {
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
       const { stream } = await model.doStream({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read missing file' }] }],
+        prompt: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Read missing file' }],
+          },
+        ],
       } as any);
 
       const events: ExtendedStreamPart[] = [];
@@ -925,7 +1022,9 @@ describe('ClaudeCodeLanguageModel', () => {
         providerExecuted: true,
       });
 
-      expect(events.indexOf(toolCall!)).toBeLessThan(events.indexOf(toolError!));
+      expect(events.indexOf(toolCall!)).toBeLessThan(
+        events.indexOf(toolError!)
+      );
     });
 
     it('emits only one tool-call for multiple tool-result chunks', async () => {
@@ -991,7 +1090,9 @@ describe('ClaudeCodeLanguageModel', () => {
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
       const { stream } = await model.doStream({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Run command' }] }],
+        prompt: [
+          { role: 'user', content: [{ type: 'text', text: 'Run command' }] },
+        ],
       } as any);
 
       const events: ExtendedStreamPart[] = [];
@@ -1058,8 +1159,12 @@ describe('ClaudeCodeLanguageModel', () => {
         events.push(value);
       }
 
-      const inputStartIndex = events.findIndex((e) => e.type === 'tool-input-start');
-      const inputEndIndex = events.findIndex((e) => e.type === 'tool-input-end');
+      const inputStartIndex = events.findIndex(
+        (e) => e.type === 'tool-input-start'
+      );
+      const inputEndIndex = events.findIndex(
+        (e) => e.type === 'tool-input-end'
+      );
       const callIndex = events.findIndex((e) => e.type === 'tool-call');
       const resultIndex = events.findIndex((e) => e.type === 'tool-result');
 
@@ -1105,7 +1210,12 @@ describe('ClaudeCodeLanguageModel', () => {
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
       const { stream } = await model.doStream({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Large input test' }] }],
+        prompt: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Large input test' }],
+          },
+        ],
       } as any);
 
       const events: ExtendedStreamPart[] = [];
@@ -1154,7 +1264,12 @@ describe('ClaudeCodeLanguageModel', () => {
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
       const { stream } = await model.doStream({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Large delta test' }] }],
+        prompt: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Large delta test' }],
+          },
+        ],
       } as any);
 
       const events: ExtendedStreamPart[] = [];
@@ -1182,7 +1297,12 @@ describe('ClaudeCodeLanguageModel', () => {
             type: 'assistant',
             message: {
               content: [
-                { type: 'tool_use', id: toolUseId, name: toolName, input: { arg: 'initial' } },
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: { arg: 'initial' },
+                },
               ],
             },
           };
@@ -1191,7 +1311,12 @@ describe('ClaudeCodeLanguageModel', () => {
             type: 'assistant',
             message: {
               content: [
-                { type: 'tool_use', id: toolUseId, name: toolName, input: { arg: 'replaced' } },
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: { arg: 'replaced' },
+                },
               ],
             },
           };
@@ -1238,7 +1363,12 @@ describe('ClaudeCodeLanguageModel', () => {
             type: 'assistant',
             message: {
               content: [
-                { type: 'tool_use', id: toolUseId, name: toolName, input: { file: 'x' } },
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: { file: 'x' },
+                },
               ],
             },
           };
@@ -1246,7 +1376,12 @@ describe('ClaudeCodeLanguageModel', () => {
             type: 'user',
             message: {
               content: [
-                { type: 'tool_error', tool_use_id: toolUseId, name: toolName, error: 'e1' },
+                {
+                  type: 'tool_error',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  error: 'e1',
+                },
               ],
             },
           };
@@ -1254,7 +1389,12 @@ describe('ClaudeCodeLanguageModel', () => {
             type: 'user',
             message: {
               content: [
-                { type: 'tool_error', tool_use_id: toolUseId, name: toolName, error: 'e2' },
+                {
+                  type: 'tool_error',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  error: 'e2',
+                },
               ],
             },
           };
@@ -1298,7 +1438,12 @@ describe('ClaudeCodeLanguageModel', () => {
             message: {
               content: [
                 { type: 'tool_use', id: id1, name: 'Read', input: { p: 'a' } },
-                { type: 'tool_use', id: id2, name: 'Bash', input: { c: 'echo' } },
+                {
+                  type: 'tool_use',
+                  id: id2,
+                  name: 'Bash',
+                  input: { c: 'echo' },
+                },
               ],
             },
           };
@@ -1306,7 +1451,13 @@ describe('ClaudeCodeLanguageModel', () => {
             type: 'user',
             message: {
               content: [
-                { type: 'tool_result', tool_use_id: id1, name: 'Read', content: 'A', is_error: false },
+                {
+                  type: 'tool_result',
+                  tool_use_id: id1,
+                  name: 'Read',
+                  content: 'A',
+                  is_error: false,
+                },
               ],
             },
           };
@@ -1314,17 +1465,30 @@ describe('ClaudeCodeLanguageModel', () => {
             type: 'user',
             message: {
               content: [
-                { type: 'tool_result', tool_use_id: id2, name: 'Bash', content: 'B', is_error: false },
+                {
+                  type: 'tool_result',
+                  tool_use_id: id2,
+                  name: 'Bash',
+                  content: 'B',
+                  is_error: false,
+                },
               ],
             },
           };
-          yield { type: 'result', subtype: 'success', session_id: 'concurrent', usage: { input_tokens: 1, output_tokens: 1 } };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'concurrent',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
         },
       };
 
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
-      const { stream } = await model.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'run' }] }] } as any);
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'run' }] }],
+      } as any);
       const events: ExtendedStreamPart[] = [];
       const reader = stream.getReader();
       while (true) {
@@ -1343,16 +1507,54 @@ describe('ClaudeCodeLanguageModel', () => {
       const toolUseId = 'tool_interleave';
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
-          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Intro ' }] } };
-          yield { type: 'assistant', message: { content: [{ type: 'tool_use', id: toolUseId, name: 'Read', input: { p: '/f' } }] } };
-          yield { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, name: 'Read', content: 'OK', is_error: false }] } };
-          yield { type: 'assistant', message: { content: [{ type: 'text', text: ' Outro' }] } };
-          yield { type: 'result', subtype: 'success', session_id: 'inter', usage: { input_tokens: 1, output_tokens: 1 } };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Intro ' }] },
+          };
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: 'Read',
+                  input: { p: '/f' },
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: toolUseId,
+                  name: 'Read',
+                  content: 'OK',
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: ' Outro' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'inter',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
         },
       };
 
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
-      const { stream } = await model.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] } as any);
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
       const events: ExtendedStreamPart[] = [];
       const reader = stream.getReader();
       while (true) {
@@ -1363,7 +1565,9 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const firstTextIndex = events.findIndex((e) => e.type === 'text-delta');
       const toolCallIndex = events.findIndex((e) => e.type === 'tool-call');
-      const lastTextIndex = events.findIndex((e, i) => i > toolCallIndex && e.type === 'text-delta');
+      const lastTextIndex = events.findIndex(
+        (e, i) => i > toolCallIndex && e.type === 'text-delta'
+      );
       expect(firstTextIndex).toBeGreaterThan(-1);
       expect(toolCallIndex).toBeGreaterThan(firstTextIndex);
       expect(lastTextIndex).toBeGreaterThan(toolCallIndex);
@@ -1394,7 +1598,9 @@ describe('ClaudeCodeLanguageModel', () => {
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
       const { stream } = await model.doStream({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        prompt: [
+          { role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] },
+        ],
         responseFormat: { type: 'json', schema: {} } as any,
       } as any);
 
@@ -1513,7 +1719,6 @@ describe('ClaudeCodeLanguageModel', () => {
         toolName: 'unknown-tool',
       });
     });
-
   });
 
   describe('model configuration', () => {
@@ -1523,22 +1728,22 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const opusModel = new ClaudeCodeLanguageModel({ id: 'opus' });
       expect(opusModel.modelId).toBe('opus');
-      
+
       // Test custom model ID
       const customModel = new ClaudeCodeLanguageModel({ id: 'custom-model' });
       expect(customModel.modelId).toBe('custom-model');
     });
-    
+
     it('should have correct provider name', () => {
       const model = new ClaudeCodeLanguageModel({ id: 'sonnet' });
       expect(model.provider).toBe('claude-code');
     });
-    
+
     it('should have correct specification version', () => {
       const model = new ClaudeCodeLanguageModel({ id: 'sonnet' });
       expect(model.specificationVersion).toBe('v2');
     });
-    
+
     it('should support object generation mode', () => {
       const model = new ClaudeCodeLanguageModel({ id: 'sonnet' });
       expect(model.defaultObjectGenerationMode).toBe('json');

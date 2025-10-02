@@ -3,17 +3,17 @@ import { describe, it, expect } from 'vitest';
 describe('index exports', () => {
   it('should export all expected functions and types', async () => {
     const exports = await import('./index.js');
-    
+
     // Provider exports
     expect(exports.createClaudeCode).toBeDefined();
     expect(typeof exports.createClaudeCode).toBe('function');
     expect(exports.claudeCode).toBeDefined();
     expect(typeof exports.claudeCode).toBe('function');
-    
+
     // Language model exports
     expect(exports.ClaudeCodeLanguageModel).toBeDefined();
     expect(typeof exports.ClaudeCodeLanguageModel).toBe('function');
-    
+
     // Error handling exports
     expect(exports.isAuthenticationError).toBeDefined();
     expect(typeof exports.isAuthenticationError).toBe('function');
@@ -39,11 +39,15 @@ describe('index exports', () => {
     const indexExports = await import('./index.js');
     const providerExports = await import('./claude-code-provider.js');
     const errorExports = await import('./errors.js');
-    
+
     // Check that exported functions are the same references
-    expect(indexExports.createClaudeCode).toBe(providerExports.createClaudeCode);
+    expect(indexExports.createClaudeCode).toBe(
+      providerExports.createClaudeCode
+    );
     expect(indexExports.claudeCode).toBe(providerExports.claudeCode);
-    expect(indexExports.isAuthenticationError).toBe(errorExports.isAuthenticationError);
+    expect(indexExports.isAuthenticationError).toBe(
+      errorExports.isAuthenticationError
+    );
     expect(indexExports.isTimeoutError).toBe(errorExports.isTimeoutError);
   });
 });

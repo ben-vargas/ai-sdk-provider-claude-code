@@ -10,11 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.3] - 2025-09-03
 
 ### Fixed
+
 - Fixed `canUseTool` hanging issue when using streaming input by holding input stream open until Claude returns results (#43)
 
 ## [1.1.2] - 2025-08-28
 
 ### Added
+
 - Provider-level streaming input support to enable `canUseTool` via the SDK's stream-json mode (`streamingInput: 'auto' | 'always' | 'off'`).
 - Pass-through support for hooks and `canUseTool` to the Claude Code SDK (with guard against `permissionPromptToolName`).
 - Re-exports for SDK MCP tool utilities: `createSdkMcpServer`, `tool`, and related hook/permission types.
@@ -23,20 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation: new sections on Custom SDK Tools (callbacks) and Hooks/Runtime Permissions; clarified `canUseTool` streaming requirement and usage.
 
 ### Changed
+
 - Updated README and GUIDE to reflect that `canUseTool` is supported when streaming input is enabled (no longer "blocked").
 
 ## [1.1.1] - 2025-08-25
 
 ### Fixed
+
 - Added missing HTTP transport validation for MCP server configuration (#38)
 
 ## [1.1.0] - 2025-08-18
 
 ### Added
+
 - Support for both Zod v3 and v4 (peer dependency now accepts `^3.0.0 || ^4.0.0`)
 - Compatibility layer for Zod API differences between versions
 
 ### Fixed
+
 - Function schema validation now works with both Zod v3 and v4
 - Error handling supports both `error.errors` (v3) and `error.issues` (v4) formats
 - Updated `z.record()` calls to specify both key and value types for v4 compatibility
@@ -46,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.1] - 2025-08-15
 
 ### Changed
+
 - Updated to stable AI SDK v5 (from v5-beta)
 - Updated dependencies to stable versions:
   - `@ai-sdk/provider`: 2.0.0
@@ -59,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0-beta.1] - 2025-07-24
 
 ### Changed
+
 - **BREAKING**: Complete rewrite for Vercel AI SDK v5-beta compatibility
 - **BREAKING**: Now implements `LanguageModelV2` interface instead of `LanguageModelV1`
 - **BREAKING**: Requires AI SDK v5-beta (`ai@^4.0.0` or later)
@@ -72,6 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Badge status changed from "alpha" to "beta"
 
 ### Added
+
 - Version compatibility table in README
 - Migration guide in `docs/ai-sdk-v5/` directory
 - Support for v5's content-first message format
@@ -79,6 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Schema passing for object generation via `responseFormat.schema`
 
 ### Fixed
+
 - Stream response now includes all required v5 events
 - Proper handling of message content as arrays of parts
 - TypeScript strict mode compliance
@@ -87,11 +97,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - tool-management.ts example updated to use streaming pattern
 
 ### Note
+
 Version 0.x releases continue on the [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) branch for AI SDK v4 compatibility.
 
 ## [0.2.2] - 2025-06-20
 
 ### Changed
+
 - Updated terminology from "Claude Code CLI" to "Claude Code SDK" throughout codebase
 - Updated all documentation, comments, error messages, and examples to reflect SDK usage
 - Clarified that the provider uses the SDK component from @anthropic-ai/claude-code
@@ -99,11 +111,13 @@ Version 0.x releases continue on the [`ai-sdk-v4`](https://github.com/ben-vargas
 ## [0.2.0] - 2025-06-19
 
 ### Added
+
 - Configurable logger support with options to disable or customize warning/error output
 - Integration tests for logger functionality
 - Extended thinking support for Claude Opus 4 with examples
 
 ### Changed
+
 - Improved JSON extraction algorithm for better performance and reliability
 - JSON extraction now handles truncated JSON and missing closing braces
 - Consolidated test structure - moved integration tests to `src/` directory
@@ -111,12 +125,14 @@ Version 0.x releases continue on the [`ai-sdk-v4`](https://github.com/ben-vargas
 - Enhanced error messages for better debugging
 
 ### Fixed
+
 - Resolved all ESLint errors and removed unused imports
 - Fixed edge runtime compatibility issues with conditional fs imports
 - Fixed error handling to properly use AI SDK error types
 - Fixed validation to skip directory checks in non-Node environments
 
 ### Performance
+
 - Optimized JSON extraction with early termination for invalid JSON
 - Reduced JSON parsing overhead for large responses
 - Improved streaming performance for object generation
@@ -124,6 +140,7 @@ Version 0.x releases continue on the [`ai-sdk-v4`](https://github.com/ben-vargas
 ## [0.1.0] - 2025-06-15
 
 ### Added
+
 - Full ProviderV1 interface compliance with required methods (`textEmbeddingModel`, `chat`)
 - `supportsImageUrls = false` flag to explicitly declare image limitations
 - `supportsStructuredOutputs = false` for transparency about JSON-only support
@@ -136,6 +153,7 @@ Version 0.x releases continue on the [`ai-sdk-v4`](https://github.com/ben-vargas
 - Documentation of all unsupported AI SDK settings
 
 ### Changed
+
 - Error handling now uses `createAPICallError` and `createAuthenticationError`
 - Stream errors are emitted as error parts instead of thrown directly
 - Updated README to document all limitations and unsupported settings
@@ -143,6 +161,7 @@ Version 0.x releases continue on the [`ai-sdk-v4`](https://github.com/ben-vargas
 ## [0.0.1] - 2025-06-15
 
 ### Changed
+
 - **BREAKING**: Complete refactor to use official `@anthropic-ai/claude-code` SDK instead of spawn-based implementation (2025-06-14)
 - **BREAKING**: Removed `timeoutMs` configuration in favor of standard AI SDK `AbortSignal` pattern
 - Updated to meet all Vercel AI SDK community provider standards
@@ -150,6 +169,7 @@ Version 0.x releases continue on the [`ai-sdk-v4`](https://github.com/ben-vargas
 - Enhanced object generation with JSON extraction for reliable structured output
 
 ### Added
+
 - Dual format builds (CommonJS and ES Modules)
 - Source maps for better debugging experience
 - Separate vitest configurations for edge and node environments
@@ -162,6 +182,7 @@ Version 0.x releases continue on the [`ai-sdk-v4`](https://github.com/ben-vargas
 - Abort-aware queue for efficient request cancellation (2025-06-10)
 
 ### Fixed
+
 - Object generation now works reliably through prompt engineering and JSON extraction
 - Session management properly uses message history pattern
 - All examples updated to use SDK patterns correctly
@@ -169,6 +190,7 @@ Version 0.x releases continue on the [`ai-sdk-v4`](https://github.com/ben-vargas
 - Tool permission behavior for empty arrays (2025-06-10)
 
 ### Removed
+
 - Direct CLI spawn implementation
 - `timeoutMs` configuration (use AbortSignal instead)
 - References to old implementation patterns in examples
@@ -177,6 +199,7 @@ Version 0.x releases continue on the [`ai-sdk-v4`](https://github.com/ben-vargas
 ## [0.0.0] - 2025-06-08
 
 ### Initial Release
+
 - Initial implementation of AI SDK provider for Claude Code SDK
 - Support for Claude 4 Opus and Sonnet models
 - Text generation (streaming and non-streaming)
