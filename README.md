@@ -9,16 +9,17 @@
 
 # AI SDK Provider for Claude Code SDK
 
-> **Stable Release**: Version 1.x is now stable and compatible with AI SDK v5. For AI SDK v4 support, use the `ai-sdk-v4` tag or version 0.2.x.
+> **Latest Release**: Version 2.x uses the Claude Agent SDK with explicit configuration defaults. Version 1.x is the previous stable release. For AI SDK v4 support, use the `ai-sdk-v4` tag or version 0.2.x.
 
-**ai-sdk-provider-claude-code** lets you use Claude via the [Vercel AI SDK](https://sdk.vercel.ai/docs) through the official `@anthropic-ai/claude-agent-sdk` (SDK) and the Claude Code CLI.
+**ai-sdk-provider-claude-code** lets you use Claude via the [Vercel AI SDK](https://sdk.vercel.ai/docs) through the official `@anthropic-ai/claude-agent-sdk` and the Claude Code CLI.
 
 ## Version Compatibility
 
-| Provider Version | AI SDK Version | NPM Tag     | Status      | Branch                                                                                  |
-| ---------------- | -------------- | ----------- | ----------- | --------------------------------------------------------------------------------------- |
-| 1.x.x            | v5             | `latest`    | Stable      | `main`                                                                                  |
-| 0.x.x            | v4             | `ai-sdk-v4` | Maintenance | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
+| Provider Version | AI SDK Version | Underlying SDK                      | NPM Tag     | Status | Branch                                                                                  |
+| ---------------- | -------------- | ----------------------------------- | ----------- | ------ | --------------------------------------------------------------------------------------- |
+| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk`    | `latest`    | Stable | `main`                                                                                  |
+| 1.x.x            | v5             | `@anthropic-ai/claude-code` (legacy) | `v1`        | Stable | [`v1`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/v1)              |
+| 0.x.x            | v4             | `@anthropic-ai/claude-code`         | `ai-sdk-v4` | Legacy | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
 
 ### Installing the Right Version
 
@@ -94,7 +95,17 @@ const { text } = await generateText({
 console.log(text);
 ```
 
-## Breaking Changes in v1.x
+## Breaking Changes
+
+### Version 2.0.0 (Claude Agent SDK Migration)
+
+This version migrates to `@anthropic-ai/claude-agent-sdk` with **new defaults for better control**:
+
+- **System prompt** is no longer applied by default
+- **Filesystem settings** (CLAUDE.md, settings.json) are no longer loaded by default
+- See [Migrating to Claude Agent SDK](#migrating-to-claude-agent-sdk) section below for migration details
+
+### Version 1.x (AI SDK v5)
 
 See [Breaking Changes Guide](docs/ai-sdk-v5/V5_BREAKING_CHANGES.md) for details on migrating from v0.x to v1.x.
 
@@ -118,9 +129,9 @@ Key changes:
 - **[Examples](examples/)** - Sample scripts and patterns
 - **[Tool Streaming Support](docs/ai-sdk-v5/TOOL_STREAMING_SUPPORT.md)** - Event semantics and performance notes
 
-## Migrating to Claude Agent SDK
+## Migrating to Claude Agent SDK (v2.0.0)
 
-This provider now uses `@anthropic-ai/claude-agent-sdk` (formerly `@anthropic-ai/claude-code`). Two defaults changed:
+**Version 2.0.0** migrates from `@anthropic-ai/claude-code` to `@anthropic-ai/claude-agent-sdk`. Two defaults changed:
 
 - System prompt is no longer applied by default.
 - Filesystem settings (CLAUDE.md, settings.json) are not loaded by default.
@@ -156,6 +167,26 @@ CLI install and auth are unchanged:
 npm install -g @anthropic-ai/claude-code
 claude login
 ```
+
+### Migrating from v1.x to v2.0.0
+
+If you're upgrading from version 1.x:
+
+1. **Update the package**: `npm install ai-sdk-provider-claude-code@latest`
+2. **If you relied on default system prompt or CLAUDE.md**, add explicit configuration:
+   ```ts
+   const model = claudeCode('sonnet', {
+     systemPrompt: { type: 'preset', preset: 'claude_code' },
+     settingSources: ['user', 'project', 'local'],
+   });
+   ```
+3. **If you never used CLAUDE.md or custom system prompts**, no changes needed - v2.0.0 works the same for you.
+
+**Benefits of v2.0.0**:
+- Predictable behavior across environments (no hidden filesystem settings)
+- Better suited for CI/CD and multi-tenant applications
+- Explicit configuration over implicit defaults
+- Future-proof alignment with Claude Agent SDK design
 
 ## Core Features
 
