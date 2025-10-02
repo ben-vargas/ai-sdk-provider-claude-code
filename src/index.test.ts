@@ -41,13 +41,9 @@ describe('index exports', () => {
     const errorExports = await import('./errors.js');
 
     // Check that exported functions are the same references
-    expect(indexExports.createClaudeCode).toBe(
-      providerExports.createClaudeCode
-    );
+    expect(indexExports.createClaudeCode).toBe(providerExports.createClaudeCode);
     expect(indexExports.claudeCode).toBe(providerExports.claudeCode);
-    expect(indexExports.isAuthenticationError).toBe(
-      errorExports.isAuthenticationError
-    );
+    expect(indexExports.isAuthenticationError).toBe(errorExports.isAuthenticationError);
     expect(indexExports.isTimeoutError).toBe(errorExports.isTimeoutError);
   });
 });

@@ -58,8 +58,7 @@ Result:
   });
 
   it('should extract JSON with special characters', () => {
-    const text =
-      'Result: {"message": "Hello\\nWorld", "path": "C:/Users/test"}';
+    const text = 'Result: {"message": "Hello\\nWorld", "path": "C:/Users/test"}';
     const result = extractJson(text);
     expect(JSON.parse(result)).toEqual({
       message: 'Hello\nWorld',
