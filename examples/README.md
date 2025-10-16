@@ -107,7 +107,7 @@ npx tsx examples/tool-management.ts
 npx tsx examples/long-running-tasks.ts
 ```
 
-**Key concepts**: Custom timeouts, graceful cancellation, retry logic, Opus 4's extended thinking
+**Key concepts**: Custom timeouts, graceful cancellation, retry logic
 
 ### 9. Abort Signal (`abort-signal.ts`)
 
@@ -222,7 +222,7 @@ import { generateObject } from 'ai';
 import { z } from 'zod';
 
 const { object } = await generateObject({
-  model: claudeCode('sonnet'),
+  model: claudeCode('haiku'),
   schema: z.object({
     name: z.string(),
     age: z.number(),
@@ -258,7 +258,7 @@ const messages: ModelMessage[] = [
 ];
 
 const { text } = await generateText({
-  model: claudeCode('sonnet'),
+  model: claudeCode('haiku'),
   messages,
 });
 ```
@@ -269,7 +269,7 @@ const { text } = await generateText({
 import { streamText } from 'ai';
 
 const result = streamText({
-  model: claudeCode('sonnet'),
+  model: claudeCode('haiku'),
   prompt: 'Write a story...',
 });
 
@@ -287,7 +287,7 @@ const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minutes
 
 try {
   const { text } = await generateText({
-    model: claudeCode('sonnet'),
+    model: claudeCode('haiku'),
     prompt: 'Complex analysis...',
     abortSignal: controller.signal,
   });

@@ -42,7 +42,7 @@ async function main() {
   const dataUrl = toDataUrl(filePath);
 
   const result = streamText({
-    model: claudeCode('sonnet', { streamingInput: 'always' }),
+    model: claudeCode('haiku', { streamingInput: 'always' }),
     messages: [
       {
         role: 'user',

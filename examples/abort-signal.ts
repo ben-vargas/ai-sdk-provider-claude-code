@@ -39,7 +39,7 @@ async function main() {
     }, 2000);
 
     const { text } = await generateText({
-      model: claudeCode('sonnet'),
+      model: claudeCode('haiku'),
       prompt:
         'Write a very long detailed essay about the history of computing. Include at least 10 paragraphs.',
       abortSignal: controller.signal,
@@ -63,7 +63,7 @@ async function main() {
     controller.abort();
 
     await generateText({
-      model: claudeCode('sonnet'),
+      model: claudeCode('haiku'),
       prompt: 'This should not execute',
       abortSignal: controller.signal,
     });
@@ -83,7 +83,7 @@ async function main() {
     let charCount = 0;
 
     const { textStream } = streamText({
-      model: claudeCode('sonnet'),
+      model: claudeCode('haiku'),
       prompt: 'Count slowly from 1 to 20, explaining each number.',
       abortSignal: controller.signal,
     });

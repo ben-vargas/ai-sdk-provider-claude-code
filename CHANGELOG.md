@@ -7,13 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.3] - 2025-10-16
+
 ### Added
 
-- Support for Claude 4.5 Haiku model (`haiku`) - Available in Claude Code v2.0.17+
+- Support for Claude 4.5 Haiku model (`haiku`) - Available in Claude Code v2.0.17+ (#59)
+
+### Fixed
+
+- Improved truncation detection to avoid false positives on malformed JSON (#60)
+  - Added multi-layered validation: position-based, structure validation, minimum size guard, and truncation indicators
+  - Prevents genuine JSON syntax errors from being incorrectly treated as CLI truncation events
+- Updated `MinimalCallToolResult` type to match MCP SDK specification (#60)
+  - Added missing `resource_link` content type
+  - Split resource type into text/blob variants with proper discriminated unions
+  - Resolves TypeScript compilation errors in downstream projects using MCP SDK v1.13+
 
 ### Changed
 
+- Updated `@anthropic-ai/claude-agent-sdk` from `^0.1.0` to `^0.1.20`
+- Updated all example files to use `haiku` model for faster execution
+- Updated Quick Start examples in README.md to use `haiku` model
 - Updated model version references to Sonnet 4.5 and Opus 4.1 in documentation
+
+## [2.0.2] - 2025-10-02
+
+### Changed
+
+- Updated README.md npm tag documentation from `v1` to `v1-claude-code-sdk` (#56)
+- Added explicit installation examples for all versions (v2.x, v1.x, v0.x)
 
 ## [2.0.0] - 2025-10-02
 

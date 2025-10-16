@@ -79,7 +79,7 @@ import { streamText } from 'ai';
 import { claudeCode } from 'ai-sdk-provider-claude-code';
 
 const result = streamText({
-  model: claudeCode('sonnet'),
+  model: claudeCode('haiku'),
   prompt: 'Hello, Claude!',
 });
 
@@ -94,7 +94,7 @@ import { generateText } from 'ai';
 import { claudeCode } from 'ai-sdk-provider-claude-code';
 
 const { text } = await generateText({
-  model: claudeCode('sonnet'),
+  model: claudeCode('haiku'),
   prompt: 'Hello, Claude!',
 });
 

@@ -28,7 +28,7 @@ async function testToolManagement() {
 
   try {
     const result1 = streamText({
-      model: defaultClaude('sonnet'),
+      model: defaultClaude('haiku'),
       prompt: 'What is 2 + 2? Just give me the number.',
     });
 
@@ -53,7 +53,7 @@ async function testToolManagement() {
 
   try {
     const result2 = streamText({
-      model: bashOnlyClaude('sonnet'),
+      model: bashOnlyClaude('haiku'),
       prompt: 'Can you show me the current date? Use the date command.',
     });
 
@@ -78,7 +78,7 @@ async function testToolManagement() {
 
   try {
     const result3 = streamText({
-      model: readOnlyClaude('sonnet'),
+      model: readOnlyClaude('haiku'),
       prompt: 'What is the capital of France? Just the city name.',
     });
 
@@ -110,7 +110,7 @@ async function testToolManagement() {
 
   try {
     const result4 = streamText({
-      model: mixedClaude('sonnet'),
+      model: mixedClaude('haiku'),
       prompt: 'What is the result of 5 * 8?',
     });
 
@@ -135,7 +135,7 @@ async function testToolManagement() {
 
   try {
     const result5 = streamText({
-      model: noToolsClaude('sonnet'),
+      model: noToolsClaude('haiku'),
       prompt: 'What programming language is this: console.log("Hello")?',
     });
 

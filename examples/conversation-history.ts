@@ -15,7 +15,7 @@ import type { CoreMessage } from 'ai';
 async function testConversation() {
   console.log('🧪 Testing conversation with message history...');
 
-  const model = claudeCode('sonnet');
+  const model = claudeCode('haiku');
   const messages: CoreMessage[] = [];
 
   // First turn

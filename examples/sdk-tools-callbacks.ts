@@ -34,7 +34,7 @@ async function main() {
   });
 
   const result = streamText({
-    model: provider('sonnet'),
+    model: provider('haiku'),
     prompt: 'Use the add tool to sum 3 and 4. Provide only the number.',
   });
 

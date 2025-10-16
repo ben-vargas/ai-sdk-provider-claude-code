@@ -16,7 +16,7 @@ async function checkSetup() {
     console.log('Testing SDK connection...');
 
     const { text, usage } = await generateText({
-      model: claudeCode('sonnet'),
+      model: claudeCode('haiku'),
       prompt: 'Say "Hello from Claude" and nothing else.',
     });
 

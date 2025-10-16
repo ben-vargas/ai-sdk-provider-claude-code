@@ -30,7 +30,7 @@ async function main() {
 
     console.log('1️⃣ Using provider with default settings:');
     const { text: response1 } = await generateText({
-      model: customProvider('opus'), // Uses default settings
+      model: customProvider('haiku'), // Uses default settings
       prompt: 'What is the capital of France? Answer in one word.',
     });
     console.log('Response:', response1);
@@ -38,7 +38,7 @@ async function main() {
     // Example 2: Override settings for specific model instance
     console.log('\n2️⃣ Model with custom settings:');
     const { text: response2 } = await generateText({
-      model: customProvider('sonnet', {
+      model: customProvider('haiku', {
         // These settings override the provider defaults
         permissionMode: 'default', // Ask for permissions
         maxTurns: 5, // Limit conversation turns
@@ -49,7 +49,7 @@ async function main() {
 
     // Example 3: Using tool restrictions
     console.log('\n3️⃣ Model with tool restrictions:');
-    const safeModel = customProvider('sonnet', {
+    const safeModel = customProvider('haiku', {
       // Only allow read operations
       allowedTools: ['Read', 'LS', 'Grep', 'Glob'],
       // Explicitly block write operations
@@ -62,26 +62,26 @@ async function main() {
     });
     console.log('Response:', response3);
 
-    // Example 4: Different models from same provider
-    console.log('\n4️⃣ Using different models:');
-    const opusModel = customProvider('opus');
-    const sonnetModel = customProvider('sonnet');
+    // Example 4: Multiple model instances from same provider
+    console.log('\n4️⃣ Using multiple model instances:');
+    const haikuModel1 = customProvider('haiku');
+    const haikuModel2 = customProvider('haiku');
 
     // Quick comparison
     const prompt = 'Explain quantum computing in exactly 10 words.';
 
-    const { text: opusResponse } = await generateText({
-      model: opusModel,
+    const { text: response4a } = await generateText({
+      model: haikuModel1,
       prompt,
     });
 
-    const { text: sonnetResponse } = await generateText({
-      model: sonnetModel,
+    const { text: response4b } = await generateText({
+      model: haikuModel2,
       prompt,
     });
 
-    console.log('Opus:', opusResponse);
-    console.log('Sonnet:', sonnetResponse);
+    console.log('Instance 1:', response4a);
+    console.log('Instance 2:', response4b);
   } catch (error) {
     console.error('Error:', error);
   }

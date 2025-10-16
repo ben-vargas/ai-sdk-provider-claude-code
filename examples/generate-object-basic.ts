@@ -32,7 +32,7 @@ async function example1_simpleObject() {
   console.log('1️⃣  Simple Object with Primitives\n');
 
   const { object } = await generateObject({
-    model: claudeCode('sonnet'),
+    model: claudeCode('haiku'),
     schema: z.object({
       name: z.string().describe('Full name of the person'),
       age: z.number().describe('Age in years'),
@@ -52,7 +52,7 @@ async function example2_arrays() {
   console.log('2️⃣  Object with Arrays\n');
 
   const { object } = await generateObject({
-    model: claudeCode('sonnet'),
+    model: claudeCode('haiku'),
     schema: z.object({
       teamName: z.string().describe('Name of the development team'),
       members: z.array(z.string()).describe('List of team member names'),
@@ -72,7 +72,7 @@ async function example3_optionalFields() {
   console.log('3️⃣  Object with Optional Fields\n');
 
   const { object } = await generateObject({
-    model: claudeCode('sonnet'),
+    model: claudeCode('haiku'),
     schema: z.object({
       productName: z.string().describe('Name of the product'),
       price: z.number().describe('Price in USD'),
@@ -96,7 +96,7 @@ async function example4_gradualComplexity() {
   // Start simple
   console.log('Step 1 - Basic user:');
   const { object: basicUser } = await generateObject({
-    model: claudeCode('sonnet'),
+    model: claudeCode('haiku'),
     schema: z.object({
       username: z.string(),
       email: z.string().email(),
@@ -108,7 +108,7 @@ async function example4_gradualComplexity() {
   // Add more fields
   console.log('\nStep 2 - Enhanced user:');
   const { object: enhancedUser } = await generateObject({
-    model: claudeCode('sonnet'),
+    model: claudeCode('haiku'),
     schema: z.object({
       username: z.string(),
       email: z.string().email(),
@@ -134,7 +134,7 @@ async function example5_bestPractices() {
 
   // Good: Clear descriptions and specific prompt
   const { object: good } = await generateObject({
-    model: claudeCode('sonnet'),
+    model: claudeCode('haiku'),
     schema: z.object({
       title: z.string().describe('Article title (50-100 characters)'),
       summary: z.string().describe('Brief summary (max 200 characters)'),

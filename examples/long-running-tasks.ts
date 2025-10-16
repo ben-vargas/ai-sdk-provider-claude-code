@@ -27,7 +27,7 @@ async function withTimeout() {
 
   try {
     const { text } = await generateText({
-      model: claudeCode('sonnet'),
+      model: claudeCode('haiku'),
       prompt: 'Analyze the implications of quantum computing on cryptography...',
       abortSignal: controller.signal,
     });
@@ -61,7 +61,7 @@ async function withUserCancellation() {
     console.log('Starting long task (will be cancelled in 2 seconds)...');
 
     const { text } = await generateText({
-      model: claudeCode('sonnet'),
+      model: claudeCode('haiku'),
       prompt: 'Write a comprehensive guide to machine learning...',
       abortSignal: controller.signal,
     });
@@ -85,7 +85,7 @@ async function withGracefulTimeout() {
 
     try {
       const { text } = await generateText({
-        model: claudeCode('sonnet'),
+        model: claudeCode('haiku'),
         prompt: 'Explain the theory of relativity',
         abortSignal: controller.signal,
       });
@@ -140,7 +140,7 @@ async function withHelper() {
 
   try {
     const { text } = await generateText({
-      model: claudeCode('sonnet'),
+      model: claudeCode('haiku'),
       prompt: 'Analyze this code for security vulnerabilities...',
       abortSignal: controller.signal,
     });
@@ -167,7 +167,7 @@ async function main() {
   console.log('- Set custom timeouts based on task complexity');
   console.log('- Always clear timeouts on success');
   console.log('- Consider retry logic for timeout scenarios');
-  console.log('- Claude Sonnet 4.5 may need 5-10 minute timeouts for complex reasoning');
+  console.log('- More complex tasks may need longer timeouts (5-10 minutes)');
 }
 
 main().catch(console.error);

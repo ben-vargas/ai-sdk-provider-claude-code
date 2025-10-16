@@ -55,7 +55,7 @@ async function example1_companyStructure() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('sonnet'),
+    model: claudeCode('haiku'),
     schema: companySchema,
     prompt:
       'Generate a structure for a mid-sized software company with 3 departments: Engineering, Product, and Marketing. Each should have 2-3 teams.',
@@ -126,7 +126,7 @@ async function example2_ecommerceOrder() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('sonnet'),
+    model: claudeCode('haiku'),
     schema: orderSchema,
     prompt:
       'Generate an e-commerce order for a customer buying 3 different clothing items with variations. Include a discount.',
@@ -204,7 +204,7 @@ async function example3_configurationFile() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('sonnet'),
+    model: claudeCode('haiku'),
     schema: configSchema,
     prompt:
       'Generate a production configuration for a SaaS application with comprehensive security and monitoring settings.',
@@ -289,7 +289,7 @@ async function example4_socialMediaPost() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('sonnet'),
+    model: claudeCode('haiku'),
     schema: postSchema,
     prompt:
       'Generate a viral tech announcement post with high engagement, media attachments, and top comments.',
@@ -346,7 +346,7 @@ async function example5_fileSystemStructure() {
 
   try {
     const { object } = await generateObject({
-      model: claudeCode('sonnet'),
+      model: claudeCode('haiku'),
       schema: projectSchema,
       prompt:
         'Generate a typical Next.js project file structure with src directory, showing 2 levels deep. Include common files like package.json, tsconfig.json, and directories like src, public, and components.',
