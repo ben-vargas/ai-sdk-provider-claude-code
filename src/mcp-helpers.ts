@@ -7,9 +7,21 @@ import { type ZodRawShape, type ZodObject } from 'zod';
  * Each tool provides a description, a Zod object schema, and a handler.
  */
 export type MinimalCallToolResult = {
-  content: Array<{ type: string; [key: string]: unknown }>;
+  content: Array<
+    | { type: 'text'; text: string; [key: string]: unknown }
+    | { type: 'image'; data: string; mimeType: string; [key: string]: unknown }
+    | { type: 'audio'; data: string; mimeType: string; [key: string]: unknown }
+    | {
+        type: 'resource';
+        resource:
+          | { uri: string; text: string; mimeType?: string; [key: string]: unknown }
+          | { uri: string; blob: string; mimeType?: string; [key: string]: unknown };
+        [key: string]: unknown;
+      }
+  >;
   isError?: boolean;
-  structuredContent?: unknown;
+  _meta?: Record<string, unknown>;
+  [key: string]: unknown;
 };
 
 export function createCustomMcpServer<
