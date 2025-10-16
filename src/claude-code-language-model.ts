@@ -19,6 +19,103 @@ import { getLogger } from './logger.js';
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
+const CLAUDE_CODE_TRUNCATION_WARNING =
+  'Claude Code CLI output ended unexpectedly; returning truncated response from buffered text. Await upstream fix to avoid data loss.';
+
+const MIN_TRUNCATION_LENGTH = 1024;
+const POSITION_PATTERN = /position\s+(\d+)/i;
+
+function hasUnclosedJsonStructure(text: string): boolean {
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+
+    if (inString) {
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{' || char === '[') {
+      depth++;
+      continue;
+    }
+
+    if (char === '}' || char === ']') {
+      if (depth > 0) {
+        depth--;
+      }
+    }
+  }
+
+  return depth > 0 || inString;
+}
+
+function isClaudeCodeTruncationError(error: unknown, bufferedText: string): boolean {
+  if (!(error instanceof SyntaxError)) {
+    return false;
+  }
+
+  if (!bufferedText) {
+    return false;
+  }
+
+  const rawMessage = typeof error.message === 'string' ? error.message : '';
+  const message = rawMessage.toLowerCase();
+  // Only match actual truncation patterns, not normal JSON parsing errors.
+  // Real truncation: "Unexpected end of JSON input" or "Unterminated string in JSON..."
+  // Normal errors: "Unexpected token X in JSON at position N" (should be surfaced as errors)
+  const truncationIndicators = [
+    'unexpected end of json input',
+    'unexpected end of input',
+    'unexpected end of string',
+    'unterminated string',
+  ];
+
+  if (!truncationIndicators.some((indicator) => message.includes(indicator))) {
+    return false;
+  }
+
+  const positionMatch = rawMessage.match(POSITION_PATTERN);
+  if (positionMatch) {
+    const position = Number.parseInt(positionMatch[1], 10);
+    if (Number.isFinite(position)) {
+      const isNearBufferEnd = Math.abs(position - bufferedText.length) <= 16;
+      if (isNearBufferEnd && position >= MIN_TRUNCATION_LENGTH) {
+        return true;
+      }
+      // If the parser bailed far away from the buffered text end, treat as a genuine JSON error.
+      if (!isNearBufferEnd) {
+        return false;
+      }
+    }
+  }
+
+  if (bufferedText.length < MIN_TRUNCATION_LENGTH) {
+    return false;
+  }
+
+  return hasUnclosedJsonStructure(bufferedText);
+}
+
 function isAbortError(err: unknown): boolean {
   if (err && typeof err === 'object') {
     const e = err as { name?: unknown; code?: unknown };
@@ -699,6 +796,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     let text = '';
     let usage: LanguageModelV2Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     let finishReason: LanguageModelV2FinishReason = 'stop';
+    let wasTruncated = false;
     let costUsd: number | undefined;
     let durationMs: number | undefined;
     let rawUsage: unknown | undefined;
@@ -792,8 +890,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
         throw options.abortSignal?.aborted ? options.abortSignal.reason : error;
       }
 
-      // Use unified error handler
-      throw this.handleClaudeCodeError(error, messagesPrompt);
+      if (isClaudeCodeTruncationError(error, text)) {
+        wasTruncated = true;
+        finishReason = 'length';
+        warnings.push({
+          type: 'other',
+          message: CLAUDE_CODE_TRUNCATION_WARNING,
+        });
+      } else {
+        // Use unified error handler
+        throw this.handleClaudeCodeError(error, messagesPrompt);
+      }
     } finally {
       if (options.abortSignal && abortListener) {
         options.abortSignal.removeEventListener('abort', abortListener);
@@ -824,6 +931,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           ...(costUsd !== undefined && { costUsd }),
           ...(durationMs !== undefined && { durationMs }),
           ...(rawUsage !== undefined && { rawUsage: rawUsage as JSONValue }),
+          ...(wasTruncated && { truncated: true }),
         },
       },
     };
@@ -938,6 +1046,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           toolStates.clear();
         };
 
+        let usage: LanguageModelV2Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+        let accumulatedText = '';
+        let textPartId: string | undefined;
+
         try {
           // Emit stream-start with warnings
           controller.enqueue({ type: 'stream-start', warnings });
@@ -957,14 +1069,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 streamingContentParts
               )
             : messagesPrompt;
+
           const response = query({
             prompt: sdkPrompt,
             options: queryOptions,
           });
-
-          let usage: LanguageModelV2Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-          let accumulatedText = '';
-          let textPartId: string | undefined;
 
           for await (const message of response) {
             if (message.type === 'assistant') {
@@ -1280,6 +1389,79 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           controller.close();
         } catch (error: unknown) {
           done();
+
+          if (isClaudeCodeTruncationError(error, accumulatedText)) {
+            const truncationWarning: LanguageModelV2CallWarning = {
+              type: 'other',
+              message: CLAUDE_CODE_TRUNCATION_WARNING,
+            };
+            streamWarnings.push(truncationWarning);
+
+            const emitJsonText = () => {
+              const extractedJson = this.handleJsonExtraction(accumulatedText, streamWarnings);
+              const jsonTextId = generateId();
+              controller.enqueue({
+                type: 'text-start',
+                id: jsonTextId,
+              });
+              controller.enqueue({
+                type: 'text-delta',
+                id: jsonTextId,
+                delta: extractedJson,
+              });
+              controller.enqueue({
+                type: 'text-end',
+                id: jsonTextId,
+              });
+            };
+
+            if (options.responseFormat?.type === 'json') {
+              emitJsonText();
+            } else if (textPartId) {
+              controller.enqueue({
+                type: 'text-end',
+                id: textPartId,
+              });
+            } else if (accumulatedText) {
+              const fallbackTextId = generateId();
+              controller.enqueue({
+                type: 'text-start',
+                id: fallbackTextId,
+              });
+              controller.enqueue({
+                type: 'text-delta',
+                id: fallbackTextId,
+                delta: accumulatedText,
+              });
+              controller.enqueue({
+                type: 'text-end',
+                id: fallbackTextId,
+              });
+            }
+
+            finalizeToolCalls();
+
+            const warningsJson = this.serializeWarningsForMetadata(streamWarnings);
+
+            controller.enqueue({
+              type: 'finish',
+              finishReason: 'length',
+              usage,
+              providerMetadata: {
+                'claude-code': {
+                  ...(this.sessionId !== undefined && { sessionId: this.sessionId }),
+                  truncated: true,
+                  ...(streamWarnings.length > 0 && {
+                    warnings: warningsJson as unknown as JSONValue,
+                  }),
+                },
+              },
+            });
+
+            controller.close();
+            return;
+          }
+
           finalizeToolCalls();
           let errorToEmit: unknown;
 

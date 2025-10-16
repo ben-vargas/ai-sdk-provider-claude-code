@@ -403,6 +403,104 @@ describe('ClaudeCodeLanguageModel', () => {
       // Should throw the abort reason since signal is aborted
       await expect(promise).rejects.toThrow(abortReason);
     });
+
+    it('recovers from CLI truncation errors and returns buffered text', async () => {
+      const repeatedTasks = Array.from({ length: 400 }, (_, i) => `task-${i}`).join('","');
+      const partialResponse = `{"tasks": ["${repeatedTasks}`;
+      const truncationPosition = partialResponse.length;
+      const truncationError = new SyntaxError(
+        `Unexpected end of JSON input at position ${truncationPosition} (line 1 column ${
+          truncationPosition + 1
+        })`
+      );
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: partialResponse }],
+            },
+          };
+          throw truncationError;
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate tasks' }] }],
+        responseFormat: { type: 'json' },
+      } as any);
+
+      expect(result.finishReason).toBe('length');
+      const hasTruncationWarning = result.warnings.some(
+        (warning) =>
+          'message' in warning &&
+          typeof warning.message === 'string' &&
+          warning.message.includes('output ended unexpectedly')
+      );
+      expect(hasTruncationWarning).toBe(true);
+      expect(result.providerMetadata?.['claude-code']?.truncated).toBe(true);
+      expect(result.content[0]).toEqual(
+        expect.objectContaining({
+          type: 'text',
+          text: expect.stringContaining('task-10'),
+        })
+      );
+    });
+
+    it('propagates JSON syntax errors without marking truncation', async () => {
+      const partialResponse = '{"tasks": ["task-1"}';
+      const parseError = new SyntaxError('Unexpected token } in JSON at position 18');
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: partialResponse }],
+            },
+          };
+          throw parseError;
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await expect(
+        model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate tasks' }] }],
+          responseFormat: { type: 'json' },
+        } as any)
+      ).rejects.toThrow(/Unexpected token \}/);
+    });
+
+    it('propagates short unexpected end errors without treating as truncation', async () => {
+      const partialResponse = '{"tasks": "';
+      const parseError = new SyntaxError('Unexpected end of JSON input');
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: partialResponse }],
+            },
+          };
+          throw parseError;
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await expect(
+        model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate tasks' }] }],
+          responseFormat: { type: 'json' },
+        } as any)
+      ).rejects.toThrow(/Unexpected end of JSON input/);
+    });
   });
 
   describe('doStream', () => {
@@ -1592,6 +1690,116 @@ describe('ClaudeCodeLanguageModel', () => {
         type: 'tool-call',
         toolName: 'unknown-tool',
       });
+    });
+
+    it('emits finish event with truncated metadata when CLI truncates JSON stream', async () => {
+      const repeatedItems = Array.from({ length: 300 }, (_, i) => `item-${i}`).join('","');
+      const partialJson = `{"result": {"items": ["${repeatedItems}`;
+      const truncationPosition = partialJson.length;
+      const truncationError = new SyntaxError(
+        `Unterminated string in JSON at position ${truncationPosition}`
+      );
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: partialJson }],
+            },
+          };
+          throw truncationError;
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Return JSON' }] }],
+        responseFormat: { type: 'json' },
+      } as any);
+
+      const events: LanguageModelV2StreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      expect(events.some((event) => event.type === 'error')).toBe(false);
+
+      const finishEvent = events.find((event) => event.type === 'finish');
+      expect(finishEvent).toBeDefined();
+      expect(
+        finishEvent && 'finishReason' in finishEvent ? finishEvent.finishReason : undefined
+      ).toBe('length');
+
+      const finishMetadata =
+        finishEvent && 'providerMetadata' in finishEvent ? finishEvent.providerMetadata : undefined;
+      const claudeMetadata =
+        finishMetadata && 'claude-code' in finishMetadata
+          ? (finishMetadata['claude-code'] as Record<string, unknown>)
+          : undefined;
+      expect(claudeMetadata?.truncated).toBe(true);
+
+      const serializedWarnings = Array.isArray(claudeMetadata?.warnings)
+        ? (claudeMetadata?.warnings as Array<Record<string, unknown>>)
+        : [];
+      expect(
+        serializedWarnings.some(
+          (warning) =>
+            typeof warning.message === 'string' &&
+            warning.message.includes('output ended unexpectedly')
+        )
+      ).toBe(true);
+
+      const textDelta = events.find((event) => event.type === 'text-delta');
+      expect(textDelta && 'delta' in textDelta ? textDelta.delta : '').toContain('items');
+
+      const textEnd = events.find((event) => event.type === 'text-end');
+      expect(textEnd).toBeDefined();
+    });
+
+    it('emits an error event for malformed JSON without treating it as truncation', async () => {
+      const partialJson = '{"result": {"items": [1, 2}}';
+      const parseError = new SyntaxError('Unexpected token } in JSON at position 24');
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: partialJson }],
+            },
+          };
+          throw parseError;
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Return JSON' }] }],
+        responseFormat: { type: 'json' },
+      } as any);
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const errorEvent = events.find((event) => event.type === 'error');
+      expect(errorEvent).toBeDefined();
+      expect(
+        errorEvent && 'error' in errorEvent && errorEvent.error
+          ? (errorEvent.error as Error).message
+          : ''
+      ).toMatch(/Unexpected token \}/);
+      expect(events.some((event) => event.type === 'finish')).toBe(false);
     });
   });
 
