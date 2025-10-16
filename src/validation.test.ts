@@ -86,12 +86,13 @@ describe('validateModelId', () => {
   it('should accept known models without warnings', () => {
     expect(validateModelId('opus')).toBeUndefined();
     expect(validateModelId('sonnet')).toBeUndefined();
+    expect(validateModelId('haiku')).toBeUndefined();
   });
 
   it('should warn about unknown models', () => {
     const warning = validateModelId('gpt-4');
     expect(warning).toContain("Unknown model ID: 'gpt-4'");
-    expect(warning).toContain('Known models are: opus, sonnet');
+    expect(warning).toContain('Known models are: opus, sonnet, haiku');
   });
 
   it('should throw error for empty model ID', () => {

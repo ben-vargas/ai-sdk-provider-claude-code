@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Support for Claude 4.5 Haiku model (`haiku`) - Available in Claude Code v2.0.17+
+
+### Changed
+
+- Updated model version references to Sonnet 4.5 and Opus 4.1 in documentation
+
 ## [2.0.0] - 2025-10-02
 
 ### BREAKING CHANGES

@@ -124,8 +124,9 @@ Key changes:
 
 ## Models
 
-- **`opus`** - Claude 4 Opus (most capable)
-- **`sonnet`** - Claude 4 Sonnet (balanced performance)
+- **`opus`** - Claude 4.1 Opus (most capable)
+- **`sonnet`** - Claude 4.5 Sonnet (balanced performance)
+- **`haiku`** - Claude 4.5 Haiku (fastest, most cost-effective)
 
 ## Documentation
 

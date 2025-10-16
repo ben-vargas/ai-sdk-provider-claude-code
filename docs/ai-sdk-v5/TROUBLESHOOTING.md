@@ -340,7 +340,8 @@ npx tsx ../examples/long-running-tasks.ts
 ## Performance Tips
 
 1. **Model Selection**
-   - Use `sonnet` for faster responses
+   - Use `haiku` for fastest, most cost-effective responses
+   - Use `sonnet` for balanced performance
    - Use `opus` for complex reasoning tasks
 
 2. **Request Optimization**
@@ -358,7 +359,7 @@ npx tsx ../examples/long-running-tasks.ts
 1. **Image Support Requires Streaming Mode**: Image inputs are supported via streaming mode with base64/data URLs. See `examples/images.ts`. Remote HTTP(S) URLs are not supported.
 2. **No AI SDK Tool Calling**: The AI SDK's function calling interface isn't implemented, but Claude can use tools via MCP servers and built-in CLI tools
 3. **Object Generation**: Relies on prompt engineering rather than native JSON mode
-4. **Model Options**: Limited to 'opus' and 'sonnet' models
+4. **Model Options**: Limited to 'opus', 'sonnet', and 'haiku' models
 
 ## Getting Help
 

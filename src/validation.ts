@@ -142,7 +142,7 @@ export const claudeCodeSettingsSchema = z
  * @returns Warning message if model is unknown, undefined otherwise
  */
 export function validateModelId(modelId: string): string | undefined {
-  const knownModels = ['opus', 'sonnet'];
+  const knownModels = ['opus', 'sonnet', 'haiku'];
 
   // Check for empty or whitespace-only
   if (!modelId || modelId.trim() === '') {

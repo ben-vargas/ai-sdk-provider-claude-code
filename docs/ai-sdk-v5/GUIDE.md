@@ -215,7 +215,7 @@ const result = await generateText({
 
 | Option                       | Type                             | Default     | Description                                                        |
 | ---------------------------- | -------------------------------- | ----------- | ------------------------------------------------------------------ |
-| `model`                      | `'opus' \| 'sonnet'`             | `'opus'`    | Model to use                                                       |
+| `model`                      | `'opus' \| 'sonnet' \| 'haiku'`  | `'opus'`    | Model to use                                                       |
 | `pathToClaudeCodeExecutable` | `string`                         | `'claude'`  | Path to Claude CLI executable                                      |
 | `customSystemPrompt`         | `string`                         | `undefined` | Custom system prompt                                               |
 | `appendSystemPrompt`         | `string`                         | `undefined` | Append to system prompt                                            |

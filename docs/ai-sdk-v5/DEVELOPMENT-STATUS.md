@@ -250,8 +250,9 @@ import { claudeCode } from 'ai-sdk-provider-claude-code';
 
 The Claude Code provider supports the following models:
 
-- `sonnet` - Claude 4 Sonnet (balanced speed and capability)
-- `opus` - Claude 4 Opus (most capable)
+- `haiku` - Claude 4.5 Haiku (fastest, most cost-effective)
+- `sonnet` - Claude 4.5 Sonnet (balanced speed and capability)
+- `opus` - Claude 4.1 Opus (most capable)
 
 ```ts
 import { generateText } from 'ai';

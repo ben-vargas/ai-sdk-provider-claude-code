@@ -130,7 +130,7 @@ function toAsyncIterablePrompt(
 export interface ClaudeCodeLanguageModelOptions {
   /**
    * The model identifier to use.
-   * Can be 'opus', 'sonnet', or a custom model string.
+   * Can be 'opus', 'sonnet', 'haiku', or a custom model string.
    */
   id: ClaudeCodeModelId;
 
@@ -148,22 +148,25 @@ export interface ClaudeCodeLanguageModelOptions {
 
 /**
  * Supported Claude model identifiers.
- * - 'opus': Claude 4 Opus model (most capable)
- * - 'sonnet': Claude 4 Sonnet model (balanced performance)
+ * - 'opus': Claude 4.1 Opus model (most capable)
+ * - 'sonnet': Claude 4.5 Sonnet model (balanced performance)
+ * - 'haiku': Claude 4.5 Haiku model (fastest, most cost-effective) - Available in Claude Code v2.0.17+
  * - Custom string: Any other model identifier supported by the CLI
  *
  * @example
  * ```typescript
  * const opusModel = claudeCode('opus');
  * const sonnetModel = claudeCode('sonnet');
+ * const haikuModel = claudeCode('haiku');
  * const customModel = claudeCode('claude-3-opus-20240229');
  * ```
  */
-export type ClaudeCodeModelId = 'opus' | 'sonnet' | (string & {});
+export type ClaudeCodeModelId = 'opus' | 'sonnet' | 'haiku' | (string & {});
 
 const modelMap: Record<string, string> = {
   opus: 'opus',
   sonnet: 'sonnet',
+  haiku: 'haiku',
 };
 
 /**
