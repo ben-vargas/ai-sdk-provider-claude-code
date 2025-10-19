@@ -1444,7 +1444,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             streamWarnings.push(truncationWarning);
 
             const emitJsonText = () => {
-              const extractedJson = this.handleJsonExtraction(accumulatedText, streamWarnings);
+              const extractedJson = this.handleJsonExtraction(
+                accumulatedText,
+                streamWarnings
+              );
               const jsonTextId = generateId();
               controller.enqueue({
                 type: 'text-start',
@@ -1487,7 +1490,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
             finalizeToolCalls();
 
-            const warningsJson = this.serializeWarningsForMetadata(streamWarnings);
+            const warningsJson =
+              this.serializeWarningsForMetadata(streamWarnings);
 
             controller.enqueue({
               type: 'finish',
@@ -1495,7 +1499,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
               usage,
               providerMetadata: {
                 'claude-code': {
-                  ...(this.sessionId !== undefined && { sessionId: this.sessionId }),
+                  ...(this.sessionId !== undefined && {
+                    sessionId: this.sessionId,
+                  }),
                   truncated: true,
                   ...(streamWarnings.length > 0 && {
                     warnings: warningsJson as unknown as JSONValue,
