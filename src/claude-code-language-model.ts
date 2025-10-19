@@ -20,57 +20,40 @@ import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 const CLAUDE_CODE_TRUNCATION_WARNING =
-  'Claude Code CLI output ended unexpectedly; returning truncated response from buffered text. Await upstream fix to avoid data loss.';
+  'Claude Code SDK output ended unexpectedly; returning truncated response from buffered text. Await upstream fix to avoid data loss.';
 
-const MIN_TRUNCATION_LENGTH = 1024;
-const POSITION_PATTERN = /position\s+(\d+)/i;
+const MIN_TRUNCATION_LENGTH = 512;
 
-function hasUnclosedJsonStructure(text: string): boolean {
-  let depth = 0;
-  let inString = false;
-  let escapeNext = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-
-    if (escapeNext) {
-      escapeNext = false;
-      continue;
-    }
-
-    if (inString) {
-      if (char === '\\') {
-        escapeNext = true;
-        continue;
-      }
-      if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-
-    if (char === '{' || char === '[') {
-      depth++;
-      continue;
-    }
-
-    if (char === '}' || char === ']') {
-      if (depth > 0) {
-        depth--;
-      }
-    }
-  }
-
-  return depth > 0 || inString;
-}
-
+/**
+ * Detects if an error represents a truncated SDK JSON stream.
+ *
+ * The Claude Code SDK can truncate JSON responses mid-stream, producing a SyntaxError.
+ * This function distinguishes genuine truncation from normal JSON syntax errors by:
+ * 1. Verifying the error is a SyntaxError with truncation-specific messages
+ * 2. Ensuring we received meaningful content (>= MIN_TRUNCATION_LENGTH characters)
+ * 3. Avoiding false positives from unrelated parse errors
+ *
+ * Note: We compare against `bufferedText` (assistant text content) rather than the raw
+ * JSON buffer length, since the SDK layer doesn't expose buffer positions. The position
+ * reported in SyntaxError messages measures the full JSON payload (metadata + content),
+ * which is typically much larger than extracted text. Therefore, we cannot reliably use
+ * position proximity checks and instead rely on message patterns and content length.
+ *
+ * @param error - The caught error (expected to be SyntaxError for truncation)
+ * @param bufferedText - Accumulated assistant text content (measured in UTF-16 code units)
+ * @returns true if error indicates SDK truncation; false otherwise
+ */
 function isClaudeCodeTruncationError(error: unknown, bufferedText: string): boolean {
-  if (!(error instanceof SyntaxError)) {
+  // Check for SyntaxError by instanceof or by name (for cross-realm errors)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isSyntaxError =
+    error instanceof SyntaxError ||
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (typeof (error as any)?.name === 'string' &&
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (error as any).name.toLowerCase() === 'syntaxerror');
+
+  if (!isSyntaxError) {
     return false;
   }
 
@@ -78,8 +61,10 @@ function isClaudeCodeTruncationError(error: unknown, bufferedText: string): bool
     return false;
   }
 
-  const rawMessage = typeof error.message === 'string' ? error.message : '';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rawMessage = typeof (error as any)?.message === 'string' ? (error as any).message : '';
   const message = rawMessage.toLowerCase();
+
   // Only match actual truncation patterns, not normal JSON parsing errors.
   // Real truncation: "Unexpected end of JSON input" or "Unterminated string in JSON..."
   // Normal errors: "Unexpected token X in JSON at position N" (should be surfaced as errors)
@@ -87,33 +72,25 @@ function isClaudeCodeTruncationError(error: unknown, bufferedText: string): bool
     'unexpected end of json input',
     'unexpected end of input',
     'unexpected end of string',
+    'unexpected eof',
+    'end of file',
     'unterminated string',
+    'unterminated string constant',
   ];
 
   if (!truncationIndicators.some((indicator) => message.includes(indicator))) {
     return false;
   }
 
-  const positionMatch = rawMessage.match(POSITION_PATTERN);
-  if (positionMatch) {
-    const position = Number.parseInt(positionMatch[1], 10);
-    if (Number.isFinite(position)) {
-      const isNearBufferEnd = Math.abs(position - bufferedText.length) <= 16;
-      if (isNearBufferEnd && position >= MIN_TRUNCATION_LENGTH) {
-        return true;
-      }
-      // If the parser bailed far away from the buffered text end, treat as a genuine JSON error.
-      if (!isNearBufferEnd) {
-        return false;
-      }
-    }
-  }
-
+  // Require meaningful content before treating as truncation.
+  // Short responses with "end of input" errors are likely genuine syntax errors.
+  // Note: bufferedText.length measures UTF-16 code units, not byte length.
   if (bufferedText.length < MIN_TRUNCATION_LENGTH) {
     return false;
   }
 
-  return hasUnclosedJsonStructure(bufferedText);
+  // If we have a truncation indicator AND meaningful content, treat as truncation.
+  return true;
 }
 
 function isAbortError(err: unknown): boolean {
