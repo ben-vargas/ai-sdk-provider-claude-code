@@ -31,6 +31,85 @@ import { getLogger } from './logger.js';
 import { query, type Options } from '@anthropic-ai/claude-code';
 import type { SDKUserMessage } from '@anthropic-ai/claude-code';
 
+const CLAUDE_CODE_TRUNCATION_WARNING =
+  'Claude Code SDK output ended unexpectedly; returning truncated response from buffered text. Await upstream fix to avoid data loss.';
+
+const MIN_TRUNCATION_LENGTH = 512;
+
+/**
+ * Detects if an error represents a truncated SDK JSON stream.
+ *
+ * The Claude Code SDK can truncate JSON responses mid-stream, producing a SyntaxError.
+ * This function distinguishes genuine truncation from normal JSON syntax errors by:
+ * 1. Verifying the error is a SyntaxError with truncation-specific messages
+ * 2. Ensuring we received meaningful content (>= MIN_TRUNCATION_LENGTH characters)
+ * 3. Avoiding false positives from unrelated parse errors
+ *
+ * Note: We compare against `bufferedText` (assistant text content) rather than the raw
+ * JSON buffer length, since the SDK layer doesn't expose buffer positions. The position
+ * reported in SyntaxError messages measures the full JSON payload (metadata + content),
+ * which is typically much larger than extracted text. Therefore, we cannot reliably use
+ * position proximity checks and instead rely on message patterns and content length.
+ *
+ * @param error - The caught error (expected to be SyntaxError for truncation)
+ * @param bufferedText - Accumulated assistant text content (measured in UTF-16 code units)
+ * @returns true if error indicates SDK truncation; false otherwise
+ */
+function isClaudeCodeTruncationError(
+  error: unknown,
+  bufferedText: string
+): boolean {
+  // Check for SyntaxError by instanceof or by name (for cross-realm errors)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isSyntaxError =
+    error instanceof SyntaxError ||
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (typeof (error as any)?.name === 'string' &&
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (error as any).name.toLowerCase() === 'syntaxerror');
+
+  if (!isSyntaxError) {
+    return false;
+  }
+
+  if (!bufferedText) {
+    return false;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rawMessage =
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    typeof (error as any)?.message === 'string' ? (error as any).message : '';
+  const message = rawMessage.toLowerCase();
+
+  // Only match actual truncation patterns, not normal JSON parsing errors.
+  // Real truncation: "Unexpected end of JSON input" or "Unterminated string in JSON..."
+  // Normal errors: "Unexpected token X in JSON at position N" (should be surfaced as errors)
+  const truncationIndicators = [
+    'unexpected end of json input',
+    'unexpected end of input',
+    'unexpected end of string',
+    'unexpected eof',
+    'end of file',
+    'unterminated string',
+    'unterminated string constant',
+  ];
+
+  if (!truncationIndicators.some((indicator) => message.includes(indicator))) {
+    return false;
+  }
+
+  // Require meaningful content before treating as truncation.
+  // Short responses with "end of input" errors are likely genuine syntax errors.
+  // Note: bufferedText.length measures UTF-16 code units, not byte length.
+  if (bufferedText.length < MIN_TRUNCATION_LENGTH) {
+    return false;
+  }
+
+  // If we have a truncation indicator AND meaningful content, treat as truncation.
+  return true;
+}
+
 function isAbortError(err: unknown): boolean {
   if (err && typeof err === 'object') {
     const e = err as { name?: unknown; code?: unknown };
@@ -721,6 +800,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     let costUsd: number | undefined;
     let durationMs: number | undefined;
     let rawUsage: unknown | undefined;
+    let wasTruncated = false;
     const warnings: LanguageModelV2CallWarning[] = this.generateAllWarnings(
       options,
       messagesPrompt
@@ -814,8 +894,19 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
         throw options.abortSignal?.aborted ? options.abortSignal.reason : error;
       }
 
-      // Use unified error handler
-      throw this.handleClaudeCodeError(error, messagesPrompt);
+      // Check for CLI truncation before throwing
+      if (isClaudeCodeTruncationError(error, text)) {
+        wasTruncated = true;
+        finishReason = 'length';
+        warnings.push({
+          type: 'other',
+          message: CLAUDE_CODE_TRUNCATION_WARNING,
+        });
+        // Do not throw - return the buffered text
+      } else {
+        // Use unified error handler for genuine errors
+        throw this.handleClaudeCodeError(error, messagesPrompt);
+      }
     } finally {
       if (options.abortSignal && abortListener) {
         options.abortSignal.removeEventListener('abort', abortListener);
@@ -846,6 +937,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           ...(costUsd !== undefined && { costUsd }),
           ...(durationMs !== undefined && { durationMs }),
           ...(rawUsage !== undefined && { rawUsage: rawUsage as JSONValue }),
+          ...(wasTruncated && { truncated: true }),
         },
       },
     };
@@ -946,6 +1038,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             toolName: state.name,
             input: state.lastSerializedInput ?? '',
             providerExecuted: true,
+            dynamic: true, // V3 field: indicates tool is provider-defined (not in user's tools map)
             providerMetadata: {
               'claude-code': {
                 // rawInput preserves the original serialized format before AI SDK normalization.
@@ -954,7 +1047,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 rawInput: state.lastSerializedInput ?? '',
               },
             },
-          });
+          } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
           state.callEmitted = true;
         };
 
@@ -964,6 +1057,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           }
           toolStates.clear();
         };
+
+        let usage: LanguageModelV2Usage = {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+        };
+        let accumulatedText = '';
+        let textPartId: string | undefined;
 
         try {
           // Emit stream-start with warnings
@@ -991,14 +1092,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             prompt: sdkPrompt,
             options: queryOptions,
           });
-
-          let usage: LanguageModelV2Usage = {
-            inputTokens: 0,
-            outputTokens: 0,
-            totalTokens: 0,
-          };
-          let accumulatedText = '';
-          let textPartId: string | undefined;
 
           for await (const message of response) {
             if (message.type === 'assistant') {
@@ -1033,7 +1126,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                     id: toolId,
                     toolName: tool.name,
                     providerExecuted: true,
-                  });
+                    dynamic: true, // V3 field: indicates tool is provider-defined
+                  } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
                   state.inputStarted = true;
                 }
 
@@ -1136,7 +1230,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                       id: result.id,
                       toolName,
                       providerExecuted: true,
-                    });
+                      dynamic: true, // V3 field: indicates tool is provider-defined
+                    } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
                     state.inputStarted = true;
                   }
                   if (!state.inputClosed) {
@@ -1171,6 +1266,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                   result: normalizedResult,
                   isError: result.isError,
                   providerExecuted: true,
+                  dynamic: true, // V3 field: indicates tool is provider-defined
                   providerMetadata: {
                     'claude-code': {
                       // rawResult preserves the original CLI output string before JSON parsing.
@@ -1179,7 +1275,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                       rawResult,
                     },
                   },
-                });
+                } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
               }
               // Handle tool errors
               for (const error of this.extractToolErrors(content)) {
@@ -1224,12 +1320,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                   toolName,
                   error: rawError,
                   providerExecuted: true,
+                  dynamic: true, // V3 field: indicates tool is provider-defined
                   providerMetadata: {
                     'claude-code': {
                       rawError,
                     },
                   },
-                });
+                } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
               }
             } else if (message.type === 'result') {
               done();
@@ -1338,6 +1435,85 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           controller.close();
         } catch (error: unknown) {
           done();
+
+          if (isClaudeCodeTruncationError(error, accumulatedText)) {
+            const truncationWarning: LanguageModelV2CallWarning = {
+              type: 'other',
+              message: CLAUDE_CODE_TRUNCATION_WARNING,
+            };
+            streamWarnings.push(truncationWarning);
+
+            const emitJsonText = () => {
+              const extractedJson = this.handleJsonExtraction(
+                accumulatedText,
+                streamWarnings
+              );
+              const jsonTextId = generateId();
+              controller.enqueue({
+                type: 'text-start',
+                id: jsonTextId,
+              });
+              controller.enqueue({
+                type: 'text-delta',
+                id: jsonTextId,
+                delta: extractedJson,
+              });
+              controller.enqueue({
+                type: 'text-end',
+                id: jsonTextId,
+              });
+            };
+
+            if (options.responseFormat?.type === 'json') {
+              emitJsonText();
+            } else if (textPartId) {
+              controller.enqueue({
+                type: 'text-end',
+                id: textPartId,
+              });
+            } else if (accumulatedText) {
+              const fallbackTextId = generateId();
+              controller.enqueue({
+                type: 'text-start',
+                id: fallbackTextId,
+              });
+              controller.enqueue({
+                type: 'text-delta',
+                id: fallbackTextId,
+                delta: accumulatedText,
+              });
+              controller.enqueue({
+                type: 'text-end',
+                id: fallbackTextId,
+              });
+            }
+
+            finalizeToolCalls();
+
+            const warningsJson =
+              this.serializeWarningsForMetadata(streamWarnings);
+
+            controller.enqueue({
+              type: 'finish',
+              finishReason: 'length',
+              usage,
+              providerMetadata: {
+                'claude-code': {
+                  ...(this.sessionId !== undefined && {
+                    sessionId: this.sessionId,
+                  }),
+                  truncated: true,
+                  ...(streamWarnings.length > 0 && {
+                    warnings: warningsJson as unknown as JSONValue,
+                  }),
+                },
+              },
+            });
+
+            controller.close();
+            return;
+          }
+
           finalizeToolCalls();
           let errorToEmit: unknown;
 

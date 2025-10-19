@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2025-10-19
+
+### Fixed
+
+- **Critical**: Fixed truncation detection false negatives in `isClaudeCodeTruncationError`
+  - Removed incorrect position proximity check that compared JSON parser position (full payload) against assistant text length
+  - Position comparison was comparing apples to oranges: parser position measures full JSON payload (~200+ chars) vs extracted text (~11 chars), causing `Math.abs(position - bufferedText.length) <= 16` to almost always fail
+  - This bug prevented the graceful truncation recovery path from ever running, causing all truncations to throw errors instead of returning buffered text
+  - Now relies solely on truncation indicator patterns and minimum content length (512 chars) for accurate detection
+  - Simplified logic removes unnecessary `hasUnclosedJsonStructure` helper and `POSITION_PATTERN` regex
+  - Added comprehensive documentation explaining why position checks are not feasible with current SDK layer
+  - Enhanced cross-runtime compatibility by checking error name for cross-realm SyntaxError instances
+  - Added additional truncation indicator patterns: "unexpected eof", "end of file", "unterminated string constant"
+
+### Changed
+
+- Improved documentation in `isClaudeCodeTruncationError` function explaining truncation detection strategy
+- Lowered minimum truncation length threshold from 1024 to 512 characters for better recovery on shorter responses
+- Updated warning message to reference "SDK" instead of "CLI" for consistency
+- Clarified that content length is measured in UTF-16 code units, not byte length
+
+## [1.2.1] - 2025-10-19
+
+### Fixed
+
+- Add `dynamic: true` flag to built-in tool declarations to prevent AI SDK v3 validation errors. Claude Code's built-in tools (Bash, Read, Write, etc.) are now correctly recognized as dynamic provider-executed tools, eliminating `NoSuchToolError` and `invalid: true` flags when used with AI SDK v3. This fix is transparent to users - no code changes required. (Backport from v2.0.4)
+- Improve truncation detection to avoid false positives on malformed JSON. Implements multi-layered truncation detection with position-based validation, JSON structure validation, minimum size guard (1KB), and truncation indicator checks. This prevents normal JSON syntax errors from being incorrectly treated as CLI truncation events. When truncation is detected, the response includes `finishReason: 'length'`, a warning message, and `truncated: true` in provider metadata. (Backport from v2.0.3)
+
+### Added
+
+- Zod 4 compatibility example (`examples/zod4-compatibility-test.ts`) demonstrating all Zod 4 features including new function schema API, discriminated unions, and validation patterns
+
 ## [1.1.3] - 2025-09-03
 
 ### Fixed
