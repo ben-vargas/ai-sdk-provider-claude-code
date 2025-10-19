@@ -78,6 +78,7 @@ function isClaudeCodeTruncationError(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rawMessage =
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     typeof (error as any)?.message === 'string' ? (error as any).message : '';
   const message = rawMessage.toLowerCase();
 
@@ -1057,6 +1058,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           toolStates.clear();
         };
 
+        let usage: LanguageModelV2Usage = {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+        };
+        let accumulatedText = '';
+        let textPartId: string | undefined;
+
         try {
           // Emit stream-start with warnings
           controller.enqueue({ type: 'stream-start', warnings });
@@ -1083,14 +1092,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             prompt: sdkPrompt,
             options: queryOptions,
           });
-
-          let usage: LanguageModelV2Usage = {
-            inputTokens: 0,
-            outputTokens: 0,
-            totalTokens: 0,
-          };
-          let accumulatedText = '';
-          let textPartId: string | undefined;
 
           for await (const message of response) {
             if (message.type === 'assistant') {
@@ -1434,6 +1435,79 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           controller.close();
         } catch (error: unknown) {
           done();
+
+          if (isClaudeCodeTruncationError(error, accumulatedText)) {
+            const truncationWarning: LanguageModelV2CallWarning = {
+              type: 'other',
+              message: CLAUDE_CODE_TRUNCATION_WARNING,
+            };
+            streamWarnings.push(truncationWarning);
+
+            const emitJsonText = () => {
+              const extractedJson = this.handleJsonExtraction(accumulatedText, streamWarnings);
+              const jsonTextId = generateId();
+              controller.enqueue({
+                type: 'text-start',
+                id: jsonTextId,
+              });
+              controller.enqueue({
+                type: 'text-delta',
+                id: jsonTextId,
+                delta: extractedJson,
+              });
+              controller.enqueue({
+                type: 'text-end',
+                id: jsonTextId,
+              });
+            };
+
+            if (options.responseFormat?.type === 'json') {
+              emitJsonText();
+            } else if (textPartId) {
+              controller.enqueue({
+                type: 'text-end',
+                id: textPartId,
+              });
+            } else if (accumulatedText) {
+              const fallbackTextId = generateId();
+              controller.enqueue({
+                type: 'text-start',
+                id: fallbackTextId,
+              });
+              controller.enqueue({
+                type: 'text-delta',
+                id: fallbackTextId,
+                delta: accumulatedText,
+              });
+              controller.enqueue({
+                type: 'text-end',
+                id: fallbackTextId,
+              });
+            }
+
+            finalizeToolCalls();
+
+            const warningsJson = this.serializeWarningsForMetadata(streamWarnings);
+
+            controller.enqueue({
+              type: 'finish',
+              finishReason: 'length',
+              usage,
+              providerMetadata: {
+                'claude-code': {
+                  ...(this.sessionId !== undefined && { sessionId: this.sessionId }),
+                  truncated: true,
+                  ...(streamWarnings.length > 0 && {
+                    warnings: warningsJson as unknown as JSONValue,
+                  }),
+                },
+              },
+            });
+
+            controller.close();
+            return;
+          }
+
           finalizeToolCalls();
           let errorToEmit: unknown;
 
