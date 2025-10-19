@@ -1030,6 +1030,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             toolName: state.name,
             input: state.lastSerializedInput ?? '',
             providerExecuted: true,
+            dynamic: true, // V3 field: indicates tool is provider-defined (not in user's tools map)
             providerMetadata: {
               'claude-code': {
                 // rawInput preserves the original serialized format before AI SDK normalization.
@@ -1038,7 +1039,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 rawInput: state.lastSerializedInput ?? '',
               },
             },
-          });
+          } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
           state.callEmitted = true;
         };
 
@@ -1111,7 +1112,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                     id: toolId,
                     toolName: tool.name,
                     providerExecuted: true,
-                  });
+                    dynamic: true, // V3 field: indicates tool is provider-defined
+                  } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
                   state.inputStarted = true;
                 }
 
@@ -1204,7 +1206,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                       id: result.id,
                       toolName,
                       providerExecuted: true,
-                    });
+                      dynamic: true, // V3 field: indicates tool is provider-defined
+                    } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
                     state.inputStarted = true;
                   }
                   if (!state.inputClosed) {
@@ -1237,6 +1240,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                   result: normalizedResult,
                   isError: result.isError,
                   providerExecuted: true,
+                  dynamic: true, // V3 field: indicates tool is provider-defined
                   providerMetadata: {
                     'claude-code': {
                       // rawResult preserves the original CLI output string before JSON parsing.
@@ -1245,7 +1249,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                       rawResult,
                     },
                   },
-                });
+                } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
               }
               // Handle tool errors
               for (const error of this.extractToolErrors(content)) {
@@ -1288,12 +1292,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                   toolName,
                   error: rawError,
                   providerExecuted: true,
+                  dynamic: true, // V3 field: indicates tool is provider-defined
                   providerMetadata: {
                     'claude-code': {
                       rawError,
                     },
                   },
-                });
+                } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
               }
             } else if (message.type === 'result') {
               done();

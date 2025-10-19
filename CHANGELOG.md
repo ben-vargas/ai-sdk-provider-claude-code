@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.5] - 2025-10-19
+
+### Fixed
+
+- Tool calls for built-in tools (Bash, Read, Write, etc.) no longer marked as invalid (#63)
+  - Added `dynamic: true` flag to all tool stream parts (tool-input-start, tool-call, tool-result, tool-error)
+  - AI SDK now correctly treats Claude Code's built-in tools as dynamic provider-executed tools
+  - Eliminates `NoSuchToolError` and `invalid: true` flags without requiring user action
+  - Transparent fix - no code changes required from users
+
 ## [2.0.4] - 2025-10-19
 
 ### Added
