@@ -256,6 +256,7 @@ Control how the provider logs execution information, warnings, and errors. The l
 #### Log Levels
 
 The provider supports four log levels:
+
 - **`debug`**: Detailed execution tracing (request/response, tool calls, stream events)
 - **`info`**: General execution flow information (session initialization, completion)
 - **`warn`**: Warnings about configuration issues or unexpected behavior
@@ -297,6 +298,7 @@ const model = customClaude('opus', {
 #### Verbose Mode (Debug Logging)
 
 Enable verbose mode to see detailed execution logs, including:
+
 - Request/response tracing
 - Tool execution lifecycle (tool calls, results, errors)
 - Stream event processing

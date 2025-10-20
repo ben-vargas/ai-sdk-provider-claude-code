@@ -1138,7 +1138,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 state.name = tool.name;
 
                 if (!state.inputStarted) {
-                  this.logger.debug(`[claude-code] Tool input started - Tool: ${tool.name}, ID: ${toolId}`);
+                  this.logger.debug(
+                    `[claude-code] Tool input started - Tool: ${tool.name}, ID: ${toolId}`
+                  );
                   controller.enqueue({
                     type: 'tool-input-start',
                     id: toolId,
