@@ -251,12 +251,22 @@ const result = await generateText({
 
 ### Logging Configuration
 
-Control how warnings and errors are logged:
+Control how the provider logs execution information, warnings, and errors. The logger now supports multiple log levels and a verbose mode for detailed debugging.
+
+#### Log Levels
+
+The provider supports four log levels:
+- **`debug`**: Detailed execution tracing (request/response, tool calls, stream events)
+- **`info`**: General execution flow information (session initialization, completion)
+- **`warn`**: Warnings about configuration issues or unexpected behavior
+- **`error`**: Error messages for failures and exceptions
+
+#### Basic Configuration
 
 ```typescript
 import { createClaudeCode } from 'ai-sdk-provider-claude-code';
 
-// Default: logs to console
+// Default: logs warnings and errors to console
 const defaultClaude = createClaudeCode();
 
 // Disable all logging
@@ -266,10 +276,12 @@ const silentClaude = createClaudeCode({
   },
 });
 
-// Custom logger
+// Custom logger - must implement all four log levels
 const customClaude = createClaudeCode({
   defaultSettings: {
     logger: {
+      debug: (message) => myLogger.debug('Claude:', message),
+      info: (message) => myLogger.info('Claude:', message),
       warn: (message) => myLogger.warn('Claude:', message),
       error: (message) => myLogger.error('Claude:', message),
     },
@@ -282,11 +294,113 @@ const model = customClaude('opus', {
 });
 ```
 
-Logger options:
+#### Verbose Mode (Debug Logging)
 
-- `undefined` (default): Uses `console.warn` and `console.error`
+Enable verbose mode to see detailed execution logs, including:
+- Request/response tracing
+- Tool execution lifecycle (tool calls, results, errors)
+- Stream event processing
+- Message flow and token usage
+- Session management
+
+**Without verbose mode**, only `warn` and `error` messages are logged.
+**With verbose mode enabled**, `debug` and `info` messages are also logged.
+
+```typescript
+import { createClaudeCode } from 'ai-sdk-provider-claude-code';
+
+// Enable verbose logging for debugging
+const claudeWithDebug = createClaudeCode({
+  defaultSettings: {
+    verbose: true, // Enable debug and info logging
+  },
+});
+
+// Use with custom logger
+const claudeCustom = createClaudeCode({
+  defaultSettings: {
+    verbose: true,
+    logger: {
+      debug: (msg) => console.log(`[DEBUG] ${msg}`),
+      info: (msg) => console.log(`[INFO] ${msg}`),
+      warn: (msg) => console.warn(`[WARN] ${msg}`),
+      error: (msg) => console.error(`[ERROR] ${msg}`),
+    },
+  },
+});
+
+// Model-specific verbose override
+const model = claudeWithDebug('sonnet', {
+  verbose: false, // Disable verbose for this specific model
+});
+```
+
+#### What Gets Logged in Verbose Mode
+
+With `verbose: true`, you'll see intermediate process logs including:
+
+```
+[DEBUG] Starting doGenerate request with model: sonnet
+[DEBUG] Request mode: regular, response format: none
+[DEBUG] Converted 2 messages, hasImageParts: false
+[DEBUG] Executing query with streamingInput: false, session: new
+[DEBUG] Received message type: assistant
+[INFO] Request completed - Session: abc123, Cost: $0.0012, Duration: 1523ms
+[DEBUG] Token usage - Input: 245, Output: 128, Total: 373
+[DEBUG] Finish reason: stop
+```
+
+For streaming requests with tools:
+
+```
+[DEBUG] Starting doStream request with model: sonnet
+[DEBUG] Stream received message type: assistant
+[DEBUG] New tool use detected - Tool: Read, ID: tool_abc123
+[DEBUG] Tool input started - Tool: Read, ID: tool_abc123
+[DEBUG] Tool result received - Tool: Read, ID: tool_abc123
+[INFO] Stream completed - Session: xyz789, Cost: $0.0045, Duration: 3241ms
+[DEBUG] Stream token usage - Input: 512, Output: 256, Total: 768
+```
+
+#### Logger Options
+
+- `undefined` (default): Uses `console.debug`, `console.info`, `console.warn`, and `console.error`
 - `false`: Disables all logging
-- Custom `Logger` object: Must implement `warn` and `error` methods
+- Custom `Logger` object: Must implement `debug`, `info`, `warn`, and `error` methods
+
+#### Combining with Error Metadata
+
+For comprehensive debugging, combine verbose logging with error metadata:
+
+```typescript
+import { createClaudeCode, getErrorMetadata } from 'ai-sdk-provider-claude-code';
+
+const claude = createClaudeCode({
+  defaultSettings: {
+    verbose: true,
+    logger: {
+      debug: (msg) => myLogger.debug(msg),
+      info: (msg) => myLogger.info(msg),
+      warn: (msg) => myLogger.warn(msg),
+      error: (msg) => myLogger.error(msg),
+    },
+  },
+});
+
+try {
+  const result = await generateText({
+    model: claude('sonnet'),
+    prompt: 'Hello!',
+  });
+} catch (error) {
+  const metadata = getErrorMetadata(error);
+  console.error('Error details:', {
+    code: metadata?.code,
+    exitCode: metadata?.exitCode,
+    stderr: metadata?.stderr,
+  });
+}
+```
 
 ### Tool Management
 

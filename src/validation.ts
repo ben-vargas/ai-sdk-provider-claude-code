@@ -9,6 +9,12 @@ import { existsSync } from 'fs';
 // Helper for Zod v3/v4 compatibility
 // Use a simple z.any() for functions to work with both versions
 const loggerFunctionSchema = z.object({
+  debug: z.any().refine((val) => typeof val === 'function', {
+    message: 'debug must be a function',
+  }),
+  info: z.any().refine((val) => typeof val === 'function', {
+    message: 'info must be a function',
+  }),
   warn: z.any().refine((val) => typeof val === 'function', {
     message: 'warn must be a function',
   }),

@@ -14,7 +14,7 @@ import { extractJson } from './extract-json.js';
 import { createAPICallError, createAuthenticationError, createTimeoutError } from './errors.js';
 import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
 import { validateModelId, validatePrompt, validateSessionId } from './validation.js';
-import { getLogger } from './logger.js';
+import { getLogger, createVerboseLogger } from './logger.js';
 
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -299,7 +299,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     this.modelId = options.id;
     this.settings = options.settings ?? {};
     this.settingsValidationWarnings = options.settingsValidationWarnings ?? [];
-    this.logger = getLogger(this.settings.logger);
+
+    // Create logger that respects verbose setting
+    const baseLogger = getLogger(this.settings.logger);
+    this.logger = createVerboseLogger(baseLogger, this.settings.verbose ?? false);
 
     // Validate model ID format
     if (!this.modelId || typeof this.modelId !== 'string' || this.modelId.trim() === '') {
@@ -451,7 +454,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     }
 
     if (length > ClaudeCodeLanguageModel.MAX_TOOL_INPUT_WARN) {
-      console.warn(
+      this.logger.warn(
         `[claude-code] Large tool input detected: ${length} bytes. Performance may be impacted. Consider chunking or reducing input size.`
       );
     }
@@ -744,11 +747,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
   async doGenerate(
     options: Parameters<LanguageModelV2['doGenerate']>[0]
   ): Promise<Awaited<ReturnType<LanguageModelV2['doGenerate']>>> {
+    this.logger.debug(`[claude-code] Starting doGenerate request with model: ${this.modelId}`);
+
     // Determine mode based on responseFormat
     const mode =
       options.responseFormat?.type === 'json'
         ? { type: 'object-json' as const }
         : { type: 'regular' as const };
+
+    this.logger.debug(
+      `[claude-code] Request mode: ${mode.type}, response format: ${options.responseFormat?.type ?? 'none'}`
+    );
 
     const {
       messagesPrompt,
@@ -759,6 +768,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       options.prompt,
       mode,
       options.responseFormat?.type === 'json' ? options.responseFormat.schema : undefined
+    );
+
+    this.logger.debug(
+      `[claude-code] Converted ${messagesPrompt.length} messages, hasImageParts: ${hasImageParts}`
     );
 
     const abortController = new AbortController();
@@ -826,12 +839,18 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             streamingContentParts
           )
         : messagesPrompt;
+
+      this.logger.debug(
+        `[claude-code] Executing query with streamingInput: ${wantsStreamInput}, session: ${this.settings.resume ?? this.sessionId ?? 'new'}`
+      );
+
       const response = query({
         prompt: sdkPrompt,
         options: queryOptions,
       });
 
       for await (const message of response) {
+        this.logger.debug(`[claude-code] Received message type: ${message.type}`);
         if (message.type === 'assistant') {
           text += message.message.content
             .map((c: { type: string; text?: string }) => (c.type === 'text' ? c.text : ''))
@@ -841,6 +860,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           this.setSessionId(message.session_id);
           costUsd = message.total_cost_usd;
           durationMs = message.duration_ms;
+
+          this.logger.info(
+            `[claude-code] Request completed - Session: ${message.session_id}, Cost: $${costUsd?.toFixed(4) ?? 'N/A'}, Duration: ${durationMs ?? 'N/A'}ms`
+          );
 
           if ('usage' in message) {
             rawUsage = message.usage;
@@ -856,21 +879,35 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 (message.usage.input_tokens ?? 0) +
                 (message.usage.output_tokens ?? 0),
             };
+
+            this.logger.debug(
+              `[claude-code] Token usage - Input: ${usage.inputTokens}, Output: ${usage.outputTokens}, Total: ${usage.totalTokens}`
+            );
           }
 
           finishReason = mapClaudeCodeFinishReason(message.subtype);
+          this.logger.debug(`[claude-code] Finish reason: ${finishReason}`);
         } else if (message.type === 'system' && message.subtype === 'init') {
           this.setSessionId(message.session_id);
+          this.logger.info(`[claude-code] Session initialized: ${message.session_id}`);
         }
       }
     } catch (error: unknown) {
       done();
+      this.logger.debug(
+        `[claude-code] Error during doGenerate: ${error instanceof Error ? error.message : String(error)}`
+      );
+
       // Special handling for AbortError to preserve abort signal reason
       if (isAbortError(error)) {
+        this.logger.debug('[claude-code] Request aborted by user');
         throw options.abortSignal?.aborted ? options.abortSignal.reason : error;
       }
 
       if (isClaudeCodeTruncationError(error, text)) {
+        this.logger.warn(
+          `[claude-code] Detected truncated response, returning ${text.length} characters of buffered text`
+        );
         wasTruncated = true;
         finishReason = 'length';
         warnings.push({
@@ -920,11 +957,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
   async doStream(
     options: Parameters<LanguageModelV2['doStream']>[0]
   ): Promise<Awaited<ReturnType<LanguageModelV2['doStream']>>> {
+    this.logger.debug(`[claude-code] Starting doStream request with model: ${this.modelId}`);
+
     // Determine mode based on responseFormat
     const mode =
       options.responseFormat?.type === 'json'
         ? { type: 'object-json' as const }
         : { type: 'regular' as const };
+
+    this.logger.debug(
+      `[claude-code] Stream mode: ${mode.type}, response format: ${options.responseFormat?.type ?? 'none'}`
+    );
 
     const {
       messagesPrompt,
@@ -935,6 +978,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       options.prompt,
       mode,
       options.responseFormat?.type === 'json' ? options.responseFormat.schema : undefined
+    );
+
+    this.logger.debug(
+      `[claude-code] Converted ${messagesPrompt.length} messages for streaming, hasImageParts: ${hasImageParts}`
     );
 
     const abortController = new AbortController();
@@ -1051,17 +1098,21 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
               )
             : messagesPrompt;
 
+          this.logger.debug(
+            `[claude-code] Starting stream query with streamingInput: ${wantsStreamInput}, session: ${this.settings.resume ?? this.sessionId ?? 'new'}`
+          );
+
           const response = query({
             prompt: sdkPrompt,
             options: queryOptions,
           });
 
           for await (const message of response) {
+            this.logger.debug(`[claude-code] Stream received message type: ${message.type}`);
             if (message.type === 'assistant') {
               if (!message.message?.content) {
-                console.warn(
-                  `[claude-code] Unexpected assistant message structure: missing content field. Message type: ${message.type}. This may indicate an SDK protocol violation.`,
-                  message
+                this.logger.warn(
+                  `[claude-code] Unexpected assistant message structure: missing content field. Message type: ${message.type}. This may indicate an SDK protocol violation.`
                 );
                 continue;
               }
@@ -1079,11 +1130,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                     callEmitted: false,
                   };
                   toolStates.set(toolId, state);
+                  this.logger.debug(
+                    `[claude-code] New tool use detected - Tool: ${tool.name}, ID: ${toolId}`
+                  );
                 }
 
                 state.name = tool.name;
 
                 if (!state.inputStarted) {
+                  this.logger.debug(`[claude-code] Tool input started - Tool: ${tool.name}, ID: ${toolId}`);
                   controller.enqueue({
                     type: 'tool-input-start',
                     id: toolId,
@@ -1154,9 +1209,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
               }
             } else if (message.type === 'user') {
               if (!message.message?.content) {
-                console.warn(
-                  `[claude-code] Unexpected user message structure: missing content field. Message type: ${message.type}. This may indicate an SDK protocol violation.`,
-                  message
+                this.logger.warn(
+                  `[claude-code] Unexpected user message structure: missing content field. Message type: ${message.type}. This may indicate an SDK protocol violation.`
                 );
                 continue;
               }
@@ -1165,8 +1219,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 let state = toolStates.get(result.id);
                 const toolName =
                   result.name ?? state?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
+
+                this.logger.debug(
+                  `[claude-code] Tool result received - Tool: ${toolName}, ID: ${result.id}`
+                );
+
                 if (!state) {
-                  console.warn(
+                  this.logger.warn(
                     `[claude-code] Received tool result for unknown tool ID: ${result.id}`
                   );
                   state = {
@@ -1234,8 +1293,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 const toolName =
                   error.name ?? state?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
 
+                this.logger.debug(
+                  `[claude-code] Tool error received - Tool: ${toolName}, ID: ${error.id}`
+                );
+
                 if (!state) {
-                  console.warn(
+                  this.logger.warn(
                     `[claude-code] Received tool error for unknown tool ID: ${error.id}`
                   );
                   state = {
@@ -1279,6 +1342,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
               }
             } else if (message.type === 'result') {
               done();
+
+              this.logger.info(
+                `[claude-code] Stream completed - Session: ${message.session_id}, Cost: $${message.total_cost_usd?.toFixed(4) ?? 'N/A'}, Duration: ${message.duration_ms ?? 'N/A'}ms`
+              );
+
               let rawUsage: unknown | undefined;
               if ('usage' in message) {
                 rawUsage = message.usage;
@@ -1294,11 +1362,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                     (message.usage.input_tokens ?? 0) +
                     (message.usage.output_tokens ?? 0),
                 };
+
+                this.logger.debug(
+                  `[claude-code] Stream token usage - Input: ${usage.inputTokens}, Output: ${usage.outputTokens}, Total: ${usage.totalTokens}`
+                );
               }
 
               const finishReason: LanguageModelV2FinishReason = mapClaudeCodeFinishReason(
                 message.subtype
               );
+
+              this.logger.debug(`[claude-code] Stream finish reason: ${finishReason}`);
 
               // Store session ID in the model instance
               this.setSessionId(message.session_id);
@@ -1360,6 +1434,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
               // Store session ID for future use
               this.setSessionId(message.session_id);
 
+              this.logger.info(`[claude-code] Stream session initialized: ${message.session_id}`);
+
               // Emit response metadata when session is initialized
               controller.enqueue({
                 type: 'response-metadata',
@@ -1371,11 +1447,19 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           }
 
           finalizeToolCalls();
+          this.logger.debug('[claude-code] Stream finalized, closing stream');
           controller.close();
         } catch (error: unknown) {
           done();
 
+          this.logger.debug(
+            `[claude-code] Error during doStream: ${error instanceof Error ? error.message : String(error)}`
+          );
+
           if (isClaudeCodeTruncationError(error, accumulatedText)) {
+            this.logger.warn(
+              `[claude-code] Detected truncated stream response, returning ${accumulatedText.length} characters of buffered text`
+            );
             const truncationWarning: LanguageModelV2CallWarning = {
               type: 'other',
               message: CLAUDE_CODE_TRUNCATION_WARNING,

@@ -46,6 +46,8 @@ describe('logger integration', () => {
 
     it('should use custom logger when provided', () => {
       const customLogger: Logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
         warn: vi.fn(),
         error: vi.fn(),
       };
@@ -65,6 +67,8 @@ describe('logger integration', () => {
 
     it('should pass logger to created models', () => {
       const customLogger: Logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
         warn: vi.fn(),
         error: vi.fn(),
       };
@@ -83,11 +87,15 @@ describe('logger integration', () => {
 
     it('should allow model-specific logger override', () => {
       const providerLogger: Logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
         warn: vi.fn(),
         error: vi.fn(),
       };
 
       const modelLogger: Logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
         warn: vi.fn(),
         error: vi.fn(),
       };
@@ -109,6 +117,8 @@ describe('logger integration', () => {
 
     it('should handle image input warnings', async () => {
       const customLogger: Logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
         warn: vi.fn(),
         error: vi.fn(),
       };
