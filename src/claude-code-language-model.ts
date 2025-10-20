@@ -771,7 +771,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     );
 
     this.logger.debug(
-      `[claude-code] Converted ${messagesPrompt.length} messages, hasImageParts: ${hasImageParts}`
+      `[claude-code] Converted ${options.prompt.length} messages, hasImageParts: ${hasImageParts}`
     );
 
     const abortController = new AbortController();
@@ -981,7 +981,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     );
 
     this.logger.debug(
-      `[claude-code] Converted ${messagesPrompt.length} messages for streaming, hasImageParts: ${hasImageParts}`
+      `[claude-code] Converted ${options.prompt.length} messages for streaming, hasImageParts: ${hasImageParts}`
     );
 
     const abortController = new AbortController();

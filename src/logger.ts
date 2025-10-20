@@ -53,10 +53,11 @@ export function createVerboseLogger(logger: Logger, verbose: boolean = false): L
   }
 
   // When verbose is disabled, only allow warn/error
+  // Wrap methods to preserve 'this' binding for custom loggers
   return {
     debug: () => {}, // No-op when not verbose
     info: () => {}, // No-op when not verbose
-    warn: logger.warn,
-    error: logger.error,
+    warn: (msg) => logger.warn(msg),
+    error: (msg) => logger.error(msg),
   };
 }

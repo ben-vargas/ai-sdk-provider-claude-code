@@ -147,5 +147,38 @@ describe('logger', () => {
       expect(mockLogger.debug).not.toHaveBeenCalled();
       expect(mockLogger.info).not.toHaveBeenCalled();
     });
+
+    it('should preserve this binding for custom logger instances', () => {
+      // Create a logger that relies on instance state
+      class CustomLogger implements Logger {
+        private prefix = '[CUSTOM]';
+
+        debug(message: string) {
+          return `${this.prefix} DEBUG: ${message}`;
+        }
+
+        info(message: string) {
+          return `${this.prefix} INFO: ${message}`;
+        }
+
+        warn(message: string) {
+          return `${this.prefix} WARN: ${message}`;
+        }
+
+        error(message: string) {
+          return `${this.prefix} ERROR: ${message}`;
+        }
+      }
+
+      const customLogger = new CustomLogger();
+      const logger = createVerboseLogger(customLogger, false);
+
+      // These should not throw and should preserve 'this' binding
+      const warnResult = logger.warn('test warning');
+      const errorResult = logger.error('test error');
+
+      expect(warnResult).toBe('[CUSTOM] WARN: test warning');
+      expect(errorResult).toBe('[CUSTOM] ERROR: test error');
+    });
   });
 });
