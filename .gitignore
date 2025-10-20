@@ -46,7 +46,8 @@ tmp/
 
 # npm
 .npm/
-.npmrc
+# Note: Project-level .npmrc should be committed for build config
+# Only ignore user-level .npmrc if it ends up in the project (uncommon)
 
 # Optional eslint cache
 .eslintcache

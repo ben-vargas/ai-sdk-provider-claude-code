@@ -45,12 +45,63 @@ npm install ai-sdk-provider-claude-code@ai-sdk-v4 ai@^4.3.16
 
 ## Zod Compatibility
 
-This package supports both **Zod 3** and **Zod 4**:
+This package is **tested and compatible with both Zod 3 and Zod 4**, but there's an important peer dependency consideration:
 
-- ✅ **Zod 4** (Recommended): `npm install zod@^4.0.0`
-- ✅ **Zod 3** (Still supported): `npm install zod@^3.0.0`
+### Current Status
 
-The package uses Zod for schema validation and works seamlessly with both versions. All 302 tests pass with both Zod 3 and Zod 4. See `examples/zod4-compatibility-test.ts` for comprehensive compatibility tests.
+- ✅ **Zod 3** (fully supported, no warnings)
+- ⚠️ **Zod 4** (functional, but requires `--legacy-peer-deps`)
+
+While this package declares support for both versions (`peerDependencies: "zod": "^3.0.0 || ^4.0.0"`), the underlying `@anthropic-ai/claude-agent-sdk` currently only declares support for Zod 3 (`peerDependencies: "zod": "^3.24.1"`).
+
+**All 302 tests pass with both Zod 3 and Zod 4.** See `examples/zod4-compatibility-test.ts` for comprehensive compatibility verification.
+
+### Installation Instructions
+
+**With Zod 3 (recommended for now):**
+```bash
+npm install ai-sdk-provider-claude-code ai zod@^3.0.0
+```
+
+**With Zod 4 (requires package manager-specific flags):**
+
+For **npm**:
+```bash
+npm install ai-sdk-provider-claude-code ai zod@^4.0.0 --legacy-peer-deps
+```
+
+For **pnpm**:
+```bash
+pnpm install ai-sdk-provider-claude-code ai zod@^4.0.0 --no-strict-peer-dependencies
+# Or configure it project-wide:
+pnpm config set strict-peer-dependencies false
+```
+
+For **Yarn** (Berry/v2+):
+```bash
+yarn add ai-sdk-provider-claude-code ai zod@^4.0.0
+# Yarn's peer resolution typically doesn't error here
+```
+
+### For Package Developers
+
+If you're developing with this package in your repository, add a configuration file to avoid needing the flag on every install:
+
+**For npm** (`.npmrc`):
+```ini
+# .npmrc
+legacy-peer-deps=true
+```
+
+**For pnpm** (`.npmrc`):
+```ini
+# .npmrc
+strict-peer-dependencies=false
+```
+
+> **Note**: The `.npmrc` file in this repository is committed for CI/development consistency but is **not included in the published package** (it's excluded via the `files` field in `package.json`). End users will still need to use the appropriate flags when installing with Zod 4.
+
+> **Temporary Workaround**: This configuration is needed until `@anthropic-ai/claude-agent-sdk` adds official Zod 4 support to their peer dependencies. Track progress in the [claude-agent-sdk repository](https://github.com/anthropics/anthropic-sdk-typescript).
 
 ## Installation
 
