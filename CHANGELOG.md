@@ -25,12 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Who is affected:** Only users with custom `Logger` implementations (estimated <5% of users).
 
 **What changed:** The `Logger` interface now requires 4 methods instead of 2:
+
 - `debug(message: string): void` - NEW - for detailed execution tracing (verbose mode only)
 - `info(message: string): void` - NEW - for general flow information (verbose mode only)
 - `warn(message: string): void` - existing
 - `error(message: string): void` - existing
 
 **Migration for custom logger users:**
+
 ```typescript
 // Before (v2.0.x) ❌
 const logger = {
@@ -40,14 +42,15 @@ const logger = {
 
 // After (v2.1.0+) ✅
 const logger = {
-  debug: (msg) => myLogger.debug(msg),  // Add this
-  info: (msg) => myLogger.info(msg),    // Add this
+  debug: (msg) => myLogger.debug(msg), // Add this
+  info: (msg) => myLogger.info(msg), // Add this
   warn: (msg) => myLogger.warn(msg),
   error: (msg) => myLogger.error(msg),
 };
 ```
 
 **Most users are unaffected:**
+
 - Users without a custom logger (using default `console`) - no changes needed
 - Users with `logger: false` - no changes needed
 - The default logger automatically handles all log levels
