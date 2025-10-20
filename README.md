@@ -59,6 +59,7 @@ While this package declares support for both versions (`peerDependencies: "zod":
 ### Installation Instructions
 
 **With Zod 3 (recommended for now):**
+
 ```bash
 npm install ai-sdk-provider-claude-code ai zod@^3.0.0
 ```
@@ -66,11 +67,13 @@ npm install ai-sdk-provider-claude-code ai zod@^3.0.0
 **With Zod 4 (requires package manager-specific flags):**
 
 For **npm**:
+
 ```bash
 npm install ai-sdk-provider-claude-code ai zod@^4.0.0 --legacy-peer-deps
 ```
 
 For **pnpm**:
+
 ```bash
 pnpm install ai-sdk-provider-claude-code ai zod@^4.0.0 --no-strict-peer-dependencies
 # Or configure it project-wide:
@@ -78,6 +81,7 @@ pnpm config set strict-peer-dependencies false
 ```
 
 For **Yarn** (Berry/v2+):
+
 ```bash
 yarn add ai-sdk-provider-claude-code ai zod@^4.0.0
 # Yarn's peer resolution typically doesn't error here
@@ -88,12 +92,14 @@ yarn add ai-sdk-provider-claude-code ai zod@^4.0.0
 If you're developing with this package in your repository, add a configuration file to avoid needing the flag on every install:
 
 **For npm** (`.npmrc`):
+
 ```ini
 # .npmrc
 legacy-peer-deps=true
 ```
 
 **For pnpm** (`.npmrc`):
+
 ```ini
 # .npmrc
 strict-peer-dependencies=false
