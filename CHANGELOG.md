@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2025-10-20
+
+### Added
+
+- **Comprehensive debug logging and verbose mode** - Enhanced logging capabilities for better debugging and troubleshooting
+  - Added `debug` and `info` log levels to complement existing `warn` and `error` levels
+  - New `verbose` setting to control debug/info logging visibility
+  - Detailed execution tracing including request/response flow, tool calls, stream events, and token usage
+  - `createVerboseLogger()` utility that filters debug/info logs based on verbose mode
+  - When `verbose: false` (default), only `warn` and `error` messages are logged
+  - When `verbose: true`, all log levels including `debug` and `info` are logged
+  - Comprehensive test coverage for all logging scenarios and custom logger implementations
+
+### Potentially Breaking Changes
+
+**Who is affected:** Only users with custom `Logger` implementations (estimated <5% of users).
+
+**What changed:** The `Logger` interface now requires 4 methods instead of 2:
+- `debug(message: string): void` - NEW - for detailed execution tracing (verbose mode only)
+- `info(message: string): void` - NEW - for general flow information (verbose mode only)
+- `warn(message: string): void` - existing
+- `error(message: string): void` - existing
+
+**Migration for custom logger users:**
+```typescript
+// Before (v2.0.x) ❌
+const logger = {
+  warn: (msg) => myLogger.warn(msg),
+  error: (msg) => myLogger.error(msg),
+};
+
+// After (v2.1.0+) ✅
+const logger = {
+  debug: (msg) => myLogger.debug(msg),  // Add this
+  info: (msg) => myLogger.info(msg),    // Add this
+  warn: (msg) => myLogger.warn(msg),
+  error: (msg) => myLogger.error(msg),
+};
+```
+
+**Most users are unaffected:**
+- Users without a custom logger (using default `console`) - no changes needed
+- Users with `logger: false` - no changes needed
+- The default logger automatically handles all log levels
+
+### Fixed
+
+- Corrected debug log message that was logging string length instead of message count
+  - Was: `messagesPrompt.length` (string character count)
+  - Now: `options.prompt.length` (actual message count)
+  - Also added `hasImageParts` flag to the log for better visibility
+
+### Changed
+
+- Updated documentation with comprehensive logging and verbose mode examples
+- Added integration tests for logger functionality in real provider usage scenarios
+- Improved JSDoc comments for logger interface and functions
+
 ## [2.0.5] - 2025-10-19
 
 ### Fixed
