@@ -64,6 +64,7 @@ const logger = {
 
 ### Changed
 
+- **Default logger now includes level tags** - All log messages are prefixed with `[DEBUG]`, `[INFO]`, `[WARN]`, or `[ERROR]` for clarity
 - Updated documentation with comprehensive logging and verbose mode examples
 - Added integration tests for logger functionality in real provider usage scenarios
 - Improved JSDoc comments for logger interface and functions

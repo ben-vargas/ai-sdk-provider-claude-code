@@ -10,7 +10,7 @@ describe('logger', () => {
 
       logger.warn('test warning');
 
-      expect(consoleSpy).toHaveBeenCalledWith('test warning');
+      expect(consoleSpy).toHaveBeenCalledWith('[WARN] test warning');
       consoleSpy.mockRestore();
     });
 
@@ -27,10 +27,10 @@ describe('logger', () => {
       logger.warn('test warning');
       logger.error('test error');
 
-      expect(debugSpy).toHaveBeenCalledWith('test debug');
-      expect(infoSpy).toHaveBeenCalledWith('test info');
-      expect(warnSpy).toHaveBeenCalledWith('test warning');
-      expect(errorSpy).toHaveBeenCalledWith('test error');
+      expect(debugSpy).toHaveBeenCalledWith('[DEBUG] test debug');
+      expect(infoSpy).toHaveBeenCalledWith('[INFO] test info');
+      expect(warnSpy).toHaveBeenCalledWith('[WARN] test warning');
+      expect(errorSpy).toHaveBeenCalledWith('[ERROR] test error');
 
       debugSpy.mockRestore();
       infoSpy.mockRestore();
@@ -83,7 +83,7 @@ describe('logger', () => {
 
       logger.error('test error');
 
-      expect(consoleSpy).toHaveBeenCalledWith('test error');
+      expect(consoleSpy).toHaveBeenCalledWith('[ERROR] test error');
       consoleSpy.mockRestore();
     });
   });
