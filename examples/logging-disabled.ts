@@ -1,22 +1,22 @@
 /**
  * Disabled Logging Example
- * 
+ *
  * Run: npx tsx examples/logging-disabled.ts
- * 
+ *
  * This example demonstrates how to completely disable all logging.
  * When logger: false is set, no logs will be emitted at all.
- * 
+ *
  * Use this when:
  * - You want completely silent operation
  * - Logs might interfere with output processing
  * - Running in production with external monitoring
  * - You don't need any diagnostic information
- * 
+ *
  * Expected output:
  * - Zero log messages (no debug, info, warn, or error)
  * - Only explicit console.log statements from your code
  * - Completely silent provider operation
- * 
+ *
  * ⚠️  Warning: With logging disabled, you won't see:
  * - Warning messages about misconfigurations
  * - Error messages from the provider
@@ -56,9 +56,9 @@ async function main() {
     console.log('\n✓ Notice: Zero logs from the provider appeared above');
     console.log('  The provider operated completely silently');
     console.log('  Only our explicit console.log statements were shown');
-    
+
     console.log('\n⚠️  Important:');
-    console.log('  With logging disabled, you won\'t see warnings or errors');
+    console.log("  With logging disabled, you won't see warnings or errors");
     console.log('  from the provider. Use this mode carefully!');
   } catch (error) {
     // Even with logging disabled, you can still catch and handle errors

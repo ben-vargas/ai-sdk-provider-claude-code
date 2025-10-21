@@ -1,12 +1,12 @@
 /**
  * Default Logging Example
- * 
+ *
  * Run: npx tsx examples/logging-default.ts
- * 
+ *
  * This example demonstrates the default logging behavior of Claude Code.
  * By default, only warn and error messages are logged.
  * Debug and info messages are suppressed unless verbose mode is enabled.
- * 
+ *
  * Expected output:
  * - No debug or info logs
  * - Only warn/error logs if something goes wrong

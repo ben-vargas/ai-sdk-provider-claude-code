@@ -1,18 +1,18 @@
 /**
  * Verbose Logging Example
- * 
+ *
  * Run: npx tsx examples/logging-verbose.ts
- * 
+ *
  * This example demonstrates verbose logging mode.
  * When verbose: true is set, you'll see detailed debug and info logs
  * that help you understand what's happening under the hood.
- * 
+ *
  * Expected output:
  * - Debug logs showing detailed execution trace
  * - Info logs about request/response flow
  * - Warn/error logs if issues occur
  * - Much more detailed output for troubleshooting
- * 
+ *
  * Use verbose mode when:
  * - Debugging issues
  * - Understanding the provider's behavior

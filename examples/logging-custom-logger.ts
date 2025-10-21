@@ -1,15 +1,15 @@
 /**
  * Custom Logger Example
- * 
+ *
  * Run: npx tsx examples/logging-custom-logger.ts
- * 
+ *
  * This example demonstrates how to integrate a custom logger with Claude Code.
  * This is useful when you want to:
  * - Route logs to an external logging service
  * - Format logs in a specific way
  * - Filter or transform log messages
  * - Integrate with existing logging infrastructure
- * 
+ *
  * Expected output:
  * - Custom prefixed log messages (e.g., "[CUSTOM-DEBUG]")
  * - All log levels when verbose: true

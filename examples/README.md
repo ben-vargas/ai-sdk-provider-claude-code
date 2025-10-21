@@ -375,9 +375,9 @@ const customLogger: Logger = {
 };
 
 const result3 = streamText({
-  model: claudeCode('haiku', { 
-    verbose: true, 
-    logger: customLogger 
+  model: claudeCode('haiku', {
+    verbose: true,
+    logger: customLogger,
   }),
   prompt: 'Hello',
 });
@@ -391,24 +391,24 @@ const result4 = streamText({
 
 ## Quick Reference
 
-| Example                 | Primary Use Case      | Key Feature            |
-| ----------------------- | --------------------- | ---------------------- |
-| basic-usage             | Getting started       | Simple text generation |
-| streaming               | Responsive UIs        | Real-time output       |
-| tool-streaming          | Tool observability    | Tool event inspection  |
-| images                  | Multimodal prompts    | Image input support    |
-| conversation-history    | Chatbots              | Context preservation   |
-| logging-default         | Default behavior      | Warn/error only        |
-| logging-verbose         | Development/debugging | All log levels         |
-| logging-custom-logger   | External integration  | Custom logger impl     |
-| logging-disabled        | Silent operation      | No logs at all         |
-| custom-config           | Enterprise setup      | Configuration options  |
-| tool-management         | Security              | Access control         |
-| hooks-callbacks         | Event handling        | Lifecycle hooks        |
-| sdk-tools-callbacks     | Custom tools          | In-process MCP tools   |
-| long-running-tasks      | Complex reasoning     | Timeout handling       |
-| generate-object         | Advanced patterns     | Real-world schemas     |
-| generate-object-basic   | Learning              | Step-by-step tutorial  |
+| Example               | Primary Use Case      | Key Feature            |
+| --------------------- | --------------------- | ---------------------- |
+| basic-usage           | Getting started       | Simple text generation |
+| streaming             | Responsive UIs        | Real-time output       |
+| tool-streaming        | Tool observability    | Tool event inspection  |
+| images                | Multimodal prompts    | Image input support    |
+| conversation-history  | Chatbots              | Context preservation   |
+| logging-default       | Default behavior      | Warn/error only        |
+| logging-verbose       | Development/debugging | All log levels         |
+| logging-custom-logger | External integration  | Custom logger impl     |
+| logging-disabled      | Silent operation      | No logs at all         |
+| custom-config         | Enterprise setup      | Configuration options  |
+| tool-management       | Security              | Access control         |
+| hooks-callbacks       | Event handling        | Lifecycle hooks        |
+| sdk-tools-callbacks   | Custom tools          | In-process MCP tools   |
+| long-running-tasks    | Complex reasoning     | Timeout handling       |
+| generate-object       | Advanced patterns     | Real-world schemas     |
+| generate-object-basic | Learning              | Step-by-step tutorial  |
 
 ## Learning Path
 
