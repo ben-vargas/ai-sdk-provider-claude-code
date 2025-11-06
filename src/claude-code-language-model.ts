@@ -45,7 +45,6 @@ const MIN_TRUNCATION_LENGTH = 512;
  */
 function isClaudeCodeTruncationError(error: unknown, bufferedText: string): boolean {
   // Check for SyntaxError by instanceof or by name (for cross-realm errors)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isSyntaxError =
     error instanceof SyntaxError ||
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
