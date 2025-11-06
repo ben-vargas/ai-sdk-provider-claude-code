@@ -76,3 +76,4 @@ claude-sessions/
 .reference/
 CLAUDE.md
 CODE_REVIEW_PLAN.md
+pnpm-lock.yaml
