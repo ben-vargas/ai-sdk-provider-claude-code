@@ -132,16 +132,13 @@ describe('logger integration', () => {
       provider('opus');
 
       // Mock the query function to prevent actual API calls
-      const { ClaudeCodeLanguageModel } = await import('../src/claude-code-language-model.js');
-      const proto = ClaudeCodeLanguageModel.prototype as any;
+      const { WarningGenerator } = await import('../src/warning-generator.js');
 
-      // Access the private method through prototype
-      const result = proto.generateAllWarnings.call(
-        {
-          modelValidationWarning: undefined,
-          settingsValidationWarnings: [],
-          logger: customLogger,
-        },
+      // Create a WarningGenerator instance
+      const warningGenerator = new WarningGenerator(undefined, []);
+
+      // Call generateAllWarnings
+      const result = warningGenerator.generateAllWarnings(
         {
           prompt: [
             {
@@ -152,7 +149,7 @@ describe('logger integration', () => {
               ],
             },
           ],
-        },
+        } as any,
         'test prompt'
       );
 
