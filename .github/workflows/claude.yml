@@ -27,8 +27,11 @@ jobs:
          contains(github.event.review.body, '@claude') &&
          contains(fromJSON('["OWNER", "MEMBER"]'), github.event.review.author_association)) ||
         (github.event_name == 'issues' &&
+         github.event.action == 'opened' &&
          (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
-         contains(fromJSON('["OWNER", "MEMBER"]'), github.event.issue.author_association))
+         contains(fromJSON('["OWNER", "MEMBER"]'), github.event.issue.author_association)) ||
+        (github.event_name == 'issues' &&
+         github.event.action == 'assigned')
       )
     runs-on: ubuntu-latest
     permissions:
