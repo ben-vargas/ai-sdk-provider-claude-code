@@ -19,7 +19,7 @@ export type { ClaudeCodeProvider, ClaudeCodeProviderSettings } from './claude-co
 
 /**
  * Language model implementation for Claude Code.
- * This class implements the AI SDK's LanguageModelV1 interface.
+ * This class implements the AI SDK's LanguageModelV2 interface.
  */
 export { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
 
@@ -60,6 +60,7 @@ export type {
   PermissionRuleValue,
   McpServerConfig,
   McpSdkServerConfigWithInstance,
+  OutputFormat,
 } from '@anthropic-ai/claude-agent-sdk';
 
 /**

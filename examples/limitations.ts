@@ -48,8 +48,8 @@ async function main() {
     console.error('   Error:', error);
   }
 
-  // 2. Object generation - works via prompt engineering
-  console.log('2. Object generation (works with limitations):');
+  // 2. Object generation - native SDK support with guaranteed schema compliance
+  console.log('2. Object generation (fully supported with native SDK):');
 
   const PersonSchema = z.object({
     name: z.string(),
@@ -65,8 +65,8 @@ async function main() {
       prompt: 'Generate a person who is a software developer',
     });
     console.log('   ✅ Object generated:', object);
-    console.log('   Note: Uses prompt engineering + JSON extraction');
-    console.log('         Only object-json mode is supported (not object-tool)');
+    console.log('   Note: Uses native SDK constrained decoding (outputFormat)');
+    console.log('         Guaranteed schema compliance - no JSON parsing errors!');
   } catch (error: any) {
     console.log('   ❌ Error:', error.message);
   }
@@ -111,9 +111,9 @@ async function main() {
   console.log('   - Use explicit instructions: "Keep your response brief"\n');
 
   console.log('3. For structured output:');
-  console.log('   - Use generateObject/streamObject (now supported!');
-  console.log('   - Provider automatically handles JSON extraction');
-  console.log('   - Only object-json mode is supported\n');
+  console.log('   - ✅ Fully supported via native SDK constrained decoding');
+  console.log('   - Use generateObject/streamObject with Zod schemas');
+  console.log('   - Guaranteed schema compliance - no JSON parsing errors\n');
 
   console.log('4. For deterministic output:');
   console.log('   - Not possible with Claude Code SDK');
@@ -130,7 +130,7 @@ async function main() {
 
   console.log('✅ What DOES work well:');
   console.log('- Basic text generation and streaming');
-  console.log('- Object generation via generateObject/streamObject');
+  console.log('- Native structured outputs with guaranteed schema compliance');
   console.log('- Conversation context via message history');
   console.log('- Custom timeouts and session management');
   console.log('- Abort signals for cancellation');

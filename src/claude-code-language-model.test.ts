@@ -628,25 +628,15 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(typeof call.prompt).toBe('string');
     });
 
-    it('should emit JSON once in object-json mode and return finish metadata', async () => {
+    it('should emit JSON from structured_output in object-json mode and return finish metadata', async () => {
+      // SDK 0.1.45+ returns structured_output directly in the result message
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
-          yield {
-            type: 'assistant',
-            message: {
-              content: [{ type: 'text', text: '{"a": 1' }],
-            },
-          };
-          yield {
-            type: 'assistant',
-            message: {
-              content: [{ type: 'text', text: ', "b": 2}' }],
-            },
-          };
           yield {
             type: 'result',
             subtype: 'success',
             session_id: 'json-session-1',
+            structured_output: { a: 1, b: 2 },
             usage: {
               input_tokens: 6,
               output_tokens: 3,
@@ -662,7 +652,7 @@ describe('ClaudeCodeLanguageModel', () => {
       const result = await model.doStream({
         prompt: [{ role: 'user', content: [{ type: 'text', text: 'Return JSON' }] }],
         temperature: 0.5, // This will trigger a warning
-        responseFormat: { type: 'json' }, // Add responseFormat to trigger JSON mode
+        responseFormat: { type: 'json', schema: { type: 'object' } }, // Add responseFormat with schema
       });
 
       const chunks: any[] = [];
@@ -689,7 +679,7 @@ describe('ClaudeCodeLanguageModel', () => {
       });
       expect(chunks[2]).toMatchObject({
         type: 'text-delta',
-        delta: '{\n  "a": 1,\n  "b": 2\n}',
+        delta: '{"a":1,"b":2}',
       });
       expect(chunks[3]).toMatchObject({
         type: 'text-end',
@@ -717,27 +707,25 @@ describe('ClaudeCodeLanguageModel', () => {
         type: 'unsupported-setting',
         setting: 'temperature',
       });
+
+      // Verify outputFormat was passed to SDK
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as {
+        options: { outputFormat?: { type: string; schema: unknown } };
+      };
+      expect(call.options?.outputFormat).toEqual({
+        type: 'json_schema',
+        schema: { type: 'object' },
+      });
     });
 
-    it('should handle malformed JSON in object-json streaming mode', async () => {
+    it('should handle structured output error from SDK', async () => {
+      // SDK 0.1.45+ returns error_max_structured_output_retries when it can't produce valid output
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
           yield {
-            type: 'assistant',
-            message: {
-              content: [{ type: 'text', text: 'Here is the JSON: {"a": 1, "b": ' }],
-            },
-          };
-          yield {
-            type: 'assistant',
-            message: {
-              content: [{ type: 'text', text: 'invalid}' }],
-            },
-          };
-          yield {
             type: 'result',
-            subtype: 'success',
-            session_id: 'json-session-2',
+            subtype: 'error_max_structured_output_retries',
+            session_id: 'json-error-session',
             usage: {
               input_tokens: 8,
               output_tokens: 5,
@@ -750,7 +738,7 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const result = await model.doStream({
         prompt: [{ role: 'user', content: [{ type: 'text', text: 'Return invalid JSON' }] }],
-        responseFormat: { type: 'json' }, // Add responseFormat to trigger JSON mode
+        responseFormat: { type: 'json', schema: { type: 'object' } },
       });
 
       const chunks: any[] = [];
@@ -762,18 +750,86 @@ describe('ClaudeCodeLanguageModel', () => {
         chunks.push(value);
       }
 
-      expect(chunks).toHaveLength(5);
+      // Should emit stream-start and then error
+      expect(chunks).toHaveLength(2);
       expect(chunks[0]).toMatchObject({
         type: 'stream-start',
-        warnings: [],
       });
+      expect(chunks[1]).toMatchObject({
+        type: 'error',
+      });
+      expect(chunks[1].error.message).toContain('structured output');
+    });
+
+    it('should warn and treat as plain text when JSON mode requested without schema', async () => {
+      // When responseFormat.type === 'json' but no schema is provided,
+      // Claude Code (like Anthropic) does not support JSON-without-schema.
+      // We emit an unsupported-setting warning and treat as plain text.
+      const plainText = 'Here is some text that happens to look like JSON: {"name": "test"}';
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: plainText }],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'json-no-schema-session',
+            // No structured_output field - SDK didn't use outputFormat
+            usage: {
+              input_tokens: 10,
+              output_tokens: 15,
+            },
+            total_cost_usd: 0.002,
+            duration_ms: 200,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Return JSON' }] }],
+        responseFormat: { type: 'json' }, // No schema provided
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // Should emit: stream-start (with warning), text-start, text-delta, text-end, finish
+      expect(chunks).toHaveLength(5);
+
+      // Verify unsupported-setting warning is emitted
+      expect(chunks[0]).toMatchObject({
+        type: 'stream-start',
+      });
+      const streamStartWarnings = chunks[0].warnings;
+      expect(streamStartWarnings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'unsupported-setting',
+            setting: 'responseFormat',
+            details: expect.stringContaining('requires a schema'),
+          }),
+        ])
+      );
+
+      // Verify response is plain text (not parsed or modified)
       expect(chunks[1]).toMatchObject({
         type: 'text-start',
       });
-      // When JSON is malformed, extractJson returns the original text
       expect(chunks[2]).toMatchObject({
         type: 'text-delta',
-        delta: 'Here is the JSON: {"a": 1, "b": invalid}',
+        delta: plainText,
       });
       expect(chunks[3]).toMatchObject({
         type: 'text-end',
@@ -782,11 +838,17 @@ describe('ClaudeCodeLanguageModel', () => {
         type: 'finish',
         finishReason: 'stop',
         usage: {
-          inputTokens: 8,
-          outputTokens: 5,
-          totalTokens: 13,
+          inputTokens: 10,
+          outputTokens: 15,
+          totalTokens: 25,
         },
       });
+
+      // Verify outputFormat was NOT passed to SDK (no schema)
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as {
+        options: { outputFormat?: unknown };
+      };
+      expect(call.options?.outputFormat).toBeUndefined();
     });
 
     it('emits tool streaming events for provider-executed tools', async () => {
@@ -1547,21 +1609,15 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(lastTextIndex).toBeGreaterThan(toolCallIndex);
     });
 
-    it('includes JSON validation warnings in streaming finish metadata', async () => {
-      const malformedJson = 'Here is the JSON: {"a": 1, "b": invalid}';
-
+    it('passes outputFormat to SDK when responseFormat has schema', async () => {
+      // SDK 0.1.45+ uses native structured outputs via outputFormat
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
           yield {
-            type: 'assistant',
-            message: {
-              content: [{ type: 'text', text: malformedJson }],
-            },
-          };
-          yield {
             type: 'result',
             subtype: 'success',
-            session_id: 'json-warn-session',
+            session_id: 'structured-output-session',
+            structured_output: { name: 'test', value: 42 },
             usage: { input_tokens: 10, output_tokens: 20 },
             total_cost_usd: 0.002,
             duration_ms: 100,
@@ -1571,9 +1627,18 @@ describe('ClaudeCodeLanguageModel', () => {
 
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
+      const schema = {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          value: { type: 'number' },
+        },
+        required: ['name', 'value'],
+      };
+
       const { stream } = await model.doStream({
         prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
-        responseFormat: { type: 'json', schema: {} } as any,
+        responseFormat: { type: 'json', schema },
       } as any);
 
       const events: ExtendedStreamPart[] = [];
@@ -1584,12 +1649,25 @@ describe('ClaudeCodeLanguageModel', () => {
         events.push(value);
       }
 
+      // Verify outputFormat was passed correctly to SDK
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as {
+        options: { outputFormat?: { type: string; schema: unknown } };
+      };
+      expect(call.options?.outputFormat).toEqual({
+        type: 'json_schema',
+        schema,
+      });
+
+      // Verify structured output was emitted as text
+      const textDelta = events.find((e) => e.type === 'text-delta') as any;
+      expect(textDelta).toBeDefined();
+      expect(textDelta.delta).toBe('{"name":"test","value":42}');
+
       const finishEvent = events.find((e) => e.type === 'finish') as any;
       expect(finishEvent).toBeDefined();
-      const metadata = finishEvent.providerMetadata?.['claude-code'];
-      expect(metadata?.warnings).toBeDefined();
-      expect(metadata.warnings.length).toBeGreaterThan(0);
-      expect(metadata.warnings[0]).toMatchObject({ type: 'other' });
+      expect(finishEvent.providerMetadata?.['claude-code']?.sessionId).toBe(
+        'structured-output-session'
+      );
     });
 
     it('warns and skips messages with invalid structure', async () => {

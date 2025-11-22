@@ -9,7 +9,7 @@
 
 # AI SDK Provider for Claude Code SDK
 
-> **Latest Release**: Version 2.x uses the Claude Agent SDK with explicit configuration defaults. Version 1.x is the previous stable release. For AI SDK v4 support, use the `ai-sdk-v4` tag or version 0.2.x.
+> **Latest Release**: Version 2.x uses the Claude Agent SDK with native structured outputs support (v2.2.0+). For AI SDK v4 support, use the `ai-sdk-v4` tag or version 0.2.x.
 
 **ai-sdk-provider-claude-code** lets you use Claude via the [Vercel AI SDK](https://sdk.vercel.ai/docs) through the official `@anthropic-ai/claude-agent-sdk` and the Claude Code CLI.
 
@@ -264,12 +264,44 @@ If you're upgrading from version 1.x:
 - Explicit configuration over implicit defaults
 - Future-proof alignment with Claude Agent SDK design
 
+## Structured Outputs
+
+This provider supports **native structured outputs** via the Claude Agent SDK (v0.1.45+). When using `generateObject()` or `streamObject()`, the SDK guarantees schema-compliant JSON responses through constrained decoding.
+
+```typescript
+import { generateObject } from 'ai';
+import { claudeCode } from 'ai-sdk-provider-claude-code';
+import { z } from 'zod';
+
+const result = await generateObject({
+  model: claudeCode('sonnet'),
+  schema: z.object({
+    name: z.string(),
+    age: z.number(),
+    email: z.string().email(),
+  }),
+  prompt: 'Generate a user profile for a software developer',
+});
+
+console.log(result.object); // Guaranteed to match schema
+// { name: "Alex Chen", age: 28, email: "alex@example.com" }
+```
+
+**Benefits:**
+
+- ✅ **Guaranteed schema compliance** - Constrained decoding ensures valid output
+- ✅ **No JSON parsing errors** - SDK handles all validation
+- ✅ **No prompt engineering** - Schema enforcement is native to the SDK
+- ✅ **Better performance** - No retry/extraction logic needed
+
+> **Note:** A schema is required for JSON output. Using `responseFormat: { type: 'json' }` without a schema is not supported by Claude Code (matching Anthropic's official provider behavior). An `unsupported-setting` warning will be emitted and the call will be treated as plain text. Always use `generateObject()` or `streamObject()` with a Zod schema for guaranteed JSON output.
+
 ## Core Features
 
 - 🚀 Vercel AI SDK compatibility
 - 🔄 Streaming support
 - 💬 Multi-turn conversations
-- 🎯 Object generation with JSON schemas
+- 🎯 Native structured outputs with guaranteed schema compliance
 - 🛑 AbortSignal support
 - 🔧 Tool management (MCP servers, permissions)
 - 🧩 Callbacks (hooks, canUseTool)

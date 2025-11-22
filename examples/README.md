@@ -193,6 +193,8 @@ npx tsx examples/sdk-tools-callbacks.ts
 
 ## Object Generation (Structured Output)
 
+> **Native Support**: Object generation uses the SDK's native `outputFormat` option with constrained decoding, providing **guaranteed schema compliance** - no JSON parsing errors!
+
 ### 16. Object Generation Overview (`generate-object.ts`)
 
 **Purpose**: Advanced real-world examples of object generation.

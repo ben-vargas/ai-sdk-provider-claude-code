@@ -100,9 +100,8 @@ async function streamAnalysis() {
   });
 
   try {
-    // Note: Not using streamObject because object generation through
-    // prompt engineering requires the complete response before parsing JSON.
-    // Both generateObject and streamObject wait for the full response.
+    // Note: Both generateObject and streamObject are supported.
+    // Native SDK constrained decoding ensures guaranteed schema compliance.
     const { object } = await generateObject({
       model: claudeCode('haiku'),
       prompt:
@@ -118,16 +117,38 @@ async function streamAnalysis() {
   }
 }
 
-// Example 4: Generate without strict schema (free-form JSON)
-async function generateFreeformJSON() {
-  console.log('4. Generating free-form JSON without schema...\n');
+// Example 4: Generate a space mission with explicit schema
+// Note: Claude Code requires a schema for JSON output (no "free-form JSON" mode).
+// Using z.any() or omitting a schema is not supported.
+async function generateSpaceMission() {
+  console.log('4. Generating space mission with explicit schema...\n');
+
+  const spaceMissionSchema = z.object({
+    missionName: z.string().describe('Name of the space mission'),
+    launchDate: z.string().describe('Launch date in ISO format'),
+    spacecraft: z.object({
+      name: z.string(),
+      type: z.string(),
+      capacity: z.number().describe('Crew capacity'),
+    }),
+    crew: z
+      .array(
+        z.object({
+          name: z.string(),
+          role: z.string(),
+          nationality: z.string(),
+        })
+      )
+      .describe('Crew members'),
+    objectives: z.array(z.string()).describe('Mission objectives'),
+    duration: z.number().describe('Mission duration in days'),
+  });
 
   try {
     const { object } = await generateObject({
       model: claudeCode('haiku'),
-      prompt:
-        'Create a JSON object representing a fictional space mission with crew members, mission objectives, and spacecraft details',
-      schema: z.any(), // Allow any valid JSON
+      prompt: 'Create a fictional space mission to explore Mars',
+      schema: spaceMissionSchema,
     });
 
     console.log('Generated Space Mission:');
@@ -143,7 +164,7 @@ async function main() {
   await generateRecipe();
   await generateUserProfile();
   await streamAnalysis();
-  await generateFreeformJSON();
+  await generateSpaceMission();
 
   console.log('✅ All examples completed!');
 }

@@ -170,27 +170,21 @@ function parseFilePart(part: FileLikePart): { content?: SDKUserContentPart; warn
  * Handles system prompts, user messages, assistant responses, and tool interactions.
  *
  * @param prompt - The AI SDK prompt containing messages
- * @param mode - Optional mode for specialized output formats (e.g., JSON generation)
  * @returns An object containing the formatted message prompt and optional system prompt
  *
  * @example
  * ```typescript
  * const { messagesPrompt } = convertToClaudeCodeMessages(
- *   [{ role: 'user', content: 'Hello!' }],
- *   { type: 'regular' }
+ *   [{ role: 'user', content: 'Hello!' }]
  * );
  * ```
  *
  * @remarks
  * - Image parts are collected for streaming input; unsupported variants produce warnings
  * - Tool calls are simplified to "[Tool calls made]" notation
- * - In 'object-json' mode, explicit JSON instructions are appended
+ * - JSON schema enforcement is handled natively by the SDK's outputFormat option (v0.1.45+)
  */
-export function convertToClaudeCodeMessages(
-  prompt: readonly ModelMessage[],
-  mode: { type: 'regular' | 'object-json' | 'object-tool' } = { type: 'regular' },
-  jsonSchema?: unknown
-): {
+export function convertToClaudeCodeMessages(prompt: readonly ModelMessage[]): {
   messagesPrompt: string;
   systemPrompt?: string;
   warnings?: string[];
@@ -339,8 +333,8 @@ export function convertToClaudeCodeMessages(
     }
   }
 
-  // For JSON mode, add explicit instruction to ensure JSON output
-  let streamingParts: SDKUserContentPart[] = [];
+  // Build streaming parts including text and images
+  const streamingParts: SDKUserContentPart[] = [];
   const imagePartsInOrder: SDKUserContentPart[] = [];
 
   const appendImagesForIndex = (index: number) => {
@@ -386,25 +380,8 @@ export function convertToClaudeCodeMessages(
     flushText();
   }
 
-  if (mode?.type === 'object-json' && jsonSchema) {
-    // Prepend JSON instructions at the very beginning, before any messages
-    const schemaStr = JSON.stringify(jsonSchema, null, 2);
-
-    finalPrompt = `CRITICAL: You MUST respond with ONLY a JSON object. NO other text, NO explanations, NO questions.
-
-Your response MUST start with { and end with }
-
-The JSON MUST match this EXACT schema:
-${schemaStr}
-
-Now, based on the following conversation, generate ONLY the JSON object with the exact fields specified above:
-
-${finalPrompt}
-
-Remember: Your ENTIRE response must be ONLY the JSON object, starting with { and ending with }`;
-
-    streamingParts = [{ type: 'text', text: finalPrompt }, ...imagePartsInOrder];
-  }
+  // Note: JSON schema enforcement is now handled natively by the SDK's outputFormat option (v0.1.45+)
+  // No prompt injection needed - structured outputs are guaranteed by the SDK
 
   return {
     messagesPrompt: finalPrompt,

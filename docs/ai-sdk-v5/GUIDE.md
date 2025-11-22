@@ -48,7 +48,9 @@ const response2 = await generateText({
 console.log(response2.text); // "Alice"
 ```
 
-### Object Generation with JSON Schema
+### Object Generation with Native Structured Outputs
+
+This provider uses Claude Agent SDK's native structured outputs (v0.1.45+) which guarantee schema compliance through constrained decoding:
 
 ```typescript
 import { generateObject } from 'ai';
@@ -74,6 +76,24 @@ console.log(result.object);
 //   interests: ["coding", "open source", "machine learning"]
 // }
 ```
+
+**Key Benefits:**
+
+- ✅ **Guaranteed schema compliance** - SDK's constrained decoding ensures valid output
+- ✅ **No JSON parsing errors** - Output always matches your schema
+- ✅ **No retry logic needed** - SDK handles validation internally
+
+> **Important: Schema Required for JSON Output**
+>
+> Using `responseFormat: { type: 'json' }` without a schema is **not supported** by this provider. This matches the behavior of Anthropic's official AI SDK provider, as Claude Code (like the Anthropic API) only supports structured outputs with schemas—there is no native "JSON mode" without schema validation.
+>
+> If you request JSON output without providing a schema:
+>
+> - An `unsupported-setting` warning will be emitted
+> - The response content is returned as-is (no JSON parsing or enforcement)
+> - **Streaming note**: The response will be buffered and emitted as a single chunk at the end, not streamed token-by-token. If you need true incremental streaming, omit `responseFormat` entirely or provide a schema.
+>
+> **Always use `generateObject()` or `streamObject()` with a Zod schema** for guaranteed JSON output.
 
 ### Handling Long-Running Tasks
 
@@ -1055,6 +1075,7 @@ try {
 - **Image inputs require streaming**: Provide base64/data URLs and enable streaming input; remote URLs are ignored
 - **No embedding support**: Text embeddings are not available through this provider
 - **Object-tool mode not supported**: Only `object-json` mode works via `generateObject`/`streamObject`. The AI SDK's tool calling interface is not implemented
+- **Schema required for JSON output**: `responseFormat: { type: 'json' }` without a schema is unsupported (matching Anthropic's official provider). Such calls emit a warning, return content as-is (no JSON enforcement), and buffer the response (no incremental streaming). Use `generateObject()`/`streamObject()` with a Zod schema for guaranteed JSON
 - **Text-only responses**: No support for file generation or other modalities
 - **Session management**: While sessions are supported, message history is the recommended approach
 - **Unsupported generation settings**: The following AI SDK settings are ignored and will generate warnings:

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2025-11-22
+
+### Added
+
+- **Native structured outputs** - `generateObject()` and `streamObject()` now use SDK's `outputFormat` option with guaranteed schema compliance via constrained decoding
+- `supportsStructuredOutputs = true` - Provider now advertises native structured outputs support to AI SDK
+- Proper error handling for `error_max_structured_output_retries` SDK response
+- Export `OutputFormat` type from the SDK
+
+### Changed
+
+- **Upgraded Claude Agent SDK to ^0.1.50** - Now uses SDK's native structured outputs feature
+- Simplified internal JSON handling - removed prompt-based JSON instructions in favor of SDK's `outputFormat`
+- Removed internal `extractJson` utility and `jsonc-parser` dependency (internal implementation detail, not part of public API)
+- **Breaking behavior change**: Schema-less `responseFormat: { type: 'json' }` is now treated as unsupported (matching Anthropic's official provider behavior). An `unsupported-setting` warning is emitted and the call is treated as plain text. Use a schema with `generateObject()`/`streamObject()` for guaranteed JSON output.
+
 ## [2.1.0] - 2025-10-20
 
 ### Added

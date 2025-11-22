@@ -10,7 +10,6 @@ import { NoSuchModelError, APICallError, LoadAPIKeyError } from '@ai-sdk/provide
 import { generateId } from '@ai-sdk/provider-utils';
 import type { ClaudeCodeSettings, Logger } from './types.js';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
-import { extractJson } from './extract-json.js';
 import { createAPICallError, createAuthenticationError, createTimeoutError } from './errors.js';
 import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
 import { validateModelId, validatePrompt, validateSessionId } from './validation.js';
@@ -244,18 +243,17 @@ const modelMap: Record<string, string> = {
 
 /**
  * Language model implementation for Claude Code SDK.
- * This class implements the AI SDK's LanguageModelV1 interface to provide
- * integration with Claude models through the Claude Code SDK.
+ * This class implements the AI SDK's LanguageModelV2 interface to provide
+ * integration with Claude models through the Claude Agent SDK.
  *
  * Features:
  * - Supports streaming and non-streaming generation
- * - Handles JSON object generation mode
+ * - Native structured outputs via SDK's outputFormat (guaranteed schema compliance)
  * - Manages CLI sessions for conversation continuity
  * - Provides detailed error handling and retry logic
  *
  * Limitations:
  * - Image inputs require streaming mode
- * - Does not support structured outputs (tool mode)
  * - Some parameters like temperature and max tokens are not supported by the CLI
  *
  * @example
@@ -276,7 +274,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
   readonly defaultObjectGenerationMode = 'json' as const;
   readonly supportsImageUrls = false;
   readonly supportedUrls = {};
-  readonly supportsStructuredOutputs = false;
+  readonly supportsStructuredOutputs = true;
 
   // Fallback/magic string constants
   static readonly UNKNOWN_TOOL_NAME = 'unknown-tool';
@@ -527,6 +525,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       });
     });
 
+    // Warn if JSON response format is requested without a schema
+    // Claude Code only supports structured outputs with schemas (like Anthropic's API)
+    if (options.responseFormat?.type === 'json' && !options.responseFormat.schema) {
+      warnings.push({
+        type: 'unsupported-setting',
+        setting: 'responseFormat',
+        details:
+          'JSON response format requires a schema for the Claude Code provider. The JSON responseFormat is ignored and the call is treated as plain text.',
+      });
+    }
+
     // Validate prompt
     const promptWarning = validatePrompt(prompt);
     if (promptWarning) {
@@ -539,18 +548,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     return warnings;
   }
 
-  private handleJsonExtraction(text: string, warnings: LanguageModelV2CallWarning[]): string {
-    const extracted = extractJson(text);
-    const validation = this.validateJsonExtraction(text, extracted);
-
-    if (!validation.valid && validation.warning) {
-      warnings.push(validation.warning);
-    }
-
-    return extracted;
-  }
-
-  private createQueryOptions(abortController: AbortController): Options {
+  private createQueryOptions(
+    abortController: AbortController,
+    responseFormat?: Parameters<LanguageModelV2['doGenerate']>[0]['responseFormat']
+  ): Options {
     const opts: Partial<Options> & Record<string, unknown> = {
       model: this.getModel(),
       abortController,
@@ -623,6 +624,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     if (this.settings.env !== undefined) {
       opts.env = { ...process.env, ...this.settings.env };
     }
+
+    // Native structured outputs (SDK 0.1.45+)
+    if (responseFormat?.type === 'json' && responseFormat.schema) {
+      opts.outputFormat = {
+        type: 'json_schema',
+        schema: responseFormat.schema as Record<string, unknown>,
+      };
+    }
+
     return opts as Options;
   }
 
@@ -712,62 +722,18 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     }
   }
 
-  private validateJsonExtraction(
-    originalText: string,
-    extractedJson: string
-  ): { valid: boolean; warning?: LanguageModelV2CallWarning } {
-    // If the extracted JSON is the same as original, extraction likely failed
-    if (extractedJson === originalText) {
-      return {
-        valid: false,
-        warning: {
-          type: 'other',
-          message:
-            'JSON extraction from model response may be incomplete or modified. The model may not have returned valid JSON.',
-        },
-      };
-    }
-
-    // Try to parse the extracted JSON to validate it
-    try {
-      JSON.parse(extractedJson);
-      return { valid: true };
-    } catch {
-      return {
-        valid: false,
-        warning: {
-          type: 'other',
-          message: 'JSON extraction resulted in invalid JSON. The response may be malformed.',
-        },
-      };
-    }
-  }
-
   async doGenerate(
     options: Parameters<LanguageModelV2['doGenerate']>[0]
   ): Promise<Awaited<ReturnType<LanguageModelV2['doGenerate']>>> {
     this.logger.debug(`[claude-code] Starting doGenerate request with model: ${this.modelId}`);
-
-    // Determine mode based on responseFormat
-    const mode =
-      options.responseFormat?.type === 'json'
-        ? { type: 'object-json' as const }
-        : { type: 'regular' as const };
-
-    this.logger.debug(
-      `[claude-code] Request mode: ${mode.type}, response format: ${options.responseFormat?.type ?? 'none'}`
-    );
+    this.logger.debug(`[claude-code] Response format: ${options.responseFormat?.type ?? 'none'}`);
 
     const {
       messagesPrompt,
       warnings: messageWarnings,
       streamingContentParts,
       hasImageParts,
-    } = convertToClaudeCodeMessages(
-      options.prompt,
-      mode,
-      options.responseFormat?.type === 'json' ? options.responseFormat.schema : undefined
-    );
+    } = convertToClaudeCodeMessages(options.prompt);
 
     this.logger.debug(
       `[claude-code] Converted ${options.prompt.length} messages, hasImageParts: ${hasImageParts}`
@@ -783,9 +749,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       options.abortSignal.addEventListener('abort', abortListener, { once: true });
     }
 
-    const queryOptions = this.createQueryOptions(abortController);
+    const queryOptions = this.createQueryOptions(abortController, options.responseFormat);
 
     let text = '';
+    let structuredOutput: unknown | undefined;
     let usage: LanguageModelV2Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     let finishReason: LanguageModelV2FinishReason = 'stop';
     let wasTruncated = false;
@@ -860,6 +827,20 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           costUsd = message.total_cost_usd;
           durationMs = message.duration_ms;
 
+          // Handle structured output errors (SDK 0.1.45+)
+          // Use string comparison to support new SDK subtypes not yet in TypeScript definitions
+          if ((message.subtype as string) === 'error_max_structured_output_retries') {
+            throw new Error(
+              'Failed to generate valid structured output after maximum retries. The model could not produce a response matching the required schema.'
+            );
+          }
+
+          // Capture structured output if available (SDK 0.1.45+)
+          if ('structured_output' in message && message.structured_output !== undefined) {
+            structuredOutput = message.structured_output;
+            this.logger.debug('[claude-code] Received structured output from SDK');
+          }
+
           this.logger.info(
             `[claude-code] Request completed - Session: ${message.session_id}, Cost: $${costUsd?.toFixed(4) ?? 'N/A'}, Duration: ${durationMs ?? 'N/A'}ms`
           );
@@ -923,13 +904,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       }
     }
 
-    // Extract JSON if responseFormat indicates JSON mode
-    if (options.responseFormat?.type === 'json' && text) {
-      text = this.handleJsonExtraction(text, warnings);
-    }
+    // Use structured output from SDK if available (native JSON schema support)
+    // Otherwise fall back to accumulated text
+    const finalText = structuredOutput !== undefined ? JSON.stringify(structuredOutput) : text;
 
     return {
-      content: [{ type: 'text', text }],
+      content: [{ type: 'text', text: finalText }],
       usage,
       finishReason,
       warnings,
@@ -957,27 +937,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     options: Parameters<LanguageModelV2['doStream']>[0]
   ): Promise<Awaited<ReturnType<LanguageModelV2['doStream']>>> {
     this.logger.debug(`[claude-code] Starting doStream request with model: ${this.modelId}`);
-
-    // Determine mode based on responseFormat
-    const mode =
-      options.responseFormat?.type === 'json'
-        ? { type: 'object-json' as const }
-        : { type: 'regular' as const };
-
-    this.logger.debug(
-      `[claude-code] Stream mode: ${mode.type}, response format: ${options.responseFormat?.type ?? 'none'}`
-    );
+    this.logger.debug(`[claude-code] Response format: ${options.responseFormat?.type ?? 'none'}`);
 
     const {
       messagesPrompt,
       warnings: messageWarnings,
       streamingContentParts,
       hasImageParts,
-    } = convertToClaudeCodeMessages(
-      options.prompt,
-      mode,
-      options.responseFormat?.type === 'json' ? options.responseFormat.schema : undefined
-    );
+    } = convertToClaudeCodeMessages(options.prompt);
 
     this.logger.debug(
       `[claude-code] Converted ${options.prompt.length} messages for streaming, hasImageParts: ${hasImageParts}`
@@ -993,7 +960,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       options.abortSignal.addEventListener('abort', abortListener, { once: true });
     }
 
-    const queryOptions = this.createQueryOptions(abortController);
+    const queryOptions = this.createQueryOptions(abortController, options.responseFormat);
 
     const warnings: LanguageModelV2CallWarning[] = this.generateAllWarnings(
       options,
@@ -1344,6 +1311,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             } else if (message.type === 'result') {
               done();
 
+              // Handle structured output errors (SDK 0.1.45+)
+              // Use string comparison to support new SDK subtypes not yet in TypeScript definitions
+              if ((message.subtype as string) === 'error_max_structured_output_retries') {
+                throw new Error(
+                  'Failed to generate valid structured output after maximum retries. The model could not produce a response matching the required schema.'
+                );
+              }
+
               this.logger.info(
                 `[claude-code] Stream completed - Session: ${message.session_id}, Cost: $${message.total_cost_usd?.toFixed(4) ?? 'N/A'}, Duration: ${message.duration_ms ?? 'N/A'}ms`
               );
@@ -1378,12 +1353,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
               // Store session ID in the model instance
               this.setSessionId(message.session_id);
 
-              // Check if we need to extract JSON based on responseFormat
-              if (options.responseFormat?.type === 'json' && accumulatedText) {
-                const extractedJson = this.handleJsonExtraction(accumulatedText, streamWarnings);
+              // Use structured output from SDK if available (native JSON schema support)
+              const structuredOutput =
+                'structured_output' in message ? message.structured_output : undefined;
 
-                // Emit text-start/delta/end for JSON content
+              if (structuredOutput !== undefined) {
+                // Emit structured output as text
                 const jsonTextId = generateId();
+                const jsonText = JSON.stringify(structuredOutput);
                 controller.enqueue({
                   type: 'text-start',
                   id: jsonTextId,
@@ -1391,17 +1368,35 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 controller.enqueue({
                   type: 'text-delta',
                   id: jsonTextId,
-                  delta: extractedJson,
+                  delta: jsonText,
                 });
                 controller.enqueue({
                   type: 'text-end',
                   id: jsonTextId,
                 });
               } else if (textPartId) {
-                // Close the text part if it was opened
+                // Close the text part if it was opened (non-JSON mode)
                 controller.enqueue({
                   type: 'text-end',
                   id: textPartId,
+                });
+              } else if (accumulatedText) {
+                // Fallback for JSON mode without schema: emit accumulated text
+                // This handles the case where responseFormat.type === 'json' but no schema
+                // was provided, so the SDK returns plain text instead of structured_output
+                const fallbackTextId = generateId();
+                controller.enqueue({
+                  type: 'text-start',
+                  id: fallbackTextId,
+                });
+                controller.enqueue({
+                  type: 'text-delta',
+                  id: fallbackTextId,
+                  delta: accumulatedText,
+                });
+                controller.enqueue({
+                  type: 'text-end',
+                  id: fallbackTextId,
                 });
               }
 
@@ -1467,27 +1462,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             };
             streamWarnings.push(truncationWarning);
 
-            const emitJsonText = () => {
-              const extractedJson = this.handleJsonExtraction(accumulatedText, streamWarnings);
-              const jsonTextId = generateId();
-              controller.enqueue({
-                type: 'text-start',
-                id: jsonTextId,
-              });
-              controller.enqueue({
-                type: 'text-delta',
-                id: jsonTextId,
-                delta: extractedJson,
-              });
-              controller.enqueue({
-                type: 'text-end',
-                id: jsonTextId,
-              });
-            };
-
-            if (options.responseFormat?.type === 'json') {
-              emitJsonText();
-            } else if (textPartId) {
+            if (textPartId) {
               controller.enqueue({
                 type: 'text-end',
                 id: textPartId,
