@@ -220,17 +220,17 @@ export interface ClaudeCodeLanguageModelOptions {
 
 /**
  * Supported Claude model identifiers.
- * - 'opus': Claude 4.1 Opus model (most capable)
- * - 'sonnet': Claude 4.5 Sonnet model (balanced performance)
- * - 'haiku': Claude 4.5 Haiku model (fastest, most cost-effective) - Available in Claude Code v2.0.17+
- * - Custom string: Any other model identifier supported by the CLI
+ * - 'opus': Claude Opus (most capable)
+ * - 'sonnet': Claude Sonnet (balanced performance)
+ * - 'haiku': Claude Haiku (fastest, most cost-effective)
+ * - Custom string: Any full model identifier (e.g., 'claude-opus-4-5', 'claude-sonnet-4-5-20250514')
  *
  * @example
  * ```typescript
  * const opusModel = claudeCode('opus');
  * const sonnetModel = claudeCode('sonnet');
  * const haikuModel = claudeCode('haiku');
- * const customModel = claudeCode('claude-3-opus-20240229');
+ * const customModel = claudeCode('claude-opus-4-5');
  * ```
  */
 export type ClaudeCodeModelId = 'opus' | 'sonnet' | 'haiku' | (string & {});

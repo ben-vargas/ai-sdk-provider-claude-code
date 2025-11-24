@@ -233,22 +233,22 @@ const result = await generateText({
 
 ### Configuration Options
 
-| Option                       | Type                             | Default     | Description                                                        |
-| ---------------------------- | -------------------------------- | ----------- | ------------------------------------------------------------------ |
-| `model`                      | `'opus' \| 'sonnet' \| 'haiku'`  | `'opus'`    | Model to use                                                       |
-| `pathToClaudeCodeExecutable` | `string`                         | `'claude'`  | Path to Claude CLI executable                                      |
-| `customSystemPrompt`         | `string`                         | `undefined` | Custom system prompt                                               |
-| `appendSystemPrompt`         | `string`                         | `undefined` | Append to system prompt                                            |
-| `maxTurns`                   | `number`                         | `undefined` | Maximum conversation turns                                         |
-| `maxThinkingTokens`          | `number`                         | `undefined` | Maximum thinking tokens                                            |
-| `permissionMode`             | `string`                         | `'default'` | Permission mode for tools                                          |
-| `allowedTools`               | `string[]`                       | `undefined` | Tools to explicitly allow                                          |
-| `disallowedTools`            | `string[]`                       | `undefined` | Tools to restrict                                                  |
-| `mcpServers`                 | `object`                         | `undefined` | MCP server configuration                                           |
-| `env`                        | `Record<string, string>`         | `undefined` | Environment variables passed to CLI                                |
-| `resume`                     | `string`                         | `undefined` | Resume an existing session                                         |
-| `hooks`                      | `object`                         | `undefined` | Lifecycle hooks (e.g., PreToolUse, PostToolUse)                    |
-| `canUseTool`                 | `(name, input, opts) => Promise` | `undefined` | Runtime permission callback. Requires streaming input at SDK level |
+| Option                       | Type                                      | Default     | Description                                                        |
+| ---------------------------- | ----------------------------------------- | ----------- | ------------------------------------------------------------------ |
+| `model`                      | `'opus' \| 'sonnet' \| 'haiku' \| string` | `'opus'`    | Model alias or full model ID (e.g., `claude-opus-4-5`)             |
+| `pathToClaudeCodeExecutable` | `string`                                  | `'claude'`  | Path to Claude CLI executable                                      |
+| `customSystemPrompt`         | `string`                                  | `undefined` | Custom system prompt                                               |
+| `appendSystemPrompt`         | `string`                                  | `undefined` | Append to system prompt                                            |
+| `maxTurns`                   | `number`                                  | `undefined` | Maximum conversation turns                                         |
+| `maxThinkingTokens`          | `number`                                  | `undefined` | Maximum thinking tokens                                            |
+| `permissionMode`             | `string`                                  | `'default'` | Permission mode for tools                                          |
+| `allowedTools`               | `string[]`                                | `undefined` | Tools to explicitly allow                                          |
+| `disallowedTools`            | `string[]`                                | `undefined` | Tools to restrict                                                  |
+| `mcpServers`                 | `object`                                  | `undefined` | MCP server configuration                                           |
+| `env`                        | `Record<string, string>`                  | `undefined` | Environment variables passed to CLI                                |
+| `resume`                     | `string`                                  | `undefined` | Resume an existing session                                         |
+| `hooks`                      | `object`                                  | `undefined` | Lifecycle hooks (e.g., PreToolUse, PostToolUse)                    |
+| `canUseTool`                 | `(name, input, opts) => Promise`          | `undefined` | Runtime permission callback. Requires streaming input at SDK level |
 
 ### Custom Configuration
 

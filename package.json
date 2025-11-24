@@ -72,7 +72,7 @@
   "dependencies": {
     "@ai-sdk/provider": "2.0.0",
     "@ai-sdk/provider-utils": "3.0.9",
-    "@anthropic-ai/claude-agent-sdk": "^0.1.50"
+    "@anthropic-ai/claude-agent-sdk": "^0.1.51"
   },
   "devDependencies": {
     "@edge-runtime/vm": "5.0.0",
@@ -81,7 +81,7 @@
     "@typescript-eslint/eslint-plugin": "8.34.0",
     "@typescript-eslint/parser": "8.34.0",
     "@vitest/coverage-v8": "^3.2.4",
-    "ai": "5.0.47",
+    "ai": "5.0.101",
     "eslint": "9.28.0",
     "globals": "16.2.0",
     "prettier": "^3.6.2",

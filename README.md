@@ -192,9 +192,11 @@ Key changes:
 
 ## Models
 
-- **`opus`** - Claude 4.1 Opus (most capable)
-- **`sonnet`** - Claude 4.5 Sonnet (balanced performance)
-- **`haiku`** - Claude 4.5 Haiku (fastest, most cost-effective)
+- **`opus`** - Claude Opus (most capable)
+- **`sonnet`** - Claude Sonnet (balanced performance)
+- **`haiku`** - Claude Haiku (fastest, most cost-effective)
+
+You can also use full model identifiers directly (e.g., `claude-opus-4-5`, `claude-sonnet-4-5-20250514`).
 
 ## Documentation
 
