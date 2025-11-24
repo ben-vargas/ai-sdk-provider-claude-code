@@ -26,7 +26,7 @@ async function main() {
   try {
     // Default logging - only warn/error messages will appear
     const result = streamText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt: 'Say hello in 5 words',
     });
 

@@ -23,7 +23,7 @@ async function main() {
 
   try {
     const { text, usage } = await generateText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt: 'Write exactly 5 words.',
       // These parameters are part of the AI SDK spec but are ignored by Claude Code SDK
       temperature: 0.1, // ❌ Ignored - CLI doesn't support temperature control
@@ -60,7 +60,7 @@ async function main() {
   try {
     console.log('   Attempting generateObject()...');
     const { object } = await generateObject({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       schema: PersonSchema,
       prompt: 'Generate a person who is a software developer',
     });
@@ -85,7 +85,7 @@ async function main() {
   console.log('5. Streaming with ignored parameters:');
   try {
     const { textStream } = streamText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt: 'Count to 3',
       temperature: 0, // ❌ Still ignored in streaming mode
       maxOutputTokens: 5, // ❌ Still ignored in streaming mode

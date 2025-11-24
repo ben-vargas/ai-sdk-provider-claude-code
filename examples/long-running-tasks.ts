@@ -27,7 +27,7 @@ async function withTimeout() {
 
   try {
     const { text } = await generateText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt: 'Analyze the implications of quantum computing on cryptography...',
       abortSignal: controller.signal,
     });
@@ -61,7 +61,7 @@ async function withUserCancellation() {
     console.log('Starting long task (will be cancelled in 2 seconds)...');
 
     const { text } = await generateText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt: 'Write a comprehensive guide to machine learning...',
       abortSignal: controller.signal,
     });
@@ -85,7 +85,7 @@ async function withGracefulTimeout() {
 
     try {
       const { text } = await generateText({
-        model: claudeCode('haiku'),
+        model: claudeCode('opus'),
         prompt: 'Explain the theory of relativity',
         abortSignal: controller.signal,
       });
@@ -140,7 +140,7 @@ async function withHelper() {
 
   try {
     const { text } = await generateText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt: 'Analyze this code for security vulnerabilities...',
       abortSignal: controller.signal,
     });

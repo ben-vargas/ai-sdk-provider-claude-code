@@ -5,7 +5,7 @@ async function main() {
   try {
     // Streaming response
     const result = streamText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt: 'Write a haiku about programming',
     });
 

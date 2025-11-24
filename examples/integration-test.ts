@@ -18,7 +18,7 @@ async function testBasicGeneration() {
   console.log('🧪 Test 1: Basic text generation with Haiku...');
   try {
     const { text } = await generateText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt: 'Say "Hello from Claude Code Provider!" and nothing else.',
     });
 
@@ -38,7 +38,7 @@ async function testWithSystemMessage() {
   console.log('\n🧪 Test 2: Generation with system message...');
   try {
     const { text } = await generateText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       messages: [
         {
           role: 'system',
@@ -66,7 +66,7 @@ async function testConversation() {
   try {
     // First turn: establish context
     const { text: response1 } = await generateText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       messages: [
         {
           role: 'user',
@@ -79,7 +79,7 @@ async function testConversation() {
 
     // Second turn: test memory with full history
     const { text: response2 } = await generateText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       messages: [
         {
           role: 'user',
@@ -100,7 +100,7 @@ async function testConversation() {
 
     // Third turn: test deeper context
     const { text: response3 } = await generateText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       messages: [
         {
           role: 'user',
@@ -130,7 +130,7 @@ async function testConversation() {
 async function testErrorHandling() {
   console.log('\n🧪 Test 4: Error handling with invalid executable path...');
   try {
-    const badClaude = claudeCode('haiku', {
+    const badClaude = claudeCode('opus', {
       pathToClaudeCodeExecutable: 'claude-nonexistent-binary-12345',
     });
 
@@ -156,7 +156,7 @@ async function testStreaming() {
   console.log('\n🧪 Test 5: Basic streaming...');
   try {
     const { textStream } = streamText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt: 'Count from 1 to 5, one number per line.',
     });
 

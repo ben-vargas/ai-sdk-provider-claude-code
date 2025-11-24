@@ -30,7 +30,7 @@ async function main() {
 
     console.log('1️⃣ Using provider with default settings:');
     const { text: response1 } = await generateText({
-      model: customProvider('haiku'), // Uses default settings
+      model: customProvider('opus'), // Uses default settings
       prompt: 'What is the capital of France? Answer in one word.',
     });
     console.log('Response:', response1);
@@ -38,7 +38,7 @@ async function main() {
     // Example 2: Override settings for specific model instance
     console.log('\n2️⃣ Model with custom settings:');
     const { text: response2 } = await generateText({
-      model: customProvider('haiku', {
+      model: customProvider('opus', {
         // These settings override the provider defaults
         permissionMode: 'default', // Ask for permissions
         maxTurns: 5, // Limit conversation turns
@@ -49,7 +49,7 @@ async function main() {
 
     // Example 3: Using tool restrictions
     console.log('\n3️⃣ Model with tool restrictions:');
-    const safeModel = customProvider('haiku', {
+    const safeModel = customProvider('opus', {
       // Only allow read operations
       allowedTools: ['Read', 'LS', 'Grep', 'Glob'],
       // Explicitly block write operations
@@ -64,19 +64,19 @@ async function main() {
 
     // Example 4: Multiple model instances from same provider
     console.log('\n4️⃣ Using multiple model instances:');
-    const haikuModel1 = customProvider('haiku');
-    const haikuModel2 = customProvider('haiku');
+    const opusModel1 = customProvider('opus');
+    const opusModel2 = customProvider('opus');
 
     // Quick comparison
     const prompt = 'Explain quantum computing in exactly 10 words.';
 
     const { text: response4a } = await generateText({
-      model: haikuModel1,
+      model: opusModel1,
       prompt,
     });
 
     const { text: response4b } = await generateText({
-      model: haikuModel2,
+      model: opusModel2,
       prompt,
     });
 

@@ -47,7 +47,7 @@ async function example1_enumsAndStatus() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('haiku'),
+    model: claudeCode('opus'),
     schema: taskSchema,
     prompt:
       'Generate a high-priority bug task for a database performance issue, assigned to a senior developer.',
@@ -89,7 +89,7 @@ async function example2_numberConstraints() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('haiku'),
+    model: claudeCode('opus'),
     schema: gameCharacterSchema,
     prompt: 'Generate a level 45 warrior character with balanced stats and moderate inventory.',
   });
@@ -156,7 +156,7 @@ async function example3_stringPatterns() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('haiku'),
+    model: claudeCode('opus'),
     schema: userRegistrationSchema,
     prompt:
       'Generate a complete user registration for a software developer from San Francisco. Include GitHub username (just the username) and a complete LinkedIn profile URL like https://www.linkedin.com/in/johndoe-developer',
@@ -205,7 +205,7 @@ async function example4_arrayConstraints() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('haiku'),
+    model: claudeCode('opus'),
     schema: playlistSchema,
     prompt: 'Generate a public workout playlist with 8 high-energy tracks from various genres.',
   });
@@ -273,7 +273,7 @@ async function example5_complexValidation() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('haiku'),
+    model: claudeCode('opus'),
     schema: invoiceSchema,
     prompt:
       'Generate an invoice for web development services with 3 line items, sent to a US company, due in 30 days.',

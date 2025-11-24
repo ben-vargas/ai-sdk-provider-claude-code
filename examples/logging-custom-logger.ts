@@ -48,7 +48,7 @@ async function main() {
   try {
     // Use custom logger with verbose mode enabled
     const result = streamText({
-      model: claudeCode('haiku', {
+      model: claudeCode('opus', {
         verbose: true, // Enable verbose logging to see debug/info
         logger: customLogger, // Use our custom logger
       }),

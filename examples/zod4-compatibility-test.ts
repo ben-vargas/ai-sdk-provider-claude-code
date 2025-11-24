@@ -51,7 +51,7 @@ async function test1_basicSchemas() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('haiku'),
+    model: claudeCode('opus'),
     schema,
     prompt: 'Generate a user profile for a software developer',
   });
@@ -114,7 +114,7 @@ async function test3_nestedObjects() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('haiku'),
+    model: claudeCode('opus'),
     schema,
     prompt: 'Generate a complete user profile with settings',
   });
@@ -146,7 +146,7 @@ async function test4_arraysAndUnions() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('haiku'),
+    model: claudeCode('opus'),
     schema,
     prompt: 'Generate 3 tasks for a software project',
   });
@@ -169,7 +169,7 @@ async function test5_stringValidations() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('haiku'),
+    model: claudeCode('opus'),
     schema,
     prompt: 'Generate a valid user registration with all fields validated',
   });
@@ -192,7 +192,7 @@ async function test6_numberValidations() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('haiku'),
+    model: claudeCode('opus'),
     schema,
     prompt: 'Generate a product with age restriction, price, discount, rating, and temperature',
   });
@@ -207,7 +207,7 @@ async function test7_streaming() {
   console.log('7️⃣  Streaming with Zod 4 (text mode)\n');
 
   const result = streamText({
-    model: claudeCode('haiku'),
+    model: claudeCode('opus'),
     prompt: 'Count from 1 to 5, one number per line',
   });
 
@@ -247,7 +247,7 @@ async function test8_discriminatedUnions() {
   });
 
   const { object } = await generateObject({
-    model: claudeCode('haiku'),
+    model: claudeCode('opus'),
     schema,
     prompt: 'Generate 3 different user events: login, purchase, and logout',
   });

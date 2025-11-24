@@ -31,7 +31,7 @@ async function generateRecipe() {
 
   try {
     const { object: recipe } = await generateObject({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt: 'Generate a detailed recipe for chocolate chip cookies',
       schema: recipeSchema,
     });
@@ -73,7 +73,7 @@ async function generateUserProfile() {
 
   try {
     const { object: userProfile } = await generateObject({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt:
         'Generate a complete user profile for a software developer named Alex who loves open source',
       schema: userSchema,
@@ -103,7 +103,7 @@ async function streamAnalysis() {
     // Note: Both generateObject and streamObject are supported.
     // Native SDK constrained decoding ensures guaranteed schema compliance.
     const { object } = await generateObject({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt:
         'Analyze this product review: "This laptop is amazing! The battery life is incredible, lasting all day. The keyboard feels great to type on, though the trackpad could be more responsive. Overall, excellent value for money."',
       schema: analysisSchema,
@@ -146,7 +146,7 @@ async function generateSpaceMission() {
 
   try {
     const { object } = await generateObject({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt: 'Create a fictional space mission to explore Mars',
       schema: spaceMissionSchema,
     });

@@ -42,7 +42,7 @@ async function main() {
   const dataUrl = toDataUrl(filePath);
 
   const result = streamText({
-    model: claudeCode('haiku', { streamingInput: 'always' }),
+    model: claudeCode('opus', { streamingInput: 'always' }),
     messages: [
       {
         role: 'user',

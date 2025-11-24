@@ -32,7 +32,7 @@ async function main() {
   try {
     // Enable verbose logging to see debug and info messages
     const result = streamText({
-      model: claudeCode('haiku', {
+      model: claudeCode('opus', {
         verbose: true, // Enable verbose logging
       }),
       prompt: 'Say hello in 5 words',

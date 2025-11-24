@@ -27,7 +27,7 @@ async function main() {
   const readmePath = resolve(workspaceRoot, 'README.md');
 
   const result = streamText({
-    model: claudeCode('haiku', {
+    model: claudeCode('opus', {
       streamingInput: 'always',
       canUseTool: allowAllTools,
       permissionMode: 'bypassPermissions',

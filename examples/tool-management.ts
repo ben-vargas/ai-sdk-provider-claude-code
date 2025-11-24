@@ -28,7 +28,7 @@ async function testToolManagement() {
 
   try {
     const result1 = streamText({
-      model: defaultClaude('haiku'),
+      model: defaultClaude('opus'),
       prompt: 'What is 2 + 2? Just give me the number.',
     });
 
@@ -53,7 +53,7 @@ async function testToolManagement() {
 
   try {
     const result2 = streamText({
-      model: bashOnlyClaude('haiku'),
+      model: bashOnlyClaude('opus'),
       prompt: 'Can you show me the current date? Use the date command.',
     });
 
@@ -78,7 +78,7 @@ async function testToolManagement() {
 
   try {
     const result3 = streamText({
-      model: readOnlyClaude('haiku'),
+      model: readOnlyClaude('opus'),
       prompt: 'What is the capital of France? Just the city name.',
     });
 
@@ -110,7 +110,7 @@ async function testToolManagement() {
 
   try {
     const result4 = streamText({
-      model: mixedClaude('haiku'),
+      model: mixedClaude('opus'),
       prompt: 'What is the result of 5 * 8?',
     });
 
@@ -135,7 +135,7 @@ async function testToolManagement() {
 
   try {
     const result5 = streamText({
-      model: noToolsClaude('haiku'),
+      model: noToolsClaude('opus'),
       prompt: 'What programming language is this: console.log("Hello")?',
     });
 
@@ -160,7 +160,7 @@ async function testToolManagement() {
 
   try {
     const result6 = streamText({
-      model: baseClaude('sonnet', {
+      model: baseClaude('opus', {
         // Override to allow everything for this specific call
         disallowedTools: [],
       }),

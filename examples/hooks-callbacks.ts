@@ -37,7 +37,7 @@ async function main() {
   });
 
   const result = streamText({
-    model: provider('haiku'),
+    model: provider('opus'),
     prompt: 'Say hello (no tools needed).',
   });
 

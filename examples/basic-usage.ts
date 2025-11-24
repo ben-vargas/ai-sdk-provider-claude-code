@@ -12,7 +12,7 @@ async function main() {
   try {
     // Basic text generation - streamText returns immediately, not a promise
     const result = streamText({
-      model: claudeCode('haiku'),
+      model: claudeCode('opus'),
       prompt: 'Explain the concept of recursion in programming in 2-3 sentences.',
     });
 

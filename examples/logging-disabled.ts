@@ -36,7 +36,7 @@ async function main() {
   try {
     // Disable all logging
     const result = streamText({
-      model: claudeCode('haiku', {
+      model: claudeCode('opus', {
         logger: false, // Disable all logging
       }),
       prompt: 'Say hello in 5 words',
