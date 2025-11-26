@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.2] - 2025-11-26
+
+### Fixed
+
+- **True text streaming** - `streamText()` now streams text token-by-token instead of returning all text in a single chunk
+  - Enabled SDK's `includePartialMessages` option by default in `doStream()`
+  - Added handling for `stream_event` messages to extract `text_delta` events
+  - Implemented deduplication to avoid duplicate text when assistant messages arrive with cumulative content
+  - **Before**: 1 chunk, ~23 second wait before any text appeared
+  - **After**: ~192 chunks, ~3.5 seconds to first chunk, ~12 chars average per chunk
+
+### Changed
+
+- Improved type safety by using SDK's `SDKPartialAssistantMessage` type instead of inline type assertions
+
 ## [2.2.0] - 2025-11-22
 
 ### Added
