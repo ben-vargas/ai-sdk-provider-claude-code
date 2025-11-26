@@ -578,6 +578,241 @@ describe('ClaudeCodeLanguageModel', () => {
       });
     });
 
+    describe('stream_event handling (includePartialMessages)', () => {
+      // Helper to create stream_event messages with text_delta
+      const createTextDeltaEvent = (text: string, index = 0) => ({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          index,
+          delta: { type: 'text_delta', text },
+        },
+      });
+
+      // Helper to create a result message
+      const createResultMessage = (sessionId = 'test-session') => ({
+        type: 'result',
+        subtype: 'success',
+        session_id: sessionId,
+        usage: { input_tokens: 10, output_tokens: 5 },
+        total_cost_usd: 0.001,
+        duration_ms: 1000,
+      });
+
+      it('streams text via stream_event deltas', async () => {
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield createTextDeltaEvent('Hello');
+            yield createTextDeltaEvent(' world');
+            yield createResultMessage();
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        expect(chunks).toHaveLength(6);
+        expect(chunks[0]).toMatchObject({ type: 'stream-start' });
+        expect(chunks[1]).toMatchObject({ type: 'text-start' });
+        expect(chunks[2]).toMatchObject({ type: 'text-delta', delta: 'Hello' });
+        expect(chunks[3]).toMatchObject({ type: 'text-delta', delta: ' world' });
+        expect(chunks[4]).toMatchObject({ type: 'text-end' });
+        expect(chunks[5]).toMatchObject({ type: 'finish', finishReason: 'stop' });
+      });
+
+      it('deduplicates text when assistant messages follow stream_events', async () => {
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // Stream events deliver text token-by-token
+            yield createTextDeltaEvent('Hello');
+            yield createTextDeltaEvent(' world');
+            // Assistant message arrives with cumulative text (same content)
+            yield {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text: 'Hello world' }] },
+            };
+            yield createResultMessage();
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        // Should NOT have duplicate text from assistant message
+        const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+        expect(textDeltas).toHaveLength(2);
+        expect(textDeltas[0].delta).toBe('Hello');
+        expect(textDeltas[1].delta).toBe(' world');
+      });
+
+      it('emits new text from assistant message that extends beyond streamed content', async () => {
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // Stream event delivers partial text
+            yield createTextDeltaEvent('Hello');
+            // Assistant message has more text than was streamed
+            yield {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text: 'Hello world!' }] },
+            };
+            yield createResultMessage();
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        // Should have 'Hello' from stream_event and ' world!' from assistant message
+        const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+        expect(textDeltas).toHaveLength(2);
+        expect(textDeltas[0].delta).toBe('Hello');
+        expect(textDeltas[1].delta).toBe(' world!');
+      });
+
+      it('accumulates text without streaming in JSON mode', async () => {
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield createTextDeltaEvent('{"key":');
+            yield createTextDeltaEvent('"value"}');
+            yield createResultMessage();
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Return JSON' }] }],
+          responseFormat: { type: 'json' },
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        // In JSON mode, text should be accumulated and emitted at the end
+        const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+        expect(textDeltas).toHaveLength(1);
+        expect(textDeltas[0].delta).toBe('{"key":"value"}');
+      });
+
+      it('falls back to assistant message streaming when no stream_events received', async () => {
+        // This tests the original behavior when includePartialMessages doesn't produce stream_events
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text: 'Hello' }] },
+            };
+            yield {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text: ', world!' }] },
+            };
+            yield createResultMessage();
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+        expect(textDeltas).toHaveLength(2);
+        expect(textDeltas[0].delta).toBe('Hello');
+        expect(textDeltas[1].delta).toBe(', world!');
+      });
+
+      it('ignores non-text_delta stream_events', async () => {
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // content_block_start should be ignored
+            yield {
+              type: 'stream_event',
+              event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+            };
+            // text_delta should be processed
+            yield createTextDeltaEvent('Hi');
+            // content_block_stop should be ignored
+            yield {
+              type: 'stream_event',
+              event: { type: 'content_block_stop', index: 0 },
+            };
+            // message_delta should be ignored
+            yield {
+              type: 'stream_event',
+              event: { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
+            };
+            yield createResultMessage();
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hi' }] }],
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        // Only one text-delta from the text_delta event
+        const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+        expect(textDeltas).toHaveLength(1);
+        expect(textDeltas[0].delta).toBe('Hi');
+      });
+    });
+
     it('emits streaming prerequisite warning when images are provided without streaming input', async () => {
       const modelWithStreamingOff = new ClaudeCodeLanguageModel({
         id: 'sonnet',

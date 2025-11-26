@@ -16,7 +16,7 @@ import { validateModelId, validatePrompt, validateSessionId } from './validation
 import { getLogger, createVerboseLogger } from './logger.js';
 
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKUserMessage, SDKPartialAssistantMessage } from '@anthropic-ai/claude-agent-sdk';
 
 const CLAUDE_CODE_TRUNCATION_WARNING =
   'Claude Code SDK output ended unexpectedly; returning truncated response from buffered text. Await upstream fix to avoid data loss.';
@@ -962,6 +962,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
     const queryOptions = this.createQueryOptions(abortController, options.responseFormat);
 
+    // Enable partial messages for true streaming (token-by-token delivery)
+    // This can be overridden by user settings, but we default to true for doStream
+    if (queryOptions.includePartialMessages === undefined) {
+      queryOptions.includePartialMessages = true;
+    }
+
     const warnings: LanguageModelV2CallWarning[] = this.generateAllWarnings(
       options,
       messagesPrompt
@@ -1043,6 +1049,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
         let usage: LanguageModelV2Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
         let accumulatedText = '';
         let textPartId: string | undefined;
+        let streamedTextLength = 0; // Track text already emitted via stream_events to avoid duplication
+        let hasReceivedStreamEvents = false; // Track if we've received any stream_events
 
         try {
           // Emit stream-start with warnings
@@ -1075,6 +1083,50 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
           for await (const message of response) {
             this.logger.debug(`[claude-code] Stream received message type: ${message.type}`);
+
+            // Handle streaming events (token-by-token delivery via includePartialMessages)
+            if (message.type === 'stream_event') {
+              const streamEvent = message as SDKPartialAssistantMessage;
+              const event = streamEvent.event;
+
+              // Check for text_delta events within content_block_delta
+              if (
+                event.type === 'content_block_delta' &&
+                event.delta.type === 'text_delta' &&
+                'text' in event.delta &&
+                event.delta.text
+              ) {
+                const deltaText = event.delta.text;
+                hasReceivedStreamEvents = true;
+
+                // Don't emit text deltas in JSON mode - accumulate instead
+                if (options.responseFormat?.type === 'json') {
+                  accumulatedText += deltaText;
+                  streamedTextLength += deltaText.length;
+                  continue;
+                }
+
+                // Emit text-start if this is the first text
+                if (!textPartId) {
+                  textPartId = generateId();
+                  controller.enqueue({
+                    type: 'text-start',
+                    id: textPartId,
+                  });
+                }
+
+                controller.enqueue({
+                  type: 'text-delta',
+                  id: textPartId,
+                  delta: deltaText,
+                });
+                streamedTextLength += deltaText.length;
+              }
+              // Other stream_event types (content_block_start, content_block_stop, etc.)
+              // are informational and don't need to be forwarded to the AI SDK stream
+              continue;
+            }
+
             if (message.type === 'assistant') {
               if (!message.message?.content) {
                 this.logger.warn(
@@ -1154,25 +1206,60 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 .join('');
 
               if (text) {
-                accumulatedText += text;
+                // When we've received stream_events, assistant messages contain cumulative text
+                // that we've already emitted via stream_event deltas - skip duplicates
+                // When no stream_events received, assistant messages contain incremental text
+                if (hasReceivedStreamEvents) {
+                  // Calculate delta: only emit text that wasn't already streamed via stream_events
+                  const newTextStart = streamedTextLength;
+                  const deltaText = text.length > newTextStart ? text.slice(newTextStart) : '';
 
-                // In JSON mode, we accumulate the text and extract JSON at the end
-                // Otherwise, stream the text as it comes
-                if (options.responseFormat?.type !== 'json') {
-                  // Emit text-start if this is the first text
-                  if (!textPartId) {
-                    textPartId = generateId();
+                  // Always accumulate for final result tracking
+                  accumulatedText = text; // Replace with full text (assistant msg contains full content)
+
+                  // In JSON mode, we accumulate the text and extract JSON at the end
+                  // Otherwise, stream any new text
+                  if (options.responseFormat?.type !== 'json' && deltaText) {
+                    // Emit text-start if this is the first text
+                    if (!textPartId) {
+                      textPartId = generateId();
+                      controller.enqueue({
+                        type: 'text-start',
+                        id: textPartId,
+                      });
+                    }
+
                     controller.enqueue({
-                      type: 'text-start',
+                      type: 'text-delta',
                       id: textPartId,
+                      delta: deltaText,
                     });
                   }
 
-                  controller.enqueue({
-                    type: 'text-delta',
-                    id: textPartId,
-                    delta: text,
-                  });
+                  // Update streamedTextLength to match what we now know is the full text
+                  streamedTextLength = text.length;
+                } else {
+                  // No stream_events - assistant messages contain incremental text chunks
+                  accumulatedText += text;
+
+                  // In JSON mode, we accumulate the text and extract JSON at the end
+                  // Otherwise, stream the text as it comes
+                  if (options.responseFormat?.type !== 'json') {
+                    // Emit text-start if this is the first text
+                    if (!textPartId) {
+                      textPartId = generateId();
+                      controller.enqueue({
+                        type: 'text-start',
+                        id: textPartId,
+                      });
+                    }
+
+                    controller.enqueue({
+                      type: 'text-delta',
+                      id: textPartId,
+                      delta: text,
+                    });
+                  }
                 }
               }
             } else if (message.type === 'user') {
