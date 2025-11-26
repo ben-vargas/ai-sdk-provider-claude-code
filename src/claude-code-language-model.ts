@@ -1123,6 +1123,39 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                 accumulatedText += deltaText;
                 streamedTextLength += deltaText.length;
               }
+              // Handle input_json_delta events for structured output streaming
+              // The SDK uses a StructuredOutput tool internally, and JSON is streamed via input_json_delta
+              if (
+                event.type === 'content_block_delta' &&
+                event.delta.type === 'input_json_delta' &&
+                'partial_json' in event.delta &&
+                event.delta.partial_json
+              ) {
+                const jsonDelta = event.delta.partial_json;
+                hasReceivedStreamEvents = true;
+
+                // Only emit in JSON mode - this enables streamObject() to receive partial updates
+                if (options.responseFormat?.type === 'json') {
+                  // Emit text-start if this is the first JSON delta
+                  if (!textPartId) {
+                    textPartId = generateId();
+                    controller.enqueue({
+                      type: 'text-start',
+                      id: textPartId,
+                    });
+                  }
+
+                  controller.enqueue({
+                    type: 'text-delta',
+                    id: textPartId,
+                    delta: jsonDelta,
+                  });
+                  accumulatedText += jsonDelta;
+                  streamedTextLength += jsonDelta.length;
+                }
+                // In non-JSON mode, input_json_delta is ignored (it's internal tool use)
+              }
+
               // Other stream_event types (content_block_start, content_block_stop, etc.)
               // are informational and don't need to be forwarded to the AI SDK stream
               continue;
@@ -1445,8 +1478,18 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
               const structuredOutput =
                 'structured_output' in message ? message.structured_output : undefined;
 
-              if (structuredOutput !== undefined) {
-                // Emit structured output as text
+              // Check if we've already streamed JSON via input_json_delta
+              const alreadyStreamedJson =
+                textPartId && options.responseFormat?.type === 'json' && hasReceivedStreamEvents;
+
+              if (alreadyStreamedJson && textPartId) {
+                // We've already streamed JSON deltas, just close the text part
+                controller.enqueue({
+                  type: 'text-end',
+                  id: textPartId,
+                });
+              } else if (structuredOutput !== undefined) {
+                // Emit structured output as text (fallback when streaming didn't occur)
                 const jsonTextId = generateId();
                 const jsonText = JSON.stringify(structuredOutput);
                 controller.enqueue({

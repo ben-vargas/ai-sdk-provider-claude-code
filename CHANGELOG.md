@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.3] - 2025-11-26
+
+### Fixed
+
+- **True object streaming** - `streamObject()` now streams partial objects incrementally instead of returning the complete object at the end
+  - Added handling for `input_json_delta` events from the SDK's internal `StructuredOutput` tool
+  - The AI SDK's `parsePartialJson()` now receives incremental JSON updates to build partial objects
+  - **Before**: 1 partial object delivered only at completion
+  - **After**: ~100+ partial objects streamed as JSON is generated, enabling real-time UI updates
+
 ## [2.2.2] - 2025-11-26
 
 ### Fixed

@@ -853,6 +853,171 @@ describe('ClaudeCodeLanguageModel', () => {
         expect(finishEvent.finishReason).toBe('length'); // Truncation uses 'length' finish reason
         expect(finishEvent.providerMetadata?.['claude-code']?.truncated).toBe(true);
       });
+
+      // Helper to create stream_event messages with input_json_delta (structured output)
+      const createJsonDeltaEvent = (partialJson: string, index = 0) => ({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          index,
+          delta: { type: 'input_json_delta', partial_json: partialJson },
+        },
+      });
+
+      it('streams JSON via input_json_delta events in JSON mode', async () => {
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield createJsonDeltaEvent('{"name":');
+            yield createJsonDeltaEvent('"Alice"');
+            yield createJsonDeltaEvent(',"age":');
+            yield createJsonDeltaEvent('30}');
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'json-stream-session',
+              structured_output: { name: 'Alice', age: 30 },
+              usage: { input_tokens: 10, output_tokens: 5 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+          responseFormat: { type: 'json', schema: { type: 'object' } },
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        // Should have streamed JSON deltas (not accumulated into one chunk)
+        const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+        expect(textDeltas.length).toBe(4);
+        expect(textDeltas[0].delta).toBe('{"name":');
+        expect(textDeltas[1].delta).toBe('"Alice"');
+        expect(textDeltas[2].delta).toBe(',"age":');
+        expect(textDeltas[3].delta).toBe('30}');
+      });
+
+      it('ignores input_json_delta events in non-JSON mode', async () => {
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // Text delta should be emitted
+            yield createTextDeltaEvent('Hello');
+            // JSON delta should be ignored in non-JSON mode (it is tool input)
+            yield createJsonDeltaEvent('{"key":"value"}');
+            yield createResultMessage();
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+          // No responseFormat - plain text mode
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        // Should only have 'Hello' text delta, not the JSON delta
+        const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+        expect(textDeltas).toHaveLength(1);
+        expect(textDeltas[0].delta).toBe('Hello');
+      });
+
+      it('skips empty input_json_delta events', async () => {
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield createJsonDeltaEvent(''); // Empty delta (common at start)
+            yield createJsonDeltaEvent('{"key":');
+            yield createJsonDeltaEvent(''); // Another empty
+            yield createJsonDeltaEvent('"value"}');
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'json-empty-session',
+              structured_output: { key: 'value' },
+              usage: { input_tokens: 10, output_tokens: 5 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+          responseFormat: { type: 'json', schema: { type: 'object' } },
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        // Should only have non-empty JSON deltas
+        const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+        expect(textDeltas).toHaveLength(2);
+        expect(textDeltas[0].delta).toBe('{"key":');
+        expect(textDeltas[1].delta).toBe('"value"}');
+      });
+
+      it('does not double-emit JSON when structured_output arrives after streaming', async () => {
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // JSON deltas stream the content
+            yield createJsonDeltaEvent('{"name":"Bob"}');
+            // Result arrives with structured_output (same content)
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'no-double-session',
+              structured_output: { name: 'Bob' },
+              usage: { input_tokens: 10, output_tokens: 5 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+          responseFormat: { type: 'json', schema: { type: 'object' } },
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        // Should NOT have duplicate JSON - only the streamed delta
+        const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+        expect(textDeltas).toHaveLength(1);
+        expect(textDeltas[0].delta).toBe('{"name":"Bob"}');
+
+        // Should have proper text lifecycle (start, delta, end)
+        const textStarts = chunks.filter((c) => c.type === 'text-start');
+        const textEnds = chunks.filter((c) => c.type === 'text-end');
+        expect(textStarts).toHaveLength(1);
+        expect(textEnds).toHaveLength(1);
+      });
     });
 
     it('emits streaming prerequisite warning when images are provided without streaming input', async () => {
