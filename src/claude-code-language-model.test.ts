@@ -2180,5 +2180,4 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(events.some((event) => event.type === 'finish')).toBe(false);
     });
   });
-
 });
