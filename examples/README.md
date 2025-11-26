@@ -215,7 +215,17 @@ npx tsx examples/generate-object-basic.ts
 
 **Key concepts**: Schema basics, progressive complexity, best practices, clear explanations
 
-### 18. Nested Structures (`generate-object-nested.ts`)
+### 18. Stream Object (`stream-object.ts`)
+
+**Purpose**: Receive incremental partial objects as the AI generates structured data, enabling real-time UI updates.
+
+```bash
+npx tsx examples/stream-object.ts
+```
+
+**Key concepts**: Partial object streaming, real-time updates, field-by-field progress, `streamObject()` API
+
+### 19. Nested Structures (`generate-object-nested.ts`)
 
 **Purpose**: Generate complex, real-world data structures.
 
@@ -225,7 +235,7 @@ npx tsx examples/generate-object-nested.ts
 
 **Key concepts**: Hierarchical data, recursive schemas, complex relationships
 
-### 19. Validation Constraints (`generate-object-constraints.ts`)
+### 20. Validation Constraints (`generate-object-constraints.ts`)
 
 **Purpose**: Enforce data quality with advanced validation rules.
 
@@ -237,7 +247,7 @@ npx tsx examples/generate-object-constraints.ts
 
 ## Testing & Troubleshooting
 
-### 20. Integration Test (`integration-test.ts`)
+### 21. Integration Test (`integration-test.ts`)
 
 **Purpose**: Comprehensive test suite to verify your setup and all features.
 
@@ -247,7 +257,7 @@ npx tsx examples/integration-test.ts
 
 **Key concepts**: Feature verification, error handling, test patterns
 
-### 21. Check CLI (`check-cli.ts`)
+### 22. Check CLI (`check-cli.ts`)
 
 **Purpose**: Troubleshooting tool to verify CLI installation and authentication.
 
@@ -257,7 +267,7 @@ npx tsx examples/check-cli.ts
 
 **Key concepts**: Setup verification, error diagnosis, troubleshooting steps
 
-### 22. Limitations (`limitations.ts`)
+### 23. Limitations (`limitations.ts`)
 
 **Purpose**: Understand what AI SDK features are not supported by the CLI.
 
@@ -411,13 +421,14 @@ const result4 = streamText({
 | long-running-tasks    | Complex reasoning     | Timeout handling       |
 | generate-object       | Advanced patterns     | Real-world schemas     |
 | generate-object-basic | Learning              | Step-by-step tutorial  |
+| stream-object         | Real-time UI          | Partial object updates |
 
 ## Learning Path
 
 1. **Beginners**: Start with `basic-usage.ts` → `streaming.ts` → `conversation-history.ts`
 2. **Images & Tools**: `images.ts` → `tool-streaming.ts` to understand multimodal inputs and tool events
 3. **Logging**: `logging-default.ts` → `logging-verbose.ts` → `logging-custom-logger.ts` → `logging-disabled.ts`
-4. **Object Generation**: `generate-object-basic.ts` → `generate-object-nested.ts` → `generate-object-constraints.ts` → `generate-object.ts`
+4. **Object Generation**: `generate-object-basic.ts` → `stream-object.ts` → `generate-object-nested.ts` → `generate-object-constraints.ts` → `generate-object.ts`
 5. **Advanced**: `custom-config.ts` → `tool-management.ts` → `hooks-callbacks.ts` → `sdk-tools-callbacks.ts` → `long-running-tasks.ts`
 6. **Testing**: Run `integration-test.ts` to verify everything works
 
