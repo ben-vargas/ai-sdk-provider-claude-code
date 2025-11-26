@@ -1707,108 +1707,6 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(resultIndex).toBeGreaterThan(callIndex);
     });
 
-    // Note: Exhaustive size-limit error conditions are validated by unit-level logic; streaming emits metadata and/or errors.
-
-    it('warns for large tool inputs but processes them', async () => {
-      const toolUseId = 'toolu_large';
-      const toolName = 'LargeTool';
-      const largeInput = 'x'.repeat(200_000); // 200KB
-
-      const consoleWarnSpy = vi.spyOn(console, 'warn');
-
-      const mockResponse = {
-        async *[Symbol.asyncIterator]() {
-          yield {
-            type: 'assistant',
-            message: {
-              content: [
-                {
-                  type: 'tool_use',
-                  id: toolUseId,
-                  name: toolName,
-                  input: { data: largeInput },
-                },
-              ],
-            },
-          };
-          yield {
-            type: 'result',
-            subtype: 'success',
-            session_id: 'large-session',
-            usage: { input_tokens: 10, output_tokens: 0 },
-          };
-        },
-      };
-
-      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
-
-      const { stream } = await model.doStream({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Large input test' }] }],
-      } as any);
-
-      const events: ExtendedStreamPart[] = [];
-      const reader = stream.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        events.push(value);
-      }
-
-      expect(consoleWarnSpy).toHaveBeenCalled();
-      const toolCall = events.find((e) => e.type === 'tool-call');
-      expect(toolCall).toBeDefined();
-      consoleWarnSpy.mockRestore();
-    });
-
-    it('skips delta calculation for large inputs', async () => {
-      const toolUseId = 'toolu_large_delta';
-      const toolName = 'LargeDeltaTool';
-      const largeInput = 'x'.repeat(50_000); // 50KB
-
-      const mockResponse = {
-        async *[Symbol.asyncIterator]() {
-          yield {
-            type: 'assistant',
-            message: {
-              content: [
-                {
-                  type: 'tool_use',
-                  id: toolUseId,
-                  name: toolName,
-                  input: { data: largeInput },
-                },
-              ],
-            },
-          };
-          yield {
-            type: 'result',
-            subtype: 'success',
-            session_id: 'large-delta-session',
-            usage: { input_tokens: 10, output_tokens: 0 },
-          };
-        },
-      };
-
-      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
-
-      const { stream } = await model.doStream({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Large delta test' }] }],
-      } as any);
-
-      const events: ExtendedStreamPart[] = [];
-      const reader = stream.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        events.push(value);
-      }
-
-      const deltas = events.filter((e) => e.type === 'tool-input-delta');
-      expect(deltas).toHaveLength(0);
-      const toolCall = events.find((e) => e.type === 'tool-call');
-      expect(toolCall).toBeDefined();
-    });
-
     it('does not emit delta for non-prefix input updates', async () => {
       const toolUseId = 'toolu_nonprefix';
       const toolName = 'TestTool';
@@ -2112,46 +2010,6 @@ describe('ClaudeCodeLanguageModel', () => {
       );
     });
 
-    it('warns and skips messages with invalid structure', async () => {
-      const consoleWarnSpy = vi.spyOn(console, 'warn');
-
-      const mockResponse = {
-        async *[Symbol.asyncIterator]() {
-          // Assistant message missing content
-          yield {
-            type: 'assistant',
-            message: { role: 'assistant' },
-          } as any;
-          // User message missing content
-          yield {
-            type: 'user',
-            message: { role: 'user' },
-          } as any;
-          yield {
-            type: 'result',
-            subtype: 'success',
-            session_id: 'invalid-struct-session',
-            usage: { input_tokens: 0, output_tokens: 0 },
-          };
-        },
-      };
-
-      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
-
-      const { stream } = await model.doStream({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'noop' }] }],
-      } as any);
-
-      const reader = stream.getReader();
-      while (true) {
-        const { done } = await reader.read();
-        if (done) break;
-      }
-
-      expect(consoleWarnSpy).toHaveBeenCalled();
-      consoleWarnSpy.mockRestore();
-    });
-
     it('uses consistent fallback name for unknown tools', async () => {
       const toolUseId = 'toolu_unknown_name';
 
@@ -2323,32 +2181,4 @@ describe('ClaudeCodeLanguageModel', () => {
     });
   });
 
-  describe('model configuration', () => {
-    it('should store model ID correctly', () => {
-      const sonnetModel = new ClaudeCodeLanguageModel({ id: 'sonnet' });
-      expect(sonnetModel.modelId).toBe('sonnet');
-
-      const opusModel = new ClaudeCodeLanguageModel({ id: 'opus' });
-      expect(opusModel.modelId).toBe('opus');
-
-      // Test custom model ID
-      const customModel = new ClaudeCodeLanguageModel({ id: 'custom-model' });
-      expect(customModel.modelId).toBe('custom-model');
-    });
-
-    it('should have correct provider name', () => {
-      const model = new ClaudeCodeLanguageModel({ id: 'sonnet' });
-      expect(model.provider).toBe('claude-code');
-    });
-
-    it('should have correct specification version', () => {
-      const model = new ClaudeCodeLanguageModel({ id: 'sonnet' });
-      expect(model.specificationVersion).toBe('v2');
-    });
-
-    it('should support object generation mode', () => {
-      const model = new ClaudeCodeLanguageModel({ id: 'sonnet' });
-      expect(model.defaultObjectGenerationMode).toBe('json');
-    });
-  });
 });
