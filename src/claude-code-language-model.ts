@@ -1120,6 +1120,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
                   id: textPartId,
                   delta: deltaText,
                 });
+                accumulatedText += deltaText;
                 streamedTextLength += deltaText.length;
               }
               // Other stream_event types (content_block_start, content_block_stop, etc.)

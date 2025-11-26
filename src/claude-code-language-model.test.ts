@@ -774,7 +774,11 @@ describe('ClaudeCodeLanguageModel', () => {
             // content_block_start should be ignored
             yield {
               type: 'stream_event',
-              event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+              event: {
+                type: 'content_block_start',
+                index: 0,
+                content_block: { type: 'text', text: '' },
+              },
             };
             // text_delta should be processed
             yield createTextDeltaEvent('Hi');
@@ -810,6 +814,44 @@ describe('ClaudeCodeLanguageModel', () => {
         const textDeltas = chunks.filter((c) => c.type === 'text-delta');
         expect(textDeltas).toHaveLength(1);
         expect(textDeltas[0].delta).toBe('Hi');
+      });
+
+      it('recovers from truncation when streaming via stream_events', async () => {
+        // Generate enough text to exceed MIN_TRUNCATION_LENGTH (512 chars)
+        const longText = 'A'.repeat(600);
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // Stream text via stream_events
+            yield createTextDeltaEvent(longText);
+            // Simulate truncation error before assistant message arrives
+            throw new SyntaxError('Unexpected end of JSON input');
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate text' }] }],
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        // Should have recovered with truncated text
+        const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+        expect(textDeltas.length).toBeGreaterThan(0);
+        expect(textDeltas[0].delta).toBe(longText);
+
+        // Should have finish event with truncated metadata
+        const finishEvent = chunks.find((c) => c.type === 'finish');
+        expect(finishEvent).toBeDefined();
+        expect(finishEvent.finishReason).toBe('length'); // Truncation uses 'length' finish reason
+        expect(finishEvent.providerMetadata?.['claude-code']?.truncated).toBe(true);
       });
     });
 
