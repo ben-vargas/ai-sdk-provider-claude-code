@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.4] - 2025-12-04
+
+### Changed
+
+- **Updated Claude Agent SDK to ^0.1.59** - Fixes Apple notarization failures for macOS Electron apps
+  - The SDK removed the bundled JetBrains plugin which contained unsigned macOS native binaries (`jansi-2.4.1.jar`)
+  - This eliminates notarization errors for macOS apps that include the SDK as a dependency
+  - See [claude-agent-sdk-typescript#91](https://github.com/anthropics/claude-agent-sdk-typescript/issues/91) for details
+
 ## [2.2.3] - 2025-11-26
 
 ### Fixed
