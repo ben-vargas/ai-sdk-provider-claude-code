@@ -9,21 +9,30 @@
 
 # AI SDK Provider for Claude Code SDK
 
-> **Latest Release**: Version 2.x uses the Claude Agent SDK with native structured outputs support (v2.2.0+). For AI SDK v4 support, use the `ai-sdk-v4` tag or version 0.2.x.
+> **Latest Release**: Version 2.x uses the Claude Agent SDK with native structured outputs support (v2.2.0+). For AI SDK v6 beta support, use the `beta` tag. For AI SDK v4 support, use the `ai-sdk-v4` tag.
 
 **ai-sdk-provider-claude-code** lets you use Claude via the [Vercel AI SDK](https://sdk.vercel.ai/docs) through the official `@anthropic-ai/claude-agent-sdk` and the Claude Code CLI.
 
 ## Version Compatibility
 
-| Provider Version | AI SDK Version | Underlying SDK                       | NPM Tag              | Status | Branch                                                                                  |
-| ---------------- | -------------- | ------------------------------------ | -------------------- | ------ | --------------------------------------------------------------------------------------- |
-| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk`     | `latest`             | Stable | `main`                                                                                  |
-| 1.x.x            | v5             | `@anthropic-ai/claude-code` (legacy) | `v1-claude-code-sdk` | Stable | [`v1`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/v1)               |
-| 0.x.x            | v4             | `@anthropic-ai/claude-code`          | `ai-sdk-v4`          | Legacy | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
+| Provider Version | AI SDK Version | Underlying SDK                       | NPM Tag              | Status | Branch                                                                                      |
+| ---------------- | -------------- | ------------------------------------ | -------------------- | ------ | ------------------------------------------------------------------------------------------- |
+| 3.x.x-beta       | v6 (beta)      | `@anthropic-ai/claude-agent-sdk`     | `beta`               | Beta   | [`ai-sdk-v6`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v6)     |
+| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk`     | `latest`             | Stable | `main`                                                                                      |
+| 1.x.x            | v5             | `@anthropic-ai/claude-code` (legacy) | `v1-claude-code-sdk` | Stable | [`v1`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/v1)                   |
+| 0.x.x            | v4             | `@anthropic-ai/claude-code`          | `ai-sdk-v4`          | Legacy | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4)     |
 
 ### Installing the Right Version
 
-**For AI SDK v5 with Claude Agent SDK (recommended):**
+**For AI SDK v6 beta (early adopters):**
+
+```bash
+npm install ai-sdk-provider-claude-code@beta ai@beta
+```
+
+> ⚠️ **Note:** AI SDK v6 is in beta. The `ai-sdk-v6` branch and `beta` npm tag track upstream changes. When v6 goes stable, this will be merged to `main` and released as 3.0.0.
+
+**For AI SDK v5 with Claude Agent SDK (recommended for production):**
 
 ```bash
 npm install ai-sdk-provider-claude-code ai
