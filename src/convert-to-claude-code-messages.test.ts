@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
-import type { CoreMessage } from 'ai';
+import type { ModelMessage } from 'ai';
 
 describe('convertToClaudeCodeMessages', () => {
   it('should convert a simple user message', () => {
     const result = convertToClaudeCodeMessages([
       { role: 'user', content: 'Hello, Claude!' },
-    ] as CoreMessage[]);
+    ] as ModelMessage[]);
 
     expect(result.messagesPrompt).toBe('Human: Hello, Claude!');
     expect(result.systemPrompt).toBeUndefined();
@@ -15,7 +15,7 @@ describe('convertToClaudeCodeMessages', () => {
   it('should convert a simple assistant message', () => {
     const result = convertToClaudeCodeMessages([
       { role: 'assistant', content: 'Hello! How can I help you?' },
-    ] as CoreMessage[]);
+    ] as ModelMessage[]);
 
     expect(result.messagesPrompt).toBe('Assistant: Hello! How can I help you?');
     expect(result.systemPrompt).toBeUndefined();
@@ -24,7 +24,7 @@ describe('convertToClaudeCodeMessages', () => {
   it('should handle system message', () => {
     const result = convertToClaudeCodeMessages([
       { role: 'system', content: 'You are a helpful assistant.' },
-    ] as CoreMessage[]);
+    ] as ModelMessage[]);
 
     expect(result.messagesPrompt).toBe('You are a helpful assistant.');
     expect(result.systemPrompt).toBe('You are a helpful assistant.');
@@ -36,7 +36,7 @@ describe('convertToClaudeCodeMessages', () => {
       { role: 'user', content: 'What is 2+2?' },
       { role: 'assistant', content: '2+2 equals 4.' },
       { role: 'user', content: 'Thanks!' },
-    ] as CoreMessage[]);
+    ] as ModelMessage[]);
 
     expect(result.systemPrompt).toBe('Be helpful.');
     expect(result.messagesPrompt).toBe(
@@ -54,7 +54,7 @@ describe('convertToClaudeCodeMessages', () => {
           { type: 'text', text: 'world!' },
         ],
       },
-    ] as CoreMessage[]);
+    ] as ModelMessage[]);
 
     expect(result.messagesPrompt).toBe('Human: Hello\n, \nworld!');
   });
@@ -68,7 +68,7 @@ describe('convertToClaudeCodeMessages', () => {
           { type: 'image', image: new Uint8Array([1, 2, 3]) },
         ],
       },
-    ] as CoreMessage[]);
+    ] as ModelMessage[]);
 
     expect(result.warnings).toBeDefined();
     expect(result.warnings).toContain('Unable to convert image content; supply base64/data URLs.');
@@ -133,7 +133,7 @@ describe('convertToClaudeCodeMessages', () => {
         role: 'user',
         content: [],
       },
-    ] as CoreMessage[]);
+    ] as ModelMessage[]);
 
     expect(result.messagesPrompt).toBe('');
   });
@@ -144,7 +144,7 @@ describe('convertToClaudeCodeMessages', () => {
         role: 'user',
         content: [{ type: 'text', text: undefined as any }],
       },
-    ] as CoreMessage[]);
+    ] as ModelMessage[]);
 
     expect(result.messagesPrompt).toBe('');
   });
@@ -184,7 +184,7 @@ describe('convertToClaudeCodeMessages', () => {
       { role: 'user', content: 'Second message' },
       { role: 'assistant', content: 'Response' },
       { role: 'user', content: 'Third message' },
-    ] as CoreMessage[]);
+    ] as ModelMessage[]);
 
     expect(result.messagesPrompt).toBe(
       'Human: First message\n\nHuman: Second message\n\nAssistant: Response\n\nHuman: Third message'

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
-import type { LanguageModelV2StreamPart } from '@ai-sdk/provider';
+import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 
 // Extend stream part union locally to include provider-specific 'tool-error'
 type ToolErrorPart = {
@@ -11,7 +11,7 @@ type ToolErrorPart = {
   providerExecuted: true;
   providerMetadata?: Record<string, unknown>;
 };
-type ExtendedStreamPart = LanguageModelV2StreamPart | ToolErrorPart;
+type ExtendedStreamPart = LanguageModelV3StreamPart | ToolErrorPart;
 
 // Mock the SDK module with factory function
 vi.mock('@anthropic-ai/claude-agent-sdk', () => {
@@ -1111,8 +1111,8 @@ describe('ClaudeCodeLanguageModel', () => {
         type: 'stream-start',
         warnings: expect.arrayContaining([
           expect.objectContaining({
-            type: 'unsupported-setting',
-            setting: 'temperature',
+            type: 'unsupported',
+            feature: 'temperature',
           }),
         ]),
       });
@@ -1146,8 +1146,8 @@ describe('ClaudeCodeLanguageModel', () => {
       // Warnings are now included in the stream-start event
       expect(chunks[0].warnings).toHaveLength(1);
       expect(chunks[0].warnings?.[0]).toMatchObject({
-        type: 'unsupported-setting',
-        setting: 'temperature',
+        type: 'unsupported',
+        feature: 'temperature',
       });
 
       // Verify outputFormat was passed to SDK
@@ -1250,7 +1250,7 @@ describe('ClaudeCodeLanguageModel', () => {
       // Should emit: stream-start (with warning), text-start, text-delta, text-end, finish
       expect(chunks).toHaveLength(5);
 
-      // Verify unsupported-setting warning is emitted
+      // Verify unsupported warning is emitted
       expect(chunks[0]).toMatchObject({
         type: 'stream-start',
       });
@@ -1258,8 +1258,8 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(streamStartWarnings).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            type: 'unsupported-setting',
-            setting: 'responseFormat',
+            type: 'unsupported',
+            feature: 'responseFormat',
             details: expect.stringContaining('requires a schema'),
           }),
         ])
@@ -2097,7 +2097,7 @@ describe('ClaudeCodeLanguageModel', () => {
         responseFormat: { type: 'json' },
       } as any);
 
-      const events: LanguageModelV2StreamPart[] = [];
+      const events: LanguageModelV3StreamPart[] = [];
       const reader = stream.getReader();
       while (true) {
         const { done, value } = await reader.read();

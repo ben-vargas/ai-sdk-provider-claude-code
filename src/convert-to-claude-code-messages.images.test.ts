@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { CoreMessage } from 'ai';
+import type { ModelMessage } from 'ai';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
 
 describe('convertToClaudeCodeMessages (images)', () => {
@@ -12,7 +12,7 @@ describe('convertToClaudeCodeMessages (images)', () => {
           { type: 'image', image: 'data:image/png;base64,aGVsbG8=' },
         ],
       },
-    ] as CoreMessage[];
+    ] as ModelMessage[];
 
     const result = convertToClaudeCodeMessages(prompt);
 
@@ -42,7 +42,7 @@ describe('convertToClaudeCodeMessages (images)', () => {
           { type: 'image', image: { data: 'AQID', mimeType: 'image/jpeg' } },
         ],
       },
-    ] as CoreMessage[];
+    ] as ModelMessage[];
 
     const result = convertToClaudeCodeMessages(prompt);
 
@@ -67,7 +67,7 @@ describe('convertToClaudeCodeMessages (images)', () => {
           { type: 'image', image: 'https://example.com/image.png' },
         ],
       },
-    ] as CoreMessage[];
+    ] as ModelMessage[];
 
     const result = convertToClaudeCodeMessages(prompt);
 
@@ -87,7 +87,7 @@ describe('convertToClaudeCodeMessages (images)', () => {
           { type: 'file', mediaType: 'image/png', data: 'aGVsbG8=' },
         ],
       },
-    ] as CoreMessage[];
+    ] as ModelMessage[];
 
     const result = convertToClaudeCodeMessages(prompt);
 
