@@ -1,4 +1,4 @@
-import type { LanguageModelV2FinishReason } from '@ai-sdk/provider';
+import type { LanguageModelV3FinishReason } from '@ai-sdk/provider';
 
 /**
  * Maps Claude Code SDK result subtypes to AI SDK finish reasons.
@@ -19,7 +19,7 @@ import type { LanguageModelV2FinishReason } from '@ai-sdk/provider';
  * - 'error_during_execution' -> 'error' (execution error)
  * - default -> 'stop' (unknown subtypes treated as normal completion)
  */
-export function mapClaudeCodeFinishReason(subtype?: string): LanguageModelV2FinishReason {
+export function mapClaudeCodeFinishReason(subtype?: string): LanguageModelV3FinishReason {
   switch (subtype) {
     case 'success':
       return 'stop';
