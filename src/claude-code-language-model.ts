@@ -816,10 +816,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     let wasTruncated = false;
     let costUsd: number | undefined;
     let durationMs: number | undefined;
-    const warnings: SharedV3Warning[] = this.generateAllWarnings(
-      options,
-      messagesPrompt
-    );
+    const warnings: SharedV3Warning[] = this.generateAllWarnings(options, messagesPrompt);
 
     // Add warnings from message conversion
     if (messageWarnings) {
@@ -1012,10 +1009,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       queryOptions.includePartialMessages = true;
     }
 
-    const warnings: SharedV3Warning[] = this.generateAllWarnings(
-      options,
-      messagesPrompt
-    );
+    const warnings: SharedV3Warning[] = this.generateAllWarnings(options, messagesPrompt);
 
     // Add warnings from message conversion
     if (messageWarnings) {

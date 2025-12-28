@@ -99,9 +99,9 @@ describe('ClaudeCodeLanguageModel', () => {
       const isAsyncIterable = (value: unknown): value is AsyncIterable<unknown> => {
         return Boolean(
           value &&
-            typeof value === 'object' &&
-            Symbol.asyncIterator in value &&
-            typeof (value as Record<PropertyKey, unknown>)[Symbol.asyncIterator] === 'function'
+          typeof value === 'object' &&
+          Symbol.asyncIterator in value &&
+          typeof (value as Record<PropertyKey, unknown>)[Symbol.asyncIterator] === 'function'
         );
       };
 
