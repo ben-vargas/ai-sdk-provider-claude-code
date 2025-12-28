@@ -371,7 +371,9 @@ describe('validateSettings', () => {
 
       expect(result.valid).toBe(true);
       // Should not have the Skill warning
-      const skillWarnings = result.warnings.filter((w) => w.includes("allowedTools includes 'Skill'"));
+      const skillWarnings = result.warnings.filter((w) =>
+        w.includes("allowedTools includes 'Skill'")
+      );
       expect(skillWarnings).toHaveLength(0);
     });
 
