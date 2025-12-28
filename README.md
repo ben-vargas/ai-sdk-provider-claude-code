@@ -9,7 +9,7 @@
 
 # AI SDK Provider for Claude Code SDK
 
-> **Latest Release**: Version 2.x uses the Claude Agent SDK with native structured outputs support (v2.2.0+). For AI SDK v4 support, use the `ai-sdk-v4` tag or version 0.2.x.
+> **Latest Release**: Version 3.x supports AI SDK v6 stable with the Claude Agent SDK. For AI SDK v5 support, use the `ai-sdk-v5` tag.
 
 **ai-sdk-provider-claude-code** lets you use Claude via the [Vercel AI SDK](https://sdk.vercel.ai/docs) through the official `@anthropic-ai/claude-agent-sdk` and the Claude Code CLI.
 
@@ -17,23 +17,24 @@
 
 | Provider Version | AI SDK Version | Underlying SDK                       | NPM Tag              | Status | Branch                                                                                  |
 | ---------------- | -------------- | ------------------------------------ | -------------------- | ------ | --------------------------------------------------------------------------------------- |
-| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk`     | `latest`             | Stable | `main`                                                                                  |
-| 1.x.x            | v5             | `@anthropic-ai/claude-code` (legacy) | `v1-claude-code-sdk` | Stable | [`v1`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/v1)               |
+| 3.x.x            | v6             | `@anthropic-ai/claude-agent-sdk`     | `latest`             | Stable | `main`                                                                                  |
+| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk`     | `ai-sdk-v5`          | Stable | [`ai-sdk-v5`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v5) |
+| 1.x.x            | v5             | `@anthropic-ai/claude-code` (legacy) | `v1-claude-code-sdk` | Legacy | [`v1`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/v1)               |
 | 0.x.x            | v4             | `@anthropic-ai/claude-code`          | `ai-sdk-v4`          | Legacy | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
 
 ### Installing the Right Version
 
-**For AI SDK v5 with Claude Agent SDK (recommended):**
+**For AI SDK v6 (recommended):**
 
 ```bash
-npm install ai-sdk-provider-claude-code ai
+npm install ai-sdk-provider-claude-code ai@^6.0.0
 # or explicitly: npm install ai-sdk-provider-claude-code@latest
 ```
 
-**For AI SDK v5 with Claude Code SDK (legacy):**
+**For AI SDK v5:**
 
 ```bash
-npm install ai-sdk-provider-claude-code@v1-claude-code-sdk ai
+npm install ai-sdk-provider-claude-code@ai-sdk-v5 ai@^5.0.0
 ```
 
 **For AI SDK v4 (legacy):**
@@ -121,10 +122,13 @@ claude login
 ### 2. Add the provider
 
 ```bash
-# For v5 (recommended)
-npm install ai-sdk-provider-claude-code ai
+# For AI SDK v6 (recommended)
+npm install ai-sdk-provider-claude-code ai@^6.0.0
 
-# For v4 (legacy)
+# For AI SDK v5
+npm install ai-sdk-provider-claude-code@ai-sdk-v5 ai@^5.0.0
+
+# For AI SDK v4 (legacy)
 npm install ai-sdk-provider-claude-code@ai-sdk-v4 ai@^4.3.16
 ```
 
@@ -140,7 +144,7 @@ Please ensure you have appropriate permissions and comply with all applicable te
 
 ## Quick Start
 
-### AI SDK v5
+### AI SDK v6
 
 ```typescript
 import { streamText } from 'ai';
@@ -155,21 +159,30 @@ const text = await result.text;
 console.log(text);
 ```
 
-### AI SDK v4
+### AI SDK v5
 
 ```typescript
-import { generateText } from 'ai';
+// npm install ai-sdk-provider-claude-code@ai-sdk-v5 ai@^5.0.0
+import { streamText } from 'ai';
 import { claudeCode } from 'ai-sdk-provider-claude-code';
 
-const { text } = await generateText({
+const result = streamText({
   model: claudeCode('haiku'),
   prompt: 'Hello, Claude!',
 });
 
+const text = await result.text;
 console.log(text);
 ```
 
 ## Breaking Changes
+
+### Version 3.0.0 (AI SDK v6 Stable)
+
+This version upgrades to AI SDK v6 stable with updated provider types:
+
+- **`usage.raw`** now contains raw provider usage (previously in `providerMetadata['claude-code'].rawUsage`)
+- Internal type changes for `LanguageModelV3Usage` and `LanguageModelV3FinishReason` (transparent to most users)
 
 ### Version 2.0.0 (Claude Agent SDK Migration)
 
