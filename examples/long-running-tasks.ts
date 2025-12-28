@@ -68,7 +68,13 @@ async function withUserCancellation() {
 
     console.log('Response:', text);
   } catch (error: any) {
-    if (error.name === 'AbortError' || error.message?.includes('cancelled')) {
+    // Check for various abort/cancel error patterns
+    const isAborted =
+      error.name === 'AbortError' ||
+      error.message?.includes('cancelled') ||
+      error.message?.includes('aborted');
+
+    if (isAborted) {
       console.log('✅ Request successfully cancelled by user');
     } else {
       console.error('Error:', error);
