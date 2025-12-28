@@ -50,9 +50,9 @@ async function main() {
         console.log('  (Pro/Max subscribers: covered by subscription)');
       }
 
-      // Raw usage breakdown if available
-      if (metadata.rawUsage) {
-        console.log('- Detailed usage:', JSON.stringify(metadata.rawUsage, null, 2));
+      // Raw usage breakdown (available in usage.raw in AI SDK v6 stable)
+      if (usage?.raw) {
+        console.log('- Raw usage:', JSON.stringify(usage.raw, null, 2));
       }
     }
   } catch (error) {
