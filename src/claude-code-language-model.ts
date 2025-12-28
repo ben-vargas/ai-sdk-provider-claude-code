@@ -5,6 +5,7 @@ import type {
   LanguageModelV3Usage,
   SharedV3Warning,
   JSONValue,
+  JSONObject,
 } from '@ai-sdk/provider';
 import { NoSuchModelError, APICallError, LoadAPIKeyError } from '@ai-sdk/provider';
 import { generateId } from '@ai-sdk/provider-utils';
@@ -128,6 +129,71 @@ type ToolErrorPart = {
 
 // Local extension of the AI SDK stream part union to include tool-error.
 type ExtendedStreamPart = LanguageModelV3StreamPart | ToolErrorPart;
+
+/**
+ * Usage data from Claude Code SDK.
+ */
+type ClaudeCodeUsage = {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+};
+
+/**
+ * Creates a zero-initialized usage object for AI SDK v6 stable.
+ */
+function createEmptyUsage(): LanguageModelV3Usage {
+  return {
+    inputTokens: {
+      total: 0,
+      noCache: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+    outputTokens: {
+      total: 0,
+      text: undefined,
+      reasoning: undefined,
+    },
+    raw: undefined,
+  };
+}
+
+/**
+ * Converts Claude Code SDK usage to AI SDK v6 stable usage format.
+ *
+ * Maps Claude's flat token counts to the nested structure required by AI SDK v6:
+ * - `cache_creation_input_tokens` → `inputTokens.cacheWrite`
+ * - `cache_read_input_tokens` → `inputTokens.cacheRead`
+ * - `input_tokens` → `inputTokens.noCache`
+ * - `inputTokens.total` = sum of all input tokens
+ * - `output_tokens` → `outputTokens.total`
+ *
+ * @param usage - Raw usage data from Claude Code SDK
+ * @returns Formatted usage object for AI SDK v6
+ */
+function convertClaudeCodeUsage(usage: ClaudeCodeUsage): LanguageModelV3Usage {
+  const inputTokens = usage.input_tokens ?? 0;
+  const outputTokens = usage.output_tokens ?? 0;
+  const cacheWrite = usage.cache_creation_input_tokens ?? 0;
+  const cacheRead = usage.cache_read_input_tokens ?? 0;
+
+  return {
+    inputTokens: {
+      total: inputTokens + cacheWrite + cacheRead,
+      noCache: inputTokens,
+      cacheRead,
+      cacheWrite,
+    },
+    outputTokens: {
+      total: outputTokens,
+      text: undefined,
+      reasoning: undefined,
+    },
+    raw: usage as JSONObject,
+  };
+}
 
 /**
  * Tracks the streaming lifecycle state for a single tool invocation.
@@ -745,12 +811,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
     let text = '';
     let structuredOutput: unknown | undefined;
-    let usage: LanguageModelV3Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-    let finishReason: LanguageModelV3FinishReason = 'stop';
+    let usage: LanguageModelV3Usage = createEmptyUsage();
+    let finishReason: LanguageModelV3FinishReason = { unified: 'stop', raw: undefined };
     let wasTruncated = false;
     let costUsd: number | undefined;
     let durationMs: number | undefined;
-    let rawUsage: unknown | undefined;
     const warnings: SharedV3Warning[] = this.generateAllWarnings(
       options,
       messagesPrompt
@@ -838,27 +903,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           );
 
           if ('usage' in message) {
-            rawUsage = message.usage;
-            usage = {
-              inputTokens:
-                (message.usage.cache_creation_input_tokens ?? 0) +
-                (message.usage.cache_read_input_tokens ?? 0) +
-                (message.usage.input_tokens ?? 0),
-              outputTokens: message.usage.output_tokens ?? 0,
-              totalTokens:
-                (message.usage.cache_creation_input_tokens ?? 0) +
-                (message.usage.cache_read_input_tokens ?? 0) +
-                (message.usage.input_tokens ?? 0) +
-                (message.usage.output_tokens ?? 0),
-            };
+            usage = convertClaudeCodeUsage(message.usage);
 
             this.logger.debug(
-              `[claude-code] Token usage - Input: ${usage.inputTokens}, Output: ${usage.outputTokens}, Total: ${usage.totalTokens}`
+              `[claude-code] Token usage - Input: ${usage.inputTokens.total}, Output: ${usage.outputTokens.total}`
             );
           }
 
           finishReason = mapClaudeCodeFinishReason(message.subtype);
-          this.logger.debug(`[claude-code] Finish reason: ${finishReason}`);
+          this.logger.debug(`[claude-code] Finish reason: ${finishReason.unified}`);
         } else if (message.type === 'system' && message.subtype === 'init') {
           this.setSessionId(message.session_id);
           this.logger.info(`[claude-code] Session initialized: ${message.session_id}`);
@@ -881,7 +934,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           `[claude-code] Detected truncated response, returning ${text.length} characters of buffered text`
         );
         wasTruncated = true;
-        finishReason = 'length';
+        finishReason = { unified: 'length', raw: 'truncation' };
         warnings.push({
           type: 'other',
           message: CLAUDE_CODE_TRUNCATION_WARNING,
@@ -918,7 +971,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           ...(this.sessionId !== undefined && { sessionId: this.sessionId }),
           ...(costUsd !== undefined && { costUsd }),
           ...(durationMs !== undefined && { durationMs }),
-          ...(rawUsage !== undefined && { rawUsage: rawUsage as JSONValue }),
           ...(wasTruncated && { truncated: true }),
         },
       },
@@ -1038,7 +1090,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           toolStates.clear();
         };
 
-        let usage: LanguageModelV3Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+        let usage: LanguageModelV3Usage = createEmptyUsage();
         let accumulatedText = '';
         let textPartId: string | undefined;
         let streamedTextLength = 0; // Track text already emitted via stream_events to avoid duplication
@@ -1436,24 +1488,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 `[claude-code] Stream completed - Session: ${message.session_id}, Cost: $${message.total_cost_usd?.toFixed(4) ?? 'N/A'}, Duration: ${message.duration_ms ?? 'N/A'}ms`
               );
 
-              let rawUsage: unknown | undefined;
               if ('usage' in message) {
-                rawUsage = message.usage;
-                usage = {
-                  inputTokens:
-                    (message.usage.cache_creation_input_tokens ?? 0) +
-                    (message.usage.cache_read_input_tokens ?? 0) +
-                    (message.usage.input_tokens ?? 0),
-                  outputTokens: message.usage.output_tokens ?? 0,
-                  totalTokens:
-                    (message.usage.cache_creation_input_tokens ?? 0) +
-                    (message.usage.cache_read_input_tokens ?? 0) +
-                    (message.usage.input_tokens ?? 0) +
-                    (message.usage.output_tokens ?? 0),
-                };
+                usage = convertClaudeCodeUsage(message.usage);
 
                 this.logger.debug(
-                  `[claude-code] Stream token usage - Input: ${usage.inputTokens}, Output: ${usage.outputTokens}, Total: ${usage.totalTokens}`
+                  `[claude-code] Stream token usage - Input: ${usage.inputTokens.total}, Output: ${usage.outputTokens.total}`
                 );
               }
 
@@ -1461,7 +1500,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 message.subtype
               );
 
-              this.logger.debug(`[claude-code] Stream finish reason: ${finishReason}`);
+              this.logger.debug(`[claude-code] Stream finish reason: ${finishReason.unified}`);
 
               // Store session ID in the model instance
               this.setSessionId(message.session_id);
@@ -1539,7 +1578,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       costUsd: message.total_cost_usd,
                     }),
                     ...(message.duration_ms !== undefined && { durationMs: message.duration_ms }),
-                    ...(rawUsage !== undefined && { rawUsage: rawUsage as JSONValue }),
                     // JSON validation warnings are collected during streaming and included
                     // in providerMetadata since the AI SDK's finish event doesn't support
                     // a top-level warnings field (unlike stream-start which was already emitted)
@@ -1613,7 +1651,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
             controller.enqueue({
               type: 'finish',
-              finishReason: 'length',
+              finishReason: { unified: 'length', raw: 'truncation' },
               usage,
               providerMetadata: {
                 'claude-code': {

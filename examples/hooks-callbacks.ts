@@ -26,19 +26,28 @@ const preToolHook = async (input: any) => {
   return { continue: true };
 };
 
+// PostToolUse hook: log after tool completes
+const postToolHook = async (input: any) => {
+  if (input.hook_event_name === 'PostToolUse') {
+    console.log(`✅ Tool completed: ${input.tool_name}`);
+  }
+  return { continue: true };
+};
+
 async function main() {
   const provider = createClaudeCode({
     defaultSettings: {
       hooks: {
         PreToolUse: [{ hooks: [preToolHook] }],
-        PostToolUse: [{ hooks: [async () => ({ continue: true })] }],
+        PostToolUse: [{ hooks: [postToolHook] }],
       },
     },
   });
 
+  // Use a prompt that triggers tool use so the hooks actually fire
   const result = streamText({
-    model: provider('opus'),
-    prompt: 'Say hello (no tools needed).',
+    model: provider('sonnet'),
+    prompt: 'List the files in the current directory using the Bash tool.',
   });
 
   let text = '';

@@ -345,12 +345,9 @@ describe('ClaudeCodeLanguageModel', () => {
       });
 
       expect(result.content).toEqual([{ type: 'text', text: 'Hello, world!' }]);
-      expect(result.usage).toEqual({
-        inputTokens: 10,
-        outputTokens: 5,
-        totalTokens: 15,
-      });
-      expect(result.finishReason).toBe('stop');
+      expect(result.usage.inputTokens.total).toBe(10);
+      expect(result.usage.outputTokens.total).toBe(5);
+      expect(result.finishReason.unified).toBe('stop');
     });
 
     it('should handle error_max_turns as length finish reason', async () => {
@@ -380,7 +377,7 @@ describe('ClaudeCodeLanguageModel', () => {
         prompt: [{ role: 'user', content: [{ type: 'text', text: 'Complex task' }] }],
       });
 
-      expect(result.finishReason).toBe('length');
+      expect(result.finishReason.unified).toBe('length');
     });
 
     it('should handle AbortError correctly', async () => {
@@ -433,7 +430,7 @@ describe('ClaudeCodeLanguageModel', () => {
         responseFormat: { type: 'json' },
       } as any);
 
-      expect(result.finishReason).toBe('length');
+      expect(result.finishReason.unified).toBe('length');
       const hasTruncationWarning = result.warnings.some(
         (warning) =>
           'message' in warning &&
@@ -569,11 +566,10 @@ describe('ClaudeCodeLanguageModel', () => {
       });
       expect(chunks[5]).toMatchObject({
         type: 'finish',
-        finishReason: 'stop',
+        finishReason: { unified: 'stop' },
         usage: {
-          inputTokens: 10,
-          outputTokens: 5,
-          totalTokens: 15,
+          inputTokens: { total: 10 },
+          outputTokens: { total: 5 },
         },
       });
     });
@@ -628,7 +624,7 @@ describe('ClaudeCodeLanguageModel', () => {
         expect(chunks[2]).toMatchObject({ type: 'text-delta', delta: 'Hello' });
         expect(chunks[3]).toMatchObject({ type: 'text-delta', delta: ' world' });
         expect(chunks[4]).toMatchObject({ type: 'text-end' });
-        expect(chunks[5]).toMatchObject({ type: 'finish', finishReason: 'stop' });
+        expect(chunks[5]).toMatchObject({ type: 'finish', finishReason: { unified: 'stop' } });
       });
 
       it('deduplicates text when assistant messages follow stream_events', async () => {
@@ -850,7 +846,7 @@ describe('ClaudeCodeLanguageModel', () => {
         // Should have finish event with truncated metadata
         const finishEvent = chunks.find((c) => c.type === 'finish');
         expect(finishEvent).toBeDefined();
-        expect(finishEvent.finishReason).toBe('length'); // Truncation uses 'length' finish reason
+        expect(finishEvent.finishReason.unified).toBe('length'); // Truncation uses 'length' finish reason
         expect(finishEvent.providerMetadata?.['claude-code']?.truncated).toBe(true);
       });
 
@@ -1128,11 +1124,10 @@ describe('ClaudeCodeLanguageModel', () => {
       });
       expect(chunks[4]).toMatchObject({
         type: 'finish',
-        finishReason: 'stop',
+        finishReason: { unified: 'stop' },
         usage: {
-          inputTokens: 6,
-          outputTokens: 3,
-          totalTokens: 9,
+          inputTokens: { total: 6 },
+          outputTokens: { total: 3 },
         },
         providerMetadata: {
           'claude-code': {
@@ -1278,11 +1273,10 @@ describe('ClaudeCodeLanguageModel', () => {
       });
       expect(chunks[4]).toMatchObject({
         type: 'finish',
-        finishReason: 'stop',
+        finishReason: { unified: 'stop' },
         usage: {
-          inputTokens: 10,
-          outputTokens: 15,
-          totalTokens: 25,
+          inputTokens: { total: 10 },
+          outputTokens: { total: 15 },
         },
       });
 
@@ -2110,7 +2104,9 @@ describe('ClaudeCodeLanguageModel', () => {
       const finishEvent = events.find((event) => event.type === 'finish');
       expect(finishEvent).toBeDefined();
       expect(
-        finishEvent && 'finishReason' in finishEvent ? finishEvent.finishReason : undefined
+        finishEvent && 'finishReason' in finishEvent
+          ? (finishEvent.finishReason as { unified: string }).unified
+          : undefined
       ).toBe('length');
 
       const finishMetadata =
