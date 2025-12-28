@@ -10,13 +10,13 @@ import { claudeCode } from '../dist/index.js';
 // To restore old behavior, set:
 //   systemPrompt: { type: 'preset', preset: 'claude_code' }
 //   settingSources: ['user', 'project', 'local']
-import type { CoreMessage } from 'ai';
+import type { ModelMessage } from 'ai';
 
 async function testConversation() {
   console.log('🧪 Testing conversation with message history...');
 
   const model = claudeCode('opus');
-  const messages: CoreMessage[] = [];
+  const messages: ModelMessage[] = [];
 
   // First turn
   console.log(`\n1️⃣ First turn...`);

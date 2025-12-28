@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2025-12-27
+
+### Breaking Changes
+
+This release upgrades to AI SDK v6 stable, introducing breaking changes to internal types. **User-facing API remains the same.**
+
+#### LanguageModelV3FinishReason format change
+
+The `finishReason` field now returns an object instead of a string:
+
+```ts
+// Before (beta)
+finishReason: 'stop'
+
+// After (stable)
+finishReason: { unified: 'stop', raw: 'success' }
+```
+
+- Access the unified reason via `finishReason.unified`
+- The original SDK subtype is preserved in `finishReason.raw`
+
+#### LanguageModelV3Usage format change
+
+The `usage` field now uses a nested structure with detailed token breakdown:
+
+```ts
+// Before (beta)
+usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }
+
+// After (stable)
+usage: {
+  inputTokens: { total: 10, noCache: 5, cacheRead: 3, cacheWrite: 2 },
+  outputTokens: { total: 5, text: undefined, reasoning: undefined },
+  raw: { /* original SDK usage object */ }
+}
+```
+
+- `inputTokens.total` replaces `inputTokens`
+- `outputTokens.total` replaces `outputTokens`
+- `totalTokens` is removed (calculate as `inputTokens.total + outputTokens.total` if needed)
+- Cache token details are now exposed in `inputTokens.cacheRead` and `inputTokens.cacheWrite`
+- Original SDK usage is available via `usage.raw` (previously in `providerMetadata.rawUsage`)
+
+### Changed
+
+- **Upgraded to AI SDK v6 stable** (`ai@^6.0.3`, `@ai-sdk/provider@^3.0.0`, `@ai-sdk/provider-utils@^4.0.1`)
+- Unknown finish reason subtypes now map to `{ unified: 'other', raw: subtype }` instead of defaulting to `'stop'`
+- Truncation finish reason now includes `raw: 'truncation'` for better diagnostics
+- Removed `rawUsage` from `providerMetadata` (now available in `usage.raw`)
+
+### Added
+
+- `convertClaudeCodeUsage()` helper function for consistent usage format conversion
+- `createEmptyUsage()` helper for zero-initialized usage objects
+
 ## [2.2.4] - 2025-12-04
 
 ### Changed

@@ -1,4 +1,4 @@
-import type { LanguageModelV2, ProviderV2 } from '@ai-sdk/provider';
+import type { LanguageModelV3, ProviderV3 } from '@ai-sdk/provider';
 import { NoSuchModelError } from '@ai-sdk/provider';
 import { ClaudeCodeLanguageModel, type ClaudeCodeModelId } from './claude-code-language-model.js';
 import type { ClaudeCodeSettings } from './types.js';
@@ -6,7 +6,7 @@ import { validateSettings } from './validation.js';
 import { getLogger } from './logger.js';
 
 /**
- * Claude Code provider interface that extends the AI SDK's ProviderV1.
+ * Claude Code provider interface that extends the AI SDK's ProviderV3.
  * Provides methods to create language models for interacting with Claude via the CLI.
  *
  * @example
@@ -21,7 +21,7 @@ import { getLogger } from './logger.js';
  * const languageModel = claudeCode.languageModel('opus', { maxTurns: 10 });
  * ```
  */
-export interface ClaudeCodeProvider extends ProviderV2 {
+export interface ClaudeCodeProvider extends ProviderV3 {
   /**
    * Creates a language model instance for the specified model ID.
    * This is a shorthand for calling `languageModel()`.
@@ -30,7 +30,7 @@ export interface ClaudeCodeProvider extends ProviderV2 {
    * @param settings - Optional settings to configure the model
    * @returns A language model instance
    */
-  (modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV2;
+  (modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV3;
 
   /**
    * Creates a language model instance for text generation.
@@ -39,7 +39,7 @@ export interface ClaudeCodeProvider extends ProviderV2 {
    * @param settings - Optional settings to configure the model
    * @returns A language model instance
    */
-  languageModel(modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV2;
+  languageModel(modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV3;
 
   /**
    * Alias for `languageModel()` to maintain compatibility with AI SDK patterns.
@@ -48,7 +48,7 @@ export interface ClaudeCodeProvider extends ProviderV2 {
    * @param settings - Optional settings to configure the model
    * @returns A language model instance
    */
-  chat(modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV2;
+  chat(modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV3;
 
   imageModel(modelId: string): never;
 }
@@ -112,7 +112,7 @@ export function createClaudeCode(options: ClaudeCodeProviderSettings = {}): Clau
   const createModel = (
     modelId: ClaudeCodeModelId,
     settings: ClaudeCodeSettings = {}
-  ): LanguageModelV2 => {
+  ): LanguageModelV3 => {
     const mergedSettings = {
       ...options.defaultSettings,
       ...settings,
@@ -141,12 +141,13 @@ export function createClaudeCode(options: ClaudeCodeProviderSettings = {}): Clau
 
   provider.languageModel = createModel;
   provider.chat = createModel; // Alias for languageModel
+  provider.specificationVersion = 'v3' as const;
 
-  // Add textEmbeddingModel method that throws NoSuchModelError
-  provider.textEmbeddingModel = (modelId: string) => {
+  // Add embeddingModel method that throws NoSuchModelError
+  provider.embeddingModel = (modelId: string) => {
     throw new NoSuchModelError({
       modelId,
-      modelType: 'textEmbeddingModel',
+      modelType: 'embeddingModel',
     });
   };
 

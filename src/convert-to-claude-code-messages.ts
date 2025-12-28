@@ -288,9 +288,29 @@ export function convertToClaudeCodeMessages(prompt: readonly ModelMessage[]): {
 
       case 'tool':
         // Tool results could be included in the conversation
+        // Filter out ToolApprovalResponse parts, only process ToolResultPart
         for (const tool of message.content) {
-          const resultText =
-            tool.output.type === 'text' ? tool.output.value : JSON.stringify(tool.output.value);
+          if (tool.type === 'tool-approval-response') {
+            continue; // Skip approval responses
+          }
+          // Handle different ToolResultOutput types
+          let resultText: string;
+          const output = tool.output;
+          if (output.type === 'text' || output.type === 'error-text') {
+            resultText = output.value;
+          } else if (output.type === 'json' || output.type === 'error-json') {
+            resultText = JSON.stringify(output.value);
+          } else if (output.type === 'execution-denied') {
+            resultText = `[Execution denied${output.reason ? `: ${output.reason}` : ''}]`;
+          } else if (output.type === 'content') {
+            // Handle content array - extract text parts
+            resultText = output.value
+              .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+              .map((part) => part.text)
+              .join('\n');
+          } else {
+            resultText = '[Unknown output type]';
+          }
           const formattedToolResult = `Tool Result (${tool.toolName}): ${resultText}`;
           messages.push(formattedToolResult);
           addSegment(formattedToolResult);

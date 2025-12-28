@@ -9,7 +9,7 @@
 
 # AI SDK Provider for Claude Code SDK
 
-> **Latest Release**: Version 2.x uses the Claude Agent SDK with native structured outputs support (v2.2.0+). For AI SDK v6 beta support, use the `beta` tag. For AI SDK v4 support, use the `ai-sdk-v4` tag.
+> **Latest Release**: Version 3.x supports AI SDK v6 stable with the Claude Agent SDK. For AI SDK v5 support, use the `ai-sdk-v5` tag.
 
 **ai-sdk-provider-claude-code** lets you use Claude via the [Vercel AI SDK](https://sdk.vercel.ai/docs) through the official `@anthropic-ai/claude-agent-sdk` and the Claude Code CLI.
 
@@ -17,32 +17,24 @@
 
 | Provider Version | AI SDK Version | Underlying SDK                       | NPM Tag              | Status | Branch                                                                                  |
 | ---------------- | -------------- | ------------------------------------ | -------------------- | ------ | --------------------------------------------------------------------------------------- |
-| 3.x.x-beta       | v6 (beta)      | `@anthropic-ai/claude-agent-sdk`     | `beta`               | Beta   | [`ai-sdk-v6`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v6) |
-| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk`     | `latest`             | Stable | `main`                                                                                  |
-| 1.x.x            | v5             | `@anthropic-ai/claude-code` (legacy) | `v1-claude-code-sdk` | Stable | [`v1`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/v1)               |
-| 0.x.x            | v4             | `@anthropic-ai/claude-code`          | `ai-sdk-v4`          | Legacy | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
+| 3.x.x            | v6             | `@anthropic-ai/claude-agent-sdk`     | `latest`             | Stable | `main`                                                                                  |
+| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk`     | `ai-sdk-v5`          | Stable | [`ai-sdk-v5`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v5) |
+| 1.x.x            | v5             | `@anthropic-ai/claude-code` (legacy) | `v1-claude-code-sdk` | Legacy | [`v1`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/v1)               |
+| 0.x.x            | v4             | `@anthropic-ai/claude-code` (legacy) | `ai-sdk-v4`          | Legacy | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
 
 ### Installing the Right Version
 
-**For AI SDK v6 beta (early adopters):**
+**For AI SDK v6 (recommended):**
 
 ```bash
-npm install ai-sdk-provider-claude-code@beta ai@beta
-```
-
-> ⚠️ **Note:** AI SDK v6 is in beta. The `ai-sdk-v6` branch and `beta` npm tag track upstream changes. When v6 goes stable, this will be merged to `main` and released as 3.0.0.
-
-**For AI SDK v5 with Claude Agent SDK (recommended for production):**
-
-```bash
-npm install ai-sdk-provider-claude-code ai
+npm install ai-sdk-provider-claude-code ai@^6.0.0
 # or explicitly: npm install ai-sdk-provider-claude-code@latest
 ```
 
-**For AI SDK v5 with Claude Code SDK (legacy):**
+**For AI SDK v5:**
 
 ```bash
-npm install ai-sdk-provider-claude-code@v1-claude-code-sdk ai
+npm install ai-sdk-provider-claude-code@ai-sdk-v5 ai@^5.0.0
 ```
 
 **For AI SDK v4 (legacy):**
@@ -54,69 +46,17 @@ npm install ai-sdk-provider-claude-code@ai-sdk-v4 ai@^4.3.16
 
 ## Zod Compatibility
 
-This package is **tested and compatible with both Zod 3 and Zod 4**, but there's an important peer dependency consideration:
-
-### Current Status
-
-- ✅ **Zod 3** (fully supported, no warnings)
-- ⚠️ **Zod 4** (functional, but requires `--legacy-peer-deps`)
-
-While this package declares support for both versions (`peerDependencies: "zod": "^3.0.0 || ^4.0.0"`), the underlying `@anthropic-ai/claude-agent-sdk` currently only declares support for Zod 3 (`peerDependencies: "zod": "^3.24.1"`).
-
-**All 302 tests pass with both Zod 3 and Zod 4.** See `examples/zod4-compatibility-test.ts` for comprehensive compatibility verification.
-
-### Installation Instructions
-
-**With Zod 3 (recommended for now):**
+This package is **fully compatible with both Zod 3 and Zod 4**.
 
 ```bash
+# With Zod 3
 npm install ai-sdk-provider-claude-code ai zod@^3.0.0
+
+# With Zod 4
+npm install ai-sdk-provider-claude-code ai zod@^4.0.0
 ```
 
-**With Zod 4 (requires package manager-specific flags):**
-
-For **npm**:
-
-```bash
-npm install ai-sdk-provider-claude-code ai zod@^4.0.0 --legacy-peer-deps
-```
-
-For **pnpm**:
-
-```bash
-pnpm install ai-sdk-provider-claude-code ai zod@^4.0.0 --no-strict-peer-dependencies
-# Or configure it project-wide:
-pnpm config set strict-peer-dependencies false
-```
-
-For **Yarn** (Berry/v2+):
-
-```bash
-yarn add ai-sdk-provider-claude-code ai zod@^4.0.0
-# Yarn's peer resolution typically doesn't error here
-```
-
-### For Package Developers
-
-If you're developing with this package in your repository, add a configuration file to avoid needing the flag on every install:
-
-**For npm** (`.npmrc`):
-
-```ini
-# .npmrc
-legacy-peer-deps=true
-```
-
-**For pnpm** (`.npmrc`):
-
-```ini
-# .npmrc
-strict-peer-dependencies=false
-```
-
-> **Note**: The `.npmrc` file in this repository is committed for CI/development consistency but is **not included in the published package** (it's excluded via the `files` field in `package.json`). End users will still need to use the appropriate flags when installing with Zod 4.
-
-> **Temporary Workaround**: This configuration is needed until `@anthropic-ai/claude-agent-sdk` adds official Zod 4 support to their peer dependencies. Track progress in the [claude-agent-sdk repository](https://github.com/anthropics/anthropic-sdk-typescript).
+Both this package and the underlying `@anthropic-ai/claude-agent-sdk` declare support for both versions (`peerDependencies: "zod": "^3.24.1 || ^4.0.0"`).
 
 ## Installation
 
@@ -130,10 +70,13 @@ claude login
 ### 2. Add the provider
 
 ```bash
-# For v5 (recommended)
-npm install ai-sdk-provider-claude-code ai
+# For AI SDK v6 (recommended)
+npm install ai-sdk-provider-claude-code ai@^6.0.0
 
-# For v4 (legacy)
+# For AI SDK v5
+npm install ai-sdk-provider-claude-code@ai-sdk-v5 ai@^5.0.0
+
+# For AI SDK v4 (legacy)
 npm install ai-sdk-provider-claude-code@ai-sdk-v4 ai@^4.3.16
 ```
 
@@ -149,7 +92,7 @@ Please ensure you have appropriate permissions and comply with all applicable te
 
 ## Quick Start
 
-### AI SDK v5
+### AI SDK v6
 
 ```typescript
 import { streamText } from 'ai';
@@ -164,21 +107,30 @@ const text = await result.text;
 console.log(text);
 ```
 
-### AI SDK v4
+### AI SDK v5
 
 ```typescript
-import { generateText } from 'ai';
+// npm install ai-sdk-provider-claude-code@ai-sdk-v5 ai@^5.0.0
+import { streamText } from 'ai';
 import { claudeCode } from 'ai-sdk-provider-claude-code';
 
-const { text } = await generateText({
+const result = streamText({
   model: claudeCode('haiku'),
   prompt: 'Hello, Claude!',
 });
 
+const text = await result.text;
 console.log(text);
 ```
 
 ## Breaking Changes
+
+### Version 3.0.0 (AI SDK v6 Stable)
+
+This version upgrades to AI SDK v6 stable with updated provider types:
+
+- **`usage.raw`** now contains raw provider usage (previously in `providerMetadata['claude-code'].rawUsage`)
+- Internal type changes for `LanguageModelV3Usage` and `LanguageModelV3FinishReason` (transparent to most users)
 
 ### Version 2.0.0 (Claude Agent SDK Migration)
 
