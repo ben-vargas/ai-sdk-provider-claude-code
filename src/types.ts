@@ -149,6 +149,9 @@ export interface ClaudeCodeSettings {
   /**
    * Filesystem settings sources to load (CLAUDE.md, settings.json, etc.)
    * When omitted, the Agent SDK loads no filesystem settings.
+   *
+   * Required for Skills support - skills are loaded from these sources.
+   * @example ['user', 'project']
    */
   settingSources?: Array<'user' | 'project' | 'local'>;
 

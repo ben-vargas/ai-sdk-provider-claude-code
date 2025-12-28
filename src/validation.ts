@@ -243,6 +243,13 @@ export function validateSettings(settings: unknown): {
       validateToolNames(validSettings.disallowedTools, 'disallowed');
     }
 
+    // Warn about Skills configuration issues
+    if (validSettings.allowedTools?.includes('Skill') && !validSettings.settingSources) {
+      warnings.push(
+        "allowedTools includes 'Skill' but settingSources is not set. Skills require settingSources (e.g., ['user', 'project']) to load skill definitions."
+      );
+    }
+
     return { valid: true, warnings, errors };
   } catch (error) {
     errors.push(`Validation error: ${error instanceof Error ? error.message : String(error)}`);
