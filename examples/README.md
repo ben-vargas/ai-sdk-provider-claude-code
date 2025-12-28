@@ -191,11 +191,23 @@ npx tsx examples/sdk-tools-callbacks.ts
 
 **Key concepts**: In-process tools, createSdkMcpServer, tool definitions, MCP integration
 
+### 16. Skills Management (`skills-management.ts`)
+
+**Purpose**: Configure Skills support - custom tools defined in user or project settings.
+
+```bash
+npx tsx examples/skills-management.ts
+```
+
+**Key concepts**: settingSources configuration, Skill tool permission, user/project skills, validation warnings
+
+**What you'll see**: Configuration examples showing how to enable Skills, with a demonstration of the validation warning when 'Skill' is in allowedTools but settingSources is not set.
+
 ## Object Generation (Structured Output)
 
 > **Native Support**: Object generation uses the SDK's native `outputFormat` option with constrained decoding, providing **guaranteed schema compliance** - no JSON parsing errors!
 
-### 16. Object Generation Overview (`generate-object.ts`)
+### 17. Object Generation Overview (`generate-object.ts`)
 
 **Purpose**: Advanced real-world examples of object generation.
 
@@ -205,7 +217,7 @@ npx tsx examples/generate-object.ts
 
 **Key concepts**: Complex schemas, product analysis, free-form JSON, practical applications
 
-### 17. Object Generation Tutorial (`generate-object-basic.ts`)
+### 18. Object Generation Tutorial (`generate-object-basic.ts`)
 
 **Purpose**: Learn object generation step-by-step with progressively complex examples.
 
@@ -215,7 +227,7 @@ npx tsx examples/generate-object-basic.ts
 
 **Key concepts**: Schema basics, progressive complexity, best practices, clear explanations
 
-### 18. Stream Object (`stream-object.ts`)
+### 19. Stream Object (`stream-object.ts`)
 
 **Purpose**: Receive incremental partial objects as the AI generates structured data, enabling real-time UI updates.
 
@@ -225,7 +237,7 @@ npx tsx examples/stream-object.ts
 
 **Key concepts**: Partial object streaming, real-time updates, field-by-field progress, `streamObject()` API
 
-### 19. Nested Structures (`generate-object-nested.ts`)
+### 20. Nested Structures (`generate-object-nested.ts`)
 
 **Purpose**: Generate complex, real-world data structures.
 
@@ -235,7 +247,7 @@ npx tsx examples/generate-object-nested.ts
 
 **Key concepts**: Hierarchical data, recursive schemas, complex relationships
 
-### 20. Validation Constraints (`generate-object-constraints.ts`)
+### 21. Validation Constraints (`generate-object-constraints.ts`)
 
 **Purpose**: Enforce data quality with advanced validation rules.
 
@@ -247,7 +259,7 @@ npx tsx examples/generate-object-constraints.ts
 
 ## Testing & Troubleshooting
 
-### 21. Integration Test (`integration-test.ts`)
+### 22. Integration Test (`integration-test.ts`)
 
 **Purpose**: Comprehensive test suite to verify your setup and all features.
 
@@ -257,7 +269,7 @@ npx tsx examples/integration-test.ts
 
 **Key concepts**: Feature verification, error handling, test patterns
 
-### 22. Check CLI (`check-cli.ts`)
+### 23. Check CLI (`check-cli.ts`)
 
 **Purpose**: Troubleshooting tool to verify CLI installation and authentication.
 
@@ -267,7 +279,7 @@ npx tsx examples/check-cli.ts
 
 **Key concepts**: Setup verification, error diagnosis, troubleshooting steps
 
-### 23. Limitations (`limitations.ts`)
+### 24. Limitations (`limitations.ts`)
 
 **Purpose**: Understand what AI SDK features are not supported by the CLI.
 
@@ -418,6 +430,7 @@ const result4 = streamText({
 | tool-management       | Security              | Access control         |
 | hooks-callbacks       | Event handling        | Lifecycle hooks        |
 | sdk-tools-callbacks   | Custom tools          | In-process MCP tools   |
+| skills-management     | Skills configuration  | settingSources setup   |
 | long-running-tasks    | Complex reasoning     | Timeout handling       |
 | generate-object       | Advanced patterns     | Real-world schemas     |
 | generate-object-basic | Learning              | Step-by-step tutorial  |
@@ -429,7 +442,7 @@ const result4 = streamText({
 2. **Images & Tools**: `images.ts` → `tool-streaming.ts` to understand multimodal inputs and tool events
 3. **Logging**: `logging-default.ts` → `logging-verbose.ts` → `logging-custom-logger.ts` → `logging-disabled.ts`
 4. **Object Generation**: `generate-object-basic.ts` → `stream-object.ts` → `generate-object-nested.ts` → `generate-object-constraints.ts` → `generate-object.ts`
-5. **Advanced**: `custom-config.ts` → `tool-management.ts` → `hooks-callbacks.ts` → `sdk-tools-callbacks.ts` → `long-running-tasks.ts`
+5. **Advanced**: `custom-config.ts` → `tool-management.ts` → `skills-management.ts` → `hooks-callbacks.ts` → `sdk-tools-callbacks.ts` → `long-running-tasks.ts`
 6. **Testing**: Run `integration-test.ts` to verify everything works
 
 For more details, see the main [README](../README.md).

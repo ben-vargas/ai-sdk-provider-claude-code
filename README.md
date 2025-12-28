@@ -278,6 +278,37 @@ console.log(result.object); // Guaranteed to match schema
 - Use realistic image payloads—very small placeholders may result in the model asking for a different image.
 - `examples/images.ts` accepts a local image path and converts it to a data URL on the fly: `npx tsx examples/images.ts /absolute/path/to/image.png`.
 
+## Skills Support
+
+Claude Code supports **Skills** - custom tools and capabilities defined in your user or project settings. To enable skills, configure both `settingSources` and `allowedTools`:
+
+```typescript
+import { claudeCode } from 'ai-sdk-provider-claude-code';
+import { streamText } from 'ai';
+
+const result = await streamText({
+  model: claudeCode('sonnet', {
+    settingSources: ['user', 'project'],
+    allowedTools: ['Skill', 'Read', 'Write', 'Bash'],
+  }),
+  prompt: 'Use my /custom-skill to help with this task',
+});
+```
+
+**Requirements:**
+
+- `settingSources` - Where to load skills from (`'user'`, `'project'`, `'local'`)
+- `allowedTools` must include `'Skill'` to invoke skills
+
+**Where to define Skills:**
+
+- User: `~/.claude/skills/your-skill/SKILL.md`
+- Project: `.claude/skills/your-skill/SKILL.md`
+
+**Validation:** If you add `'Skill'` to `allowedTools` but forget to set `settingSources`, a validation warning will alert you that skills won't load.
+
+See [examples/skills-management.ts](examples/skills-management.ts) for more examples.
+
 ## Limitations
 
 - Requires Node.js ≥ 18

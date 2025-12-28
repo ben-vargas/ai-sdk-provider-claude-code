@@ -349,6 +349,43 @@ describe('validateSettings', () => {
     expect(res.valid).toBe(false);
     expect(res.errors[0]).toContain('mcpServers');
   });
+
+  describe('Skills configuration warnings', () => {
+    it('should warn when Skill is in allowedTools but settingSources is not set', () => {
+      const settings = {
+        allowedTools: ['Skill', 'Read'],
+      };
+      const result = validateSettings(settings);
+
+      expect(result.valid).toBe(true);
+      expect(result.warnings.some((w) => w.includes("allowedTools includes 'Skill'"))).toBe(true);
+      expect(result.warnings.some((w) => w.includes('settingSources is not set'))).toBe(true);
+    });
+
+    it('should not warn when Skill is in allowedTools and settingSources is set', () => {
+      const settings = {
+        allowedTools: ['Skill', 'Read'],
+        settingSources: ['user', 'project'] as const,
+      };
+      const result = validateSettings(settings);
+
+      expect(result.valid).toBe(true);
+      // Should not have the Skill warning
+      const skillWarnings = result.warnings.filter((w) => w.includes("allowedTools includes 'Skill'"));
+      expect(skillWarnings).toHaveLength(0);
+    });
+
+    it('should not warn when Skill is not in allowedTools', () => {
+      const settings = {
+        allowedTools: ['Read', 'Write'],
+      };
+      const result = validateSettings(settings);
+
+      expect(result.valid).toBe(true);
+      const skillWarnings = result.warnings.filter((w) => w.includes('Skill'));
+      expect(skillWarnings).toHaveLength(0);
+    });
+  });
 });
 
 describe('validatePrompt', () => {

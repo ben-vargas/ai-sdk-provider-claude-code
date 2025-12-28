@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Skills validation warning** - Validation now warns when `'Skill'` is in `allowedTools` but `settingSources` is not set, helping catch misconfiguration where skills would fail to load
+- **Skills documentation** - Added Skills Support section to README with configuration examples
+- **Skills example** - Added `examples/skills-management.ts` demonstrating correct skills configuration
+
 ## [3.0.0] - 2025-12-27
 
 ### Breaking Changes
