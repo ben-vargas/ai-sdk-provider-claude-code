@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
+import { getErrorMetadata } from './errors.js';
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 
 // Extend stream part union locally to include provider-specific 'tool-error'
@@ -399,6 +400,52 @@ describe('ClaudeCodeLanguageModel', () => {
 
       // Should throw the abort reason since signal is aborted
       await expect(promise).rejects.toThrow(abortReason);
+    });
+
+    it('should capture stderr from callback when SDK throws error', async () => {
+      const stderrMessages: string[] = [];
+      const stderrCallback = vi.fn((data: string) => {
+        stderrMessages.push(data);
+      });
+
+      const modelWithStderr = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { stderr: stderrCallback },
+      });
+
+      // Mock query to call stderr callback then throw an error
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        // Simulate stderr output before error (e.g., auth failure message)
+        if (options?.stderr) {
+          options.stderr('Error: Not authenticated\n');
+          options.stderr('Please run: claude login\n');
+        }
+
+        // Throw an error with exitCode (like auth failure)
+        const error = new Error('Failed with exit code: 1');
+        (error as any).exitCode = 1;
+        throw error;
+      });
+
+      let thrownError: unknown;
+      try {
+        await modelWithStderr.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      // Verify user's stderr callback was still called
+      expect(stderrCallback).toHaveBeenCalledWith('Error: Not authenticated\n');
+      expect(stderrCallback).toHaveBeenCalledWith('Please run: claude login\n');
+
+      // Verify the error contains the stderr data
+      expect(thrownError).toBeDefined();
+      const metadata = getErrorMetadata(thrownError);
+      expect(metadata).toBeDefined();
+      expect(metadata?.stderr).toBe('Error: Not authenticated\nPlease run: claude login\n');
+      expect(metadata?.exitCode).toBe(1);
     });
 
     it('recovers from CLI truncation errors and returns buffered text', async () => {
