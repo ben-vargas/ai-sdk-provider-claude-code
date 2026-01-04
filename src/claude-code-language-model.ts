@@ -730,6 +730,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       'auth failed',
       'please login',
       'claude login',
+      '/login', // CLI returns "Please run /login"
+      'invalid api key',
     ];
 
     const errorMessage =
@@ -902,6 +904,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           this.setSessionId(message.session_id);
           costUsd = message.total_cost_usd;
           durationMs = message.duration_ms;
+
+          // Handle is_error flag in result message (e.g., auth failures)
+          // The CLI returns successful JSON with is_error: true and error message in result field
+          if ('is_error' in message && message.is_error === true) {
+            const errorMessage =
+              'result' in message && typeof message.result === 'string'
+                ? message.result
+                : 'Claude Code CLI returned an error';
+            throw Object.assign(new Error(errorMessage), { exitCode: 1 });
+          }
 
           // Handle structured output errors (SDK 0.1.45+)
           // Use string comparison to support new SDK subtypes not yet in TypeScript definitions
@@ -1501,6 +1513,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               }
             } else if (message.type === 'result') {
               done();
+
+              // Handle is_error flag in result message (e.g., auth failures)
+              // The CLI returns successful JSON with is_error: true and error message in result field
+              if ('is_error' in message && message.is_error === true) {
+                const errorMessage =
+                  'result' in message && typeof message.result === 'string'
+                    ? message.result
+                    : 'Claude Code CLI returned an error';
+                throw Object.assign(new Error(errorMessage), { exitCode: 1 });
+              }
 
               // Handle structured output errors (SDK 0.1.45+)
               // Use string comparison to support new SDK subtypes not yet in TypeScript definitions

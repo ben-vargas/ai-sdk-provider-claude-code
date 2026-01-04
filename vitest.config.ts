@@ -1,4 +1,4 @@
-import { defineConfig, defineWorkspace } from 'vitest/config';
+import { defineConfig } from 'vitest/config';
 
 // Define workspace with multiple environments
 export default defineConfig({
