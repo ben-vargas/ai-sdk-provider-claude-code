@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-01-05
+
+### Added
+
+- **Agent SDK options passthrough (guarded)** - Added `sdkOptions` escape hatch for passing through Agent SDK `Options`, with blocked internal fields (`model`, `abortController`, `prompt`, `outputFormat`)
+- **Expanded Agent SDK settings** - Exposed `betas`, `allowDangerouslySkipPermissions`, `enableFileCheckpointing`, `maxBudgetUsd`, `plugins`, `resumeSessionAt`, `sandbox`, and `tools` in `ClaudeCodeSettings`
+- **sdkOptions tests** - Added coverage for env/stderr merge preservation and sdkOptions override behavior
+
+### Changed
+
+- **Session resume consistency** - `resume` now stays in sync between query options and streaming prompt session IDs
+
 ## [3.0.1] - 2025-12-27
 
 ### Added
