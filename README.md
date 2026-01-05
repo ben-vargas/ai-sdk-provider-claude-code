@@ -269,6 +269,28 @@ console.log(result.object); // Guaranteed to match schema
 - 🔧 Tool management (MCP servers, permissions)
 - 🧩 Callbacks (hooks, canUseTool)
 
+## Agent SDK Options (Advanced)
+
+This provider now exposes additional Agent SDK options directly (e.g. `betas`, `sandbox`,
+`plugins`, `resumeSessionAt`, `enableFileCheckpointing`, `maxBudgetUsd`, `tools`,
+`allowDangerouslySkipPermissions`).
+
+For newer SDK options, use the `sdkOptions` escape hatch. It **overrides** explicit settings,
+but provider-managed fields are ignored (`model`, `abortController`, `prompt`, `outputFormat`).
+If you set `sdkOptions.resume`, it also drives the streaming prompt `session_id` so the SDK
+and prompt target the same session.
+
+```ts
+const model = claudeCode('sonnet', {
+  betas: ['context-1m-2025-08-07'],
+  sandbox: { enabled: true },
+  sdkOptions: {
+    maxBudgetUsd: 1,
+    resume: 'session-abc',
+  },
+});
+```
+
 ## Image Inputs (Streaming Only)
 
 - Enable streaming input (`streamingInput: 'always'` or provide `canUseTool`) before sending images.

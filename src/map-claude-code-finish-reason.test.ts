@@ -46,8 +46,7 @@ describe('mapClaudeCodeFinishReason', () => {
   });
 
   it('should handle null subtype as unknown', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect(mapClaudeCodeFinishReason(null as any)).toEqual({
+    expect(mapClaudeCodeFinishReason(null as unknown as string | undefined)).toEqual({
       unified: 'other',
       raw: null,
     });

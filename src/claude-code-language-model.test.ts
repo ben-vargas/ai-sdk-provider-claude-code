@@ -306,6 +306,137 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call.options).toBeDefined();
       expect(call.options.env).toBeUndefined();
     });
+
+    it('should pass through Agent SDK options and allow sdkOptions overrides', async () => {
+      const modelWithSdkOptions = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          maxTurns: 5,
+          betas: ['context-1m-2025-08-07'],
+          enableFileCheckpointing: true,
+          maxBudgetUsd: 2,
+          plugins: [{ type: 'local', path: './plugins/example' }],
+          resumeSessionAt: 'message-uuid',
+          sandbox: { enabled: true },
+          tools: ['Read'],
+          sdkOptions: {
+            maxTurns: 9,
+            allowDangerouslySkipPermissions: true,
+          },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-sdk',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithSdkOptions.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.maxTurns).toBe(9);
+      expect(call?.options?.betas).toEqual(['context-1m-2025-08-07']);
+      expect(call?.options?.enableFileCheckpointing).toBe(true);
+      expect(call?.options?.maxBudgetUsd).toBe(2);
+      expect(call?.options?.plugins).toEqual([{ type: 'local', path: './plugins/example' }]);
+      expect(call?.options?.resumeSessionAt).toBe('message-uuid');
+      expect(call?.options?.sandbox).toEqual({ enabled: true });
+      expect(call?.options?.tools).toEqual(['Read']);
+      expect(call?.options?.allowDangerouslySkipPermissions).toBe(true);
+    });
+
+    it('should sync sdkOptions.resume with streaming prompt session_id', async () => {
+      const modelWithResume = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          streamingInput: 'always',
+          resume: 'settings-session',
+          sdkOptions: { resume: 'sdk-session' },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'sdk-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+
+      let promptSessionId: string | undefined;
+      let promptSessionPromise: Promise<void> | undefined;
+      vi.mocked(mockQuery).mockImplementation(({ prompt }) => {
+        const iterator =
+          prompt && typeof (prompt as any)[Symbol.asyncIterator] === 'function'
+            ? (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]()
+            : undefined;
+        if (iterator) {
+          promptSessionPromise = iterator.next().then(({ value }) => {
+            promptSessionId = value?.session_id;
+          });
+        }
+        return mockResponse as any;
+      });
+
+      await modelWithResume.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      if (promptSessionPromise) {
+        await promptSessionPromise;
+      }
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.resume).toBe('sdk-session');
+      expect(promptSessionId).toBe('sdk-session');
+    });
+
+    it('should ignore blocked sdkOptions fields', async () => {
+      const externalAbortController = new AbortController();
+      const modelWithBlocked = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sdkOptions: {
+            model: 'override-model',
+            abortController: externalAbortController,
+            prompt: 'override-prompt',
+            outputFormat: { type: 'json_schema', schema: { foo: 'bar' } },
+          },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-blocked',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithBlocked.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.model).not.toBe('override-model');
+      expect(call?.options?.abortController).not.toBe(externalAbortController);
+    });
     it('should generate text from SDK response', async () => {
       const mockResponse = {
         async *[Symbol.asyncIterator]() {

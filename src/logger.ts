@@ -4,7 +4,9 @@ import type { Logger } from './types.js';
  * Default logger that uses console with level tags.
  */
 const defaultLogger: Logger = {
+  // eslint-disable-next-line no-console
   debug: (message: string) => console.debug(`[DEBUG] ${message}`),
+  // eslint-disable-next-line no-console
   info: (message: string) => console.info(`[INFO] ${message}`),
   warn: (message: string) => console.warn(`[WARN] ${message}`),
   error: (message: string) => console.error(`[ERROR] ${message}`),
