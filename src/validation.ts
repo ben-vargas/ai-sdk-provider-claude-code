@@ -65,6 +65,36 @@ export const claudeCodeSettingsSchema = z
     resume: z.string().optional(),
     allowedTools: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional(),
+    betas: z.array(z.string()).optional(),
+    allowDangerouslySkipPermissions: z.boolean().optional(),
+    enableFileCheckpointing: z.boolean().optional(),
+    maxBudgetUsd: z.number().min(0).optional(),
+    plugins: z
+      .array(
+        z
+          .object({
+            type: z.string(),
+            path: z.string(),
+          })
+          .passthrough()
+      )
+      .optional(),
+    resumeSessionAt: z.string().optional(),
+    sandbox: z
+      .any()
+      .refine((val) => val === undefined || typeof val === 'object', {
+        message: 'sandbox must be an object',
+      })
+      .optional(),
+    tools: z
+      .union([
+        z.array(z.string()),
+        z.object({
+          type: z.literal('preset'),
+          preset: z.literal('claude_code'),
+        }),
+      ])
+      .optional(),
     settingSources: z.array(z.enum(['user', 'project', 'local'])).optional(),
     streamingInput: z.enum(['auto', 'always', 'off']).optional(),
     // Hooks and tool-permission callback (permissive validation of shapes)
@@ -143,6 +173,7 @@ export const claudeCodeSettingsSchema = z
       .optional(),
     strictMcpConfig: z.boolean().optional(),
     extraArgs: z.record(z.string(), z.union([z.string(), z.null()])).optional(),
+    sdkOptions: z.record(z.string(), z.any()).optional(),
   })
   .strict();
 

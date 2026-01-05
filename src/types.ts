@@ -1,5 +1,13 @@
 // Import types from the SDK
-import type { PermissionMode, McpServerConfig, CanUseTool } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  PermissionMode,
+  McpServerConfig,
+  CanUseTool,
+  SdkBeta,
+  SandboxSettings,
+  SdkPluginConfig,
+  Options,
+} from '@anthropic-ai/claude-agent-sdk';
 
 export type StreamingInputMode = 'auto' | 'always' | 'off';
 
@@ -142,6 +150,46 @@ export interface ClaudeCodeSettings {
   disallowedTools?: string[];
 
   /**
+   * Enable Agent SDK beta features.
+   */
+  betas?: SdkBeta[];
+
+  /**
+   * Allow bypassing permissions when using permissionMode: 'bypassPermissions'.
+   */
+  allowDangerouslySkipPermissions?: boolean;
+
+  /**
+   * Enable file checkpointing for rewind support.
+   */
+  enableFileCheckpointing?: boolean;
+
+  /**
+   * Maximum budget in USD for the query.
+   */
+  maxBudgetUsd?: number;
+
+  /**
+   * Load custom plugins from local paths.
+   */
+  plugins?: SdkPluginConfig[];
+
+  /**
+   * Resume session at a specific message UUID.
+   */
+  resumeSessionAt?: string;
+
+  /**
+   * Configure sandbox behavior programmatically.
+   */
+  sandbox?: SandboxSettings;
+
+  /**
+   * Tool configuration (array of tool names or Claude Code preset).
+   */
+  tools?: Options['tools'];
+
+  /**
    * MCP server configuration
    */
   mcpServers?: Record<string, McpServerConfig>;
@@ -260,4 +308,11 @@ export interface ClaudeCodeSettings {
    * Additional CLI arguments.
    */
   extraArgs?: Record<string, string | null>;
+
+  /**
+   * Escape hatch for Agent SDK options. Overrides explicit settings.
+   * Provider-managed fields (e.g. model, abortController, prompt, outputFormat)
+   * are ignored if supplied here.
+   */
+  sdkOptions?: Partial<Options>;
 }
