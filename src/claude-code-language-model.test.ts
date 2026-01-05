@@ -437,6 +437,91 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.model).not.toBe('override-model');
       expect(call?.options?.abortController).not.toBe(externalAbortController);
     });
+
+    it('should merge env from process, settings, and sdkOptions', async () => {
+      const originalProcessEnv = { ...process.env };
+      try {
+        process.env.C2_ENV_PROCESS = 'from-process';
+        process.env.C2_ENV_OVERRIDE = 'process';
+
+        const modelWithEnv = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: {
+            env: {
+              C2_ENV_SETTINGS: 'from-settings',
+              C2_ENV_OVERRIDE: 'settings',
+            },
+            sdkOptions: {
+              env: {
+                C2_ENV_SDK: 'from-sdk',
+                C2_ENV_OVERRIDE: 'sdk',
+              },
+            },
+          } as any,
+        });
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 's-env-merge',
+              usage: { input_tokens: 0, output_tokens: 0 },
+            };
+          },
+        };
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        await modelWithEnv.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+
+        const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        expect(call?.options?.env?.C2_ENV_PROCESS).toBe('from-process');
+        expect(call?.options?.env?.C2_ENV_SETTINGS).toBe('from-settings');
+        expect(call?.options?.env?.C2_ENV_SDK).toBe('from-sdk');
+        expect(call?.options?.env?.C2_ENV_OVERRIDE).toBe('sdk');
+      } finally {
+        process.env = originalProcessEnv;
+      }
+    });
+
+    it('should preserve stderr collector when sdkOptions.stderr is set', async () => {
+      const sdkStderr = vi.fn();
+      const modelWithStderr = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sdkOptions: {
+            stderr: sdkStderr,
+          },
+        } as any,
+      });
+
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        if (options?.stderr) {
+          options.stderr('Error: Not authenticated\n');
+          options.stderr('Please run: claude login\n');
+        }
+        const error = new Error('Failed with exit code: 1');
+        (error as any).exitCode = 1;
+        throw error;
+      });
+
+      let thrownError: unknown;
+      try {
+        await modelWithStderr.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(sdkStderr).toHaveBeenCalledWith('Error: Not authenticated\n');
+      expect(sdkStderr).toHaveBeenCalledWith('Please run: claude login\n');
+      const metadata = getErrorMetadata(thrownError);
+      expect(metadata?.stderr).toBe('Error: Not authenticated\nPlease run: claude login\n');
+      expect(metadata?.exitCode).toBe(1);
+    });
     it('should generate text from SDK response', async () => {
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
