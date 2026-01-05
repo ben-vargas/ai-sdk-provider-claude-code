@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
+import { getErrorMetadata, isAuthenticationError } from './errors.js';
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 
 // Extend stream part union locally to include provider-specific 'tool-error'
@@ -401,6 +402,196 @@ describe('ClaudeCodeLanguageModel', () => {
       await expect(promise).rejects.toThrow(abortReason);
     });
 
+    it('should capture stderr from callback when SDK throws error', async () => {
+      const stderrMessages: string[] = [];
+      const stderrCallback = vi.fn((data: string) => {
+        stderrMessages.push(data);
+      });
+
+      const modelWithStderr = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { stderr: stderrCallback },
+      });
+
+      // Mock query to call stderr callback then throw an error
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        // Simulate stderr output before error (e.g., auth failure message)
+        if (options?.stderr) {
+          options.stderr('Error: Not authenticated\n');
+          options.stderr('Please run: claude login\n');
+        }
+
+        // Throw an error with exitCode (like auth failure)
+        const error = new Error('Failed with exit code: 1');
+        (error as any).exitCode = 1;
+        throw error;
+      });
+
+      let thrownError: unknown;
+      try {
+        await modelWithStderr.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      // Verify user's stderr callback was still called
+      expect(stderrCallback).toHaveBeenCalledWith('Error: Not authenticated\n');
+      expect(stderrCallback).toHaveBeenCalledWith('Please run: claude login\n');
+
+      // Verify the error contains the stderr data
+      expect(thrownError).toBeDefined();
+      const metadata = getErrorMetadata(thrownError);
+      expect(metadata).toBeDefined();
+      expect(metadata?.stderr).toBe('Error: Not authenticated\nPlease run: claude login\n');
+      expect(metadata?.exitCode).toBe(1);
+    });
+
+    it('should detect /login pattern as authentication error', async () => {
+      vi.mocked(mockQuery).mockImplementation(() => {
+        throw new Error('Please run /login to authenticate');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeDefined();
+      expect(isAuthenticationError(thrownError)).toBe(true);
+    });
+
+    it('should detect invalid api key pattern as authentication error', async () => {
+      vi.mocked(mockQuery).mockImplementation(() => {
+        throw new Error('Invalid API key provided');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeDefined();
+      expect(isAuthenticationError(thrownError)).toBe(true);
+    });
+
+    it('should throw error when result message has is_error flag', async () => {
+      // This simulates the actual CLI response when unauthenticated
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success', // CLI returns success subtype even on error
+            is_error: true,
+            result: 'Invalid API key · Please run /login',
+            session_id: 'test-session',
+            total_cost_usd: 0,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeDefined();
+      expect(thrownError).toBeInstanceOf(Error);
+      // The error message should contain the original error content
+      expect((thrownError as Error).message).toContain('Invalid API key');
+      // The error should be converted to an auth error (contains /login pattern)
+      expect(isAuthenticationError(thrownError)).toBe(true);
+    });
+
+    it('should use default message when is_error is true but result field is missing', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            is_error: true,
+            // No result field
+            session_id: 'test-session',
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeDefined();
+      expect(thrownError).toBeInstanceOf(Error);
+      expect((thrownError as Error).message).toBe('Claude Code CLI returned an error');
+    });
+
+    it('should include stderr in error metadata when is_error is true', async () => {
+      const stderrCallback = vi.fn();
+      const modelWithStderr = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { stderr: stderrCallback },
+      });
+
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        // Simulate stderr being emitted before the is_error result
+        if (options?.stderr) {
+          options.stderr('Warning: some diagnostic info\n');
+        }
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              is_error: true,
+              result: 'Some error occurred',
+              session_id: 'test-session',
+            };
+          },
+        } as any;
+      });
+
+      let thrownError: unknown;
+      try {
+        await modelWithStderr.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      // Verify stderr callback was invoked
+      expect(stderrCallback).toHaveBeenCalledWith('Warning: some diagnostic info\n');
+
+      // Verify error was thrown
+      expect(thrownError).toBeDefined();
+      expect((thrownError as Error).message).toBe('Some error occurred');
+
+      // Verify error metadata includes collected stderr
+      const metadata = getErrorMetadata(thrownError);
+      expect(metadata?.stderr).toBe('Warning: some diagnostic info\n');
+    });
+
     it('recovers from CLI truncation errors and returns buffered text', async () => {
       const repeatedTasks = Array.from({ length: 400 }, (_, i) => `task-${i}`).join('","');
       const partialResponse = `{"tasks": ["${repeatedTasks}`;
@@ -572,6 +763,50 @@ describe('ClaudeCodeLanguageModel', () => {
           outputTokens: { total: 5 },
         },
       });
+    });
+
+    it('should emit error chunk when result message has is_error flag in streaming', async () => {
+      // This simulates the actual CLI response when unauthenticated during streaming
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success', // CLI returns success subtype even on error
+            is_error: true,
+            result: 'Invalid API key · Please run /login',
+            session_id: 'test-session',
+            total_cost_usd: 0,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: ExtendedStreamPart[] = [];
+      const reader = result.stream.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // Should emit stream-start and then error
+      expect(chunks).toHaveLength(2);
+      expect(chunks[0]).toMatchObject({
+        type: 'stream-start',
+      });
+      expect(chunks[1]).toMatchObject({
+        type: 'error',
+      });
+      // The error should contain the auth message
+      expect((chunks[1] as any).error.message).toContain('Invalid API key');
+      // The error should be converted to an auth error (contains /login pattern)
+      expect(isAuthenticationError((chunks[1] as any).error)).toBe(true);
     });
 
     describe('stream_event handling (includePartialMessages)', () => {

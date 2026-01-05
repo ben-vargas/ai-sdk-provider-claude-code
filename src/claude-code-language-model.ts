@@ -608,7 +608,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
   private createQueryOptions(
     abortController: AbortController,
-    responseFormat?: Parameters<LanguageModelV3['doGenerate']>[0]['responseFormat']
+    responseFormat?: Parameters<LanguageModelV3['doGenerate']>[0]['responseFormat'],
+    stderrCollector?: (data: string) => void
   ): Options {
     const opts: Partial<Options> & Record<string, unknown> = {
       model: this.getModel(),
@@ -666,8 +667,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     if (this.settings.forkSession !== undefined) {
       opts.forkSession = this.settings.forkSession;
     }
-    if (this.settings.stderr !== undefined) {
-      opts.stderr = this.settings.stderr;
+    // Wrap stderr callback to also collect data for error reporting
+    const userStderrCallback = this.settings.stderr;
+    if (stderrCollector || userStderrCallback) {
+      opts.stderr = (data: string) => {
+        if (stderrCollector) stderrCollector(data);
+        if (userStderrCallback) userStderrCallback(data);
+      };
     }
     if (this.settings.strictMcpConfig !== undefined) {
       opts.strictMcpConfig = this.settings.strictMcpConfig;
@@ -696,7 +702,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
   private handleClaudeCodeError(
     error: unknown,
-    messagesPrompt: string
+    messagesPrompt: string,
+    collectedStderr?: string
   ): APICallError | LoadAPIKeyError {
     // Handle AbortError from the SDK
     if (isAbortError(error)) {
@@ -723,6 +730,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       'auth failed',
       'please login',
       'claude login',
+      '/login', // CLI returns "Please run /login"
+      'invalid api key',
     ];
 
     const errorMessage =
@@ -762,11 +771,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       errorCode === 'ETIMEDOUT' ||
       errorCode === 'ECONNRESET';
 
+    // Use error.stderr if available from SDK, otherwise use collected stderr
+    const stderrFromError =
+      isErrorWithCode(error) && typeof error.stderr === 'string' ? error.stderr : undefined;
+    const stderr = stderrFromError || collectedStderr || undefined;
+
     return createAPICallError({
       message: isErrorWithMessage(error) && error.message ? error.message : 'Claude Code SDK error',
       code: errorCode || undefined,
       exitCode: exitCode,
-      stderr: isErrorWithCode(error) && typeof error.stderr === 'string' ? error.stderr : undefined,
+      stderr,
       promptExcerpt: messagesPrompt.substring(0, 200),
       isRetryable,
     });
@@ -807,7 +821,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       options.abortSignal.addEventListener('abort', abortListener, { once: true });
     }
 
-    const queryOptions = this.createQueryOptions(abortController, options.responseFormat);
+    // Collect stderr for error reporting (SDK may not include it in errors)
+    let collectedStderr = '';
+    const stderrCollector = (data: string) => {
+      collectedStderr += data;
+    };
+
+    const queryOptions = this.createQueryOptions(
+      abortController,
+      options.responseFormat,
+      stderrCollector
+    );
 
     let text = '';
     let structuredOutput: unknown | undefined;
@@ -881,6 +905,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           costUsd = message.total_cost_usd;
           durationMs = message.duration_ms;
 
+          // Handle is_error flag in result message (e.g., auth failures)
+          // The CLI returns successful JSON with is_error: true and error message in result field
+          if ('is_error' in message && message.is_error === true) {
+            const errorMessage =
+              'result' in message && typeof message.result === 'string'
+                ? message.result
+                : 'Claude Code CLI returned an error';
+            throw Object.assign(new Error(errorMessage), { exitCode: 1 });
+          }
+
           // Handle structured output errors (SDK 0.1.45+)
           // Use string comparison to support new SDK subtypes not yet in TypeScript definitions
           if ((message.subtype as string) === 'error_max_structured_output_retries') {
@@ -938,7 +972,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         });
       } else {
         // Use unified error handler
-        throw this.handleClaudeCodeError(error, messagesPrompt);
+        throw this.handleClaudeCodeError(error, messagesPrompt, collectedStderr);
       }
     } finally {
       if (options.abortSignal && abortListener) {
@@ -1001,7 +1035,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       options.abortSignal.addEventListener('abort', abortListener, { once: true });
     }
 
-    const queryOptions = this.createQueryOptions(abortController, options.responseFormat);
+    // Collect stderr for error reporting (SDK may not include it in errors)
+    let collectedStderr = '';
+    const stderrCollector = (data: string) => {
+      collectedStderr += data;
+    };
+
+    const queryOptions = this.createQueryOptions(
+      abortController,
+      options.responseFormat,
+      stderrCollector
+    );
 
     // Enable partial messages for true streaming (token-by-token delivery)
     // This can be overridden by user settings, but we default to true for doStream
@@ -1470,6 +1514,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             } else if (message.type === 'result') {
               done();
 
+              // Handle is_error flag in result message (e.g., auth failures)
+              // The CLI returns successful JSON with is_error: true and error message in result field
+              if ('is_error' in message && message.is_error === true) {
+                const errorMessage =
+                  'result' in message && typeof message.result === 'string'
+                    ? message.result
+                    : 'Claude Code CLI returned an error';
+                throw Object.assign(new Error(errorMessage), { exitCode: 1 });
+              }
+
               // Handle structured output errors (SDK 0.1.45+)
               // Use string comparison to support new SDK subtypes not yet in TypeScript definitions
               if ((message.subtype as string) === 'error_max_structured_output_retries') {
@@ -1670,7 +1724,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             errorToEmit = options.abortSignal?.aborted ? options.abortSignal.reason : error;
           } else {
             // Use unified error handler
-            errorToEmit = this.handleClaudeCodeError(error, messagesPrompt);
+            errorToEmit = this.handleClaudeCodeError(error, messagesPrompt, collectedStderr);
           }
 
           // Emit error as a stream part
