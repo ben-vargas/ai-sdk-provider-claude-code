@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
+import { getErrorMetadata } from './errors.js';
 import type { LanguageModelV2StreamPart } from '@ai-sdk/provider';
 
 // Extend stream part union locally to include provider-specific 'tool-error'
@@ -304,6 +305,222 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call).toBeDefined();
       expect(call.options).toBeDefined();
       expect(call.options.env).toBeUndefined();
+    });
+
+    it('should pass through Agent SDK options and allow sdkOptions overrides', async () => {
+      const modelWithSdkOptions = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          maxTurns: 5,
+          betas: ['context-1m-2025-08-07'],
+          enableFileCheckpointing: true,
+          maxBudgetUsd: 2,
+          plugins: [{ type: 'local', path: './plugins/example' }],
+          resumeSessionAt: 'message-uuid',
+          sandbox: { enabled: true },
+          tools: ['Read'],
+          sdkOptions: {
+            maxTurns: 9,
+            allowDangerouslySkipPermissions: true,
+          },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-sdk',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithSdkOptions.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.maxTurns).toBe(9);
+      expect(call?.options?.betas).toEqual(['context-1m-2025-08-07']);
+      expect(call?.options?.enableFileCheckpointing).toBe(true);
+      expect(call?.options?.maxBudgetUsd).toBe(2);
+      expect(call?.options?.plugins).toEqual([{ type: 'local', path: './plugins/example' }]);
+      expect(call?.options?.resumeSessionAt).toBe('message-uuid');
+      expect(call?.options?.sandbox).toEqual({ enabled: true });
+      expect(call?.options?.tools).toEqual(['Read']);
+      expect(call?.options?.allowDangerouslySkipPermissions).toBe(true);
+    });
+
+    it('should sync sdkOptions.resume with streaming prompt session_id', async () => {
+      const modelWithResume = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          streamingInput: 'always',
+          resume: 'settings-session',
+          sdkOptions: { resume: 'sdk-session' },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'sdk-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+
+      let promptSessionId: string | undefined;
+      let promptSessionPromise: Promise<void> | undefined;
+      vi.mocked(mockQuery).mockImplementation(({ prompt }) => {
+        const iterator =
+          prompt && typeof (prompt as any)[Symbol.asyncIterator] === 'function'
+            ? (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]()
+            : undefined;
+        if (iterator) {
+          promptSessionPromise = iterator.next().then(({ value }) => {
+            promptSessionId = value?.session_id;
+          });
+        }
+        return mockResponse as any;
+      });
+
+      await modelWithResume.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      if (promptSessionPromise) {
+        await promptSessionPromise;
+      }
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.resume).toBe('sdk-session');
+      expect(promptSessionId).toBe('sdk-session');
+    });
+
+    it('should ignore blocked sdkOptions fields', async () => {
+      const externalAbortController = new AbortController();
+      const modelWithBlocked = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sdkOptions: {
+            model: 'override-model',
+            abortController: externalAbortController,
+            prompt: 'override-prompt',
+            outputFormat: { type: 'json_schema', schema: { foo: 'bar' } },
+          },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-blocked',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithBlocked.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.model).not.toBe('override-model');
+      expect(call?.options?.abortController).not.toBe(externalAbortController);
+    });
+
+    it('should merge env from process, settings, and sdkOptions', async () => {
+      const originalProcessEnv = { ...process.env };
+      try {
+        process.env.C2_ENV_PROCESS = 'from-process';
+        process.env.C2_ENV_OVERRIDE = 'process';
+
+        const modelWithEnv = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: {
+            env: {
+              C2_ENV_SETTINGS: 'from-settings',
+              C2_ENV_OVERRIDE: 'settings',
+            },
+            sdkOptions: {
+              env: {
+                C2_ENV_SDK: 'from-sdk',
+                C2_ENV_OVERRIDE: 'sdk',
+              },
+            },
+          } as any,
+        });
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 's-env-merge',
+              usage: { input_tokens: 0, output_tokens: 0 },
+            };
+          },
+        };
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        await modelWithEnv.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+
+        const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        expect(call?.options?.env?.C2_ENV_PROCESS).toBe('from-process');
+        expect(call?.options?.env?.C2_ENV_SETTINGS).toBe('from-settings');
+        expect(call?.options?.env?.C2_ENV_SDK).toBe('from-sdk');
+        expect(call?.options?.env?.C2_ENV_OVERRIDE).toBe('sdk');
+      } finally {
+        process.env = originalProcessEnv;
+      }
+    });
+
+    it('should preserve stderr collector when sdkOptions.stderr is set', async () => {
+      const sdkStderr = vi.fn();
+      const modelWithStderr = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sdkOptions: {
+            stderr: sdkStderr,
+          },
+        } as any,
+      });
+
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        if (options?.stderr) {
+          options.stderr('Error: Not authenticated\n');
+          options.stderr('Please run: claude login\n');
+        }
+        const error = new Error('Failed with exit code: 1');
+        (error as any).exitCode = 1;
+        throw error;
+      });
+
+      let thrownError: unknown;
+      try {
+        await modelWithStderr.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(sdkStderr).toHaveBeenCalledWith('Error: Not authenticated\n');
+      expect(sdkStderr).toHaveBeenCalledWith('Please run: claude login\n');
+      const metadata = getErrorMetadata(thrownError);
+      expect(metadata?.stderr).toBe('Error: Not authenticated\nPlease run: claude login\n');
+      expect(metadata?.exitCode).toBe(1);
     });
     it('should generate text from SDK response', async () => {
       const mockResponse = {

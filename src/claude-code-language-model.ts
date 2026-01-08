@@ -103,6 +103,8 @@ function isAbortError(err: unknown): boolean {
 const STREAMING_FEATURE_WARNING =
   "Claude Agent SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
 
+const SDK_OPTIONS_BLOCKLIST = new Set(['model', 'abortController', 'prompt', 'outputFormat']);
+
 type ClaudeToolUse = {
   id: string;
   name: string;
@@ -323,6 +325,30 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
   private getModel(): string {
     const mapped = modelMap[this.modelId];
     return mapped ?? this.modelId;
+  }
+
+  private getSanitizedSdkOptions(): Partial<Options> | undefined {
+    if (!this.settings.sdkOptions || typeof this.settings.sdkOptions !== 'object') {
+      return undefined;
+    }
+
+    const sanitized = { ...(this.settings.sdkOptions as Record<string, unknown>) };
+    const blockedKeys = Array.from(SDK_OPTIONS_BLOCKLIST).filter((key) => key in sanitized);
+
+    if (blockedKeys.length > 0) {
+      this.logger.warn(
+        `[claude-code] sdkOptions includes provider-managed fields (${blockedKeys.join(
+          ', '
+        )}); these will be ignored.`
+      );
+      blockedKeys.forEach((key) => delete sanitized[key]);
+    }
+
+    return sanitized as Partial<Options>;
+  }
+
+  private getEffectiveResume(sdkOptions?: Partial<Options>): string | undefined {
+    return sdkOptions?.resume ?? this.settings.resume ?? this.sessionId;
   }
 
   private extractToolUses(content: unknown): ClaudeToolUse[] {
@@ -550,12 +576,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
   private createQueryOptions(
     abortController: AbortController,
-    responseFormat?: Parameters<LanguageModelV2['doGenerate']>[0]['responseFormat']
+    responseFormat?: Parameters<LanguageModelV2['doGenerate']>[0]['responseFormat'],
+    stderrCollector?: (data: string) => void,
+    sdkOptions?: Partial<Options>,
+    effectiveResume?: string
   ): Options {
     const opts: Partial<Options> & Record<string, unknown> = {
       model: this.getModel(),
       abortController,
-      resume: this.settings.resume ?? this.sessionId,
+      resume: effectiveResume ?? this.settings.resume ?? this.sessionId,
       pathToClaudeCodeExecutable: this.settings.pathToClaudeCodeExecutable,
       maxTurns: this.settings.maxTurns,
       maxThinkingTokens: this.settings.maxThinkingTokens,
@@ -567,6 +596,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       continue: this.settings.continue,
       allowedTools: this.settings.allowedTools,
       disallowedTools: this.settings.disallowedTools,
+      betas: this.settings.betas,
+      allowDangerouslySkipPermissions: this.settings.allowDangerouslySkipPermissions,
+      enableFileCheckpointing: this.settings.enableFileCheckpointing,
+      maxBudgetUsd: this.settings.maxBudgetUsd,
+      plugins: this.settings.plugins,
+      resumeSessionAt: this.settings.resumeSessionAt,
+      sandbox: this.settings.sandbox,
+      tools: this.settings.tools,
       mcpServers: this.settings.mcpServers,
       canUseTool: this.settings.canUseTool,
     };
@@ -608,9 +645,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     if (this.settings.forkSession !== undefined) {
       opts.forkSession = this.settings.forkSession;
     }
-    if (this.settings.stderr !== undefined) {
-      opts.stderr = this.settings.stderr;
-    }
     if (this.settings.strictMcpConfig !== undefined) {
       opts.strictMcpConfig = this.settings.strictMcpConfig;
     }
@@ -621,8 +655,36 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     if (this.settings.hooks) {
       opts.hooks = this.settings.hooks;
     }
-    if (this.settings.env !== undefined) {
-      opts.env = { ...process.env, ...this.settings.env };
+
+    const sdkOverrides = sdkOptions
+      ? (sdkOptions as Partial<Options> & Record<string, unknown>)
+      : undefined;
+    const sdkEnv =
+      sdkOverrides && typeof sdkOverrides.env === 'object' && sdkOverrides.env !== null
+        ? (sdkOverrides.env as Record<string, string | undefined>)
+        : undefined;
+    const sdkStderr =
+      sdkOverrides && typeof sdkOverrides.stderr === 'function'
+        ? (sdkOverrides.stderr as (data: string) => void)
+        : undefined;
+    if (sdkOverrides) {
+      const rest = { ...sdkOverrides };
+      delete rest.env;
+      delete rest.stderr;
+      Object.assign(opts, rest);
+    }
+
+    // Wrap stderr callback to also collect data for error reporting
+    const userStderrCallback = sdkStderr ?? this.settings.stderr;
+    if (stderrCollector || userStderrCallback) {
+      opts.stderr = (data: string) => {
+        if (stderrCollector) stderrCollector(data);
+        if (userStderrCallback) userStderrCallback(data);
+      };
+    }
+
+    if (this.settings.env !== undefined || sdkEnv !== undefined) {
+      opts.env = { ...process.env, ...this.settings.env, ...sdkEnv };
     }
 
     // Native structured outputs (SDK 0.1.45+)
@@ -638,7 +700,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
 
   private handleClaudeCodeError(
     error: unknown,
-    messagesPrompt: string
+    messagesPrompt: string,
+    collectedStderr?: string
   ): APICallError | LoadAPIKeyError {
     // Handle AbortError from the SDK
     if (isAbortError(error)) {
@@ -704,11 +767,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       errorCode === 'ETIMEDOUT' ||
       errorCode === 'ECONNRESET';
 
+    // Use error.stderr if available from SDK, otherwise use collected stderr
+    const stderrFromError =
+      isErrorWithCode(error) && typeof error.stderr === 'string' ? error.stderr : undefined;
+    const stderr = stderrFromError || collectedStderr || undefined;
+
     return createAPICallError({
       message: isErrorWithMessage(error) && error.message ? error.message : 'Claude Code SDK error',
       code: errorCode || undefined,
       exitCode: exitCode,
-      stderr: isErrorWithCode(error) && typeof error.stderr === 'string' ? error.stderr : undefined,
+      stderr,
       promptExcerpt: messagesPrompt.substring(0, 200),
       isRetryable,
     });
@@ -749,7 +817,21 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       options.abortSignal.addEventListener('abort', abortListener, { once: true });
     }
 
-    const queryOptions = this.createQueryOptions(abortController, options.responseFormat);
+    // Collect stderr for error reporting (SDK may not include it in errors)
+    let collectedStderr = '';
+    const stderrCollector = (data: string) => {
+      collectedStderr += data;
+    };
+
+    const sdkOptions = this.getSanitizedSdkOptions();
+    const effectiveResume = this.getEffectiveResume(sdkOptions);
+    const queryOptions = this.createQueryOptions(
+      abortController,
+      options.responseFormat,
+      stderrCollector,
+      sdkOptions,
+      effectiveResume
+    );
 
     let text = '';
     let structuredOutput: unknown | undefined;
@@ -775,8 +857,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     }
 
     const modeSetting = this.settings.streamingInput ?? 'auto';
+    const effectiveCanUseTool = sdkOptions?.canUseTool ?? this.settings.canUseTool;
+    const effectivePermissionPromptToolName =
+      sdkOptions?.permissionPromptToolName ?? this.settings.permissionPromptToolName;
     const wantsStreamInput =
-      modeSetting === 'always' || (modeSetting === 'auto' && !!this.settings.canUseTool);
+      modeSetting === 'always' || (modeSetting === 'auto' && !!effectiveCanUseTool);
 
     if (!wantsStreamInput && hasImageParts) {
       warnings.push({
@@ -790,7 +875,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       done = () => resolve(undefined);
     });
     try {
-      if (this.settings.canUseTool && this.settings.permissionPromptToolName) {
+      if (effectiveCanUseTool && effectivePermissionPromptToolName) {
         throw new Error(
           "canUseTool requires streamingInput mode ('auto' or 'always') and cannot be used with permissionPromptToolName (SDK constraint). Set streamingInput: 'auto' (or 'always') and remove permissionPromptToolName, or remove canUseTool."
         );
@@ -801,13 +886,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
         ? toAsyncIterablePrompt(
             messagesPrompt,
             outputStreamEnded,
-            this.settings.resume ?? this.sessionId,
+            effectiveResume,
             streamingContentParts
           )
         : messagesPrompt;
 
       this.logger.debug(
-        `[claude-code] Executing query with streamingInput: ${wantsStreamInput}, session: ${this.settings.resume ?? this.sessionId ?? 'new'}`
+        `[claude-code] Executing query with streamingInput: ${wantsStreamInput}, session: ${effectiveResume ?? 'new'}`
       );
 
       const response = query({
@@ -896,7 +981,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
         });
       } else {
         // Use unified error handler
-        throw this.handleClaudeCodeError(error, messagesPrompt);
+        throw this.handleClaudeCodeError(error, messagesPrompt, collectedStderr);
       }
     } finally {
       if (options.abortSignal && abortListener) {
@@ -960,7 +1045,21 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
       options.abortSignal.addEventListener('abort', abortListener, { once: true });
     }
 
-    const queryOptions = this.createQueryOptions(abortController, options.responseFormat);
+    // Collect stderr for error reporting (SDK may not include it in errors)
+    let collectedStderr = '';
+    const stderrCollector = (data: string) => {
+      collectedStderr += data;
+    };
+
+    const sdkOptions = this.getSanitizedSdkOptions();
+    const effectiveResume = this.getEffectiveResume(sdkOptions);
+    const queryOptions = this.createQueryOptions(
+      abortController,
+      options.responseFormat,
+      stderrCollector,
+      sdkOptions,
+      effectiveResume
+    );
 
     // Enable partial messages for true streaming (token-by-token delivery)
     // This can be overridden by user settings, but we default to true for doStream
@@ -984,8 +1083,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
     }
 
     const modeSetting = this.settings.streamingInput ?? 'auto';
+    const effectiveCanUseTool = sdkOptions?.canUseTool ?? this.settings.canUseTool;
+    const effectivePermissionPromptToolName =
+      sdkOptions?.permissionPromptToolName ?? this.settings.permissionPromptToolName;
     const wantsStreamInput =
-      modeSetting === 'always' || (modeSetting === 'auto' && !!this.settings.canUseTool);
+      modeSetting === 'always' || (modeSetting === 'auto' && !!effectiveCanUseTool);
 
     if (!wantsStreamInput && hasImageParts) {
       warnings.push({
@@ -1056,7 +1158,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
           // Emit stream-start with warnings
           controller.enqueue({ type: 'stream-start', warnings });
 
-          if (this.settings.canUseTool && this.settings.permissionPromptToolName) {
+          if (effectiveCanUseTool && effectivePermissionPromptToolName) {
             throw new Error(
               "canUseTool requires streamingInput mode ('auto' or 'always') and cannot be used with permissionPromptToolName (SDK constraint). Set streamingInput: 'auto' (or 'always') and remove permissionPromptToolName, or remove canUseTool."
             );
@@ -1067,13 +1169,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             ? toAsyncIterablePrompt(
                 messagesPrompt,
                 outputStreamEnded,
-                this.settings.resume ?? this.sessionId,
+                effectiveResume,
                 streamingContentParts
               )
             : messagesPrompt;
 
           this.logger.debug(
-            `[claude-code] Starting stream query with streamingInput: ${wantsStreamInput}, session: ${this.settings.resume ?? this.sessionId ?? 'new'}`
+            `[claude-code] Starting stream query with streamingInput: ${wantsStreamInput}, session: ${effectiveResume ?? 'new'}`
           );
 
           const response = query({
@@ -1646,7 +1748,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV2 {
             errorToEmit = options.abortSignal?.aborted ? options.abortSignal.reason : error;
           } else {
             // Use unified error handler
-            errorToEmit = this.handleClaudeCodeError(error, messagesPrompt);
+            errorToEmit = this.handleClaudeCodeError(error, messagesPrompt, collectedStderr);
           }
 
           // Emit error as a stream part

@@ -25,7 +25,7 @@ describe('mapClaudeCodeFinishReason', () => {
   });
 
   it('should handle null subtype', () => {
-    expect(mapClaudeCodeFinishReason(null as any)).toBe('stop');
+    expect(mapClaudeCodeFinishReason(null as unknown as string | undefined)).toBe('stop');
   });
 
   it('should be case sensitive', () => {

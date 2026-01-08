@@ -26,8 +26,17 @@ describe('claudeCodeSettingsSchema', () => {
       resume: 'session-123',
       allowedTools: ['Read', 'Write'],
       disallowedTools: ['Bash'],
+      betas: ['context-1m-2025-08-07'],
+      allowDangerouslySkipPermissions: true,
+      enableFileCheckpointing: true,
+      maxBudgetUsd: 2.5,
+      plugins: [{ type: 'local', path: './plugins/my-plugin' }],
+      resumeSessionAt: 'message-uuid',
+      sandbox: { enabled: true },
+      tools: ['Read', 'Write'],
       verbose: true,
       env: { BASH_DEFAULT_TIMEOUT_MS: '10' },
+      sdkOptions: { maxTurns: 3 },
     };
 
     const result = claudeCodeSettingsSchema.safeParse(validSettings);
