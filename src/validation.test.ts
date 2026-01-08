@@ -213,8 +213,15 @@ describe('validateSettings', () => {
   });
 
   it('should validate permissionMode values', () => {
-    // Valid permission modes
-    const validModes = ['default', 'acceptEdits', 'bypassPermissions', 'plan'];
+    // Valid permission modes (including delegate and dontAsk added in SDK 0.2.x)
+    const validModes = [
+      'default',
+      'acceptEdits',
+      'bypassPermissions',
+      'plan',
+      'delegate',
+      'dontAsk',
+    ];
     validModes.forEach((mode) => {
       const result = validateSettings({ permissionMode: mode });
       expect(result.valid).toBe(true);
@@ -357,6 +364,63 @@ describe('validateSettings', () => {
     const res = validateSettings(invalidSdk);
     expect(res.valid).toBe(false);
     expect(res.errors[0]).toContain('mcpServers');
+  });
+
+  it('should validate persistSession option', () => {
+    // Valid boolean values
+    expect(validateSettings({ persistSession: true }).valid).toBe(true);
+    expect(validateSettings({ persistSession: false }).valid).toBe(true);
+
+    // Invalid - non-boolean
+    const invalidResult = validateSettings({ persistSession: 'true' as any });
+    expect(invalidResult.valid).toBe(false);
+    expect(invalidResult.errors[0]).toContain('persistSession');
+  });
+
+  it('should validate spawnClaudeCodeProcess option', () => {
+    // Valid function
+    const validResult = validateSettings({
+      spawnClaudeCodeProcess: () => ({
+        stdin: null,
+        stdout: null,
+        stderr: null,
+        kill: () => {},
+      }),
+    });
+    expect(validResult.valid).toBe(true);
+
+    // Invalid - non-function
+    const invalidResult = validateSettings({ spawnClaudeCodeProcess: 'not-a-function' as any });
+    expect(invalidResult.valid).toBe(false);
+    expect(invalidResult.errors[0]).toContain('spawnClaudeCodeProcess');
+  });
+
+  it('should validate agents with new SDK 0.2.x fields', () => {
+    // Valid agent with new fields
+    const validAgent = {
+      agents: {
+        'test-agent': {
+          description: 'A test agent',
+          prompt: 'You are a test agent',
+          tools: ['Read', 'Write'],
+          disallowedTools: ['Bash'],
+          mcpServers: ['my-server', { custom: { command: 'node', args: ['server.js'] } }],
+          criticalSystemReminder_EXPERIMENTAL: 'Remember to be careful',
+        },
+      },
+    };
+    expect(validateSettings(validAgent).valid).toBe(true);
+
+    // Valid agent without optional new fields
+    const minimalAgent = {
+      agents: {
+        minimal: {
+          description: 'Minimal agent',
+          prompt: 'You are minimal',
+        },
+      },
+    };
+    expect(validateSettings(minimalAgent).valid).toBe(true);
   });
 
   describe('Skills configuration warnings', () => {

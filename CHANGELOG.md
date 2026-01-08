@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-01-07
+
+### Breaking Changes
+
+- **Zod 4 required** - Dropped Zod 3 support due to `@anthropic-ai/claude-agent-sdk@0.2.x` requiring Zod 4. If you need Zod 3 support, use `ai-sdk-provider-claude-code@3.1.x`.
+
+### Added
+
+- **Updated to Claude Agent SDK 0.2.1** - Aligns with Claude Code v2.1.x
+- **New `persistSession` option** - When `false`, disables session persistence to disk. Useful for ephemeral or automated workflows where session history is not needed.
+- **New `spawnClaudeCodeProcess` option** - Custom function to spawn the Claude Code process, enabling execution in VMs, containers, or remote environments.
+- **New permission modes** - Added `'delegate'` and `'dontAsk'` to `permissionMode` validation.
+- **Enhanced agent configuration** - Added support for `disallowedTools`, `mcpServers`, and `criticalSystemReminder_EXPERIMENTAL` in agent definitions.
+- **Re-exported `SpawnedProcess` and `SpawnOptions` types** - For use with custom `spawnClaudeCodeProcess` implementations.
+
+### Changed
+
+- **Peer dependency updated** - `zod` peer dependency changed from `^3.24.1 || ^4.0.0` to `^4.0.0`.
+
 ## [3.1.0] - 2026-01-05
 
 ### Added

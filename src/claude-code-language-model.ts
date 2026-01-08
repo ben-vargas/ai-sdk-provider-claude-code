@@ -709,6 +709,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     if (this.settings.extraArgs !== undefined) {
       opts.extraArgs = this.settings.extraArgs;
     }
+    if (this.settings.persistSession !== undefined) {
+      opts.persistSession = this.settings.persistSession;
+    }
+    if (this.settings.spawnClaudeCodeProcess !== undefined) {
+      opts.spawnClaudeCodeProcess = this.settings.spawnClaudeCodeProcess;
+    }
     // hooks is supported in newer SDKs; include it if provided
     if (this.settings.hooks) {
       opts.hooks = this.settings.hooks;

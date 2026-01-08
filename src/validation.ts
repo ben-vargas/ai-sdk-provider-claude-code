@@ -59,7 +59,9 @@ export const claudeCodeSettingsSchema = z
       .optional(),
     executable: z.enum(['bun', 'deno', 'node']).optional(),
     executableArgs: z.array(z.string()).optional(),
-    permissionMode: z.enum(['default', 'acceptEdits', 'bypassPermissions', 'plan']).optional(),
+    permissionMode: z
+      .enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'delegate', 'dontAsk'])
+      .optional(),
     permissionPromptToolName: z.string().optional(),
     continue: z.boolean().optional(),
     resume: z.string().optional(),
@@ -154,12 +156,24 @@ export const claudeCodeSettingsSchema = z
     agents: z
       .record(
         z.string(),
-        z.object({
-          description: z.string(),
-          tools: z.array(z.string()).optional(),
-          prompt: z.string(),
-          model: z.enum(['sonnet', 'opus', 'haiku', 'inherit']).optional(),
-        })
+        z
+          .object({
+            description: z.string(),
+            tools: z.array(z.string()).optional(),
+            disallowedTools: z.array(z.string()).optional(),
+            prompt: z.string(),
+            model: z.enum(['sonnet', 'opus', 'haiku', 'inherit']).optional(),
+            mcpServers: z
+              .array(
+                z.union([
+                  z.string(),
+                  z.record(z.string(), z.any()), // McpServerConfigForProcessTransport
+                ])
+              )
+              .optional(),
+            criticalSystemReminder_EXPERIMENTAL: z.string().optional(),
+          })
+          .passthrough()
       )
       .optional(),
     includePartialMessages: z.boolean().optional(),
@@ -173,6 +187,13 @@ export const claudeCodeSettingsSchema = z
       .optional(),
     strictMcpConfig: z.boolean().optional(),
     extraArgs: z.record(z.string(), z.union([z.string(), z.null()])).optional(),
+    persistSession: z.boolean().optional(),
+    spawnClaudeCodeProcess: z
+      .any()
+      .refine((val) => val === undefined || typeof val === 'function', {
+        message: 'spawnClaudeCodeProcess must be a function',
+      })
+      .optional(),
     sdkOptions: z.record(z.string(), z.any()).optional(),
   })
   .strict();

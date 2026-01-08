@@ -7,6 +7,9 @@ import type {
   SandboxSettings,
   SdkPluginConfig,
   Options,
+  SpawnedProcess,
+  SpawnOptions,
+  AgentMcpServerSpec,
 } from '@anthropic-ai/claude-agent-sdk';
 
 export type StreamingInputMode = 'auto' | 'always' | 'off';
@@ -272,10 +275,20 @@ export interface ClaudeCodeSettings {
   agents?: Record<
     string,
     {
+      /** Natural language description of when to use this agent */
       description: string;
+      /** Array of allowed tool names. If omitted, inherits all tools from parent */
       tools?: string[];
+      /** Array of tool names to explicitly disallow for this agent */
+      disallowedTools?: string[];
+      /** The agent's system prompt */
       prompt: string;
+      /** Model to use for this agent. If omitted or 'inherit', uses the main model */
       model?: 'sonnet' | 'opus' | 'haiku' | 'inherit';
+      /** MCP servers available to this agent (server names or inline configs) */
+      mcpServers?: AgentMcpServerSpec[];
+      /** Experimental: Critical reminder added to system prompt */
+      criticalSystemReminder_EXPERIMENTAL?: string;
     }
   >;
 
@@ -308,6 +321,20 @@ export interface ClaudeCodeSettings {
    * Additional CLI arguments.
    */
   extraArgs?: Record<string, string | null>;
+
+  /**
+   * When false, disables session persistence to disk.
+   * Sessions will not be saved to ~/.claude/projects/ and cannot be resumed later.
+   * Useful for ephemeral or automated workflows where session history is not needed.
+   * @default true
+   */
+  persistSession?: boolean;
+
+  /**
+   * Custom function to spawn the Claude Code process.
+   * Use this to run Claude Code in VMs, containers, or remote environments.
+   */
+  spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess;
 
   /**
    * Escape hatch for Agent SDK options. Overrides explicit settings.
