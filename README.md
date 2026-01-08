@@ -269,21 +269,22 @@ console.log(result.object); // Guaranteed to match schema
 
 This provider exposes Agent SDK options directly. Key options include:
 
-| Option | Description |
-|--------|-------------|
-| `betas` | Enable beta features (e.g., `['context-1m-2025-08-07']`) |
-| `sandbox` | Configure sandbox behavior (`{ enabled: true }`) |
-| `plugins` | Load custom plugins from local paths |
-| `resumeSessionAt` | Resume session at a specific message UUID |
-| `enableFileCheckpointing` | Enable file rewind support |
-| `maxBudgetUsd` | Maximum budget in USD for the query |
-| `tools` | Tool configuration (array of names or preset) |
-| `allowDangerouslySkipPermissions` | Allow bypassing permissions |
-| `persistSession` | When `false`, disables session persistence to disk (v3.2.0+) |
-| `spawnClaudeCodeProcess` | Custom process spawner for VMs/containers (v3.2.0+) |
-| `permissionMode` | Permission mode: `'default'`, `'acceptEdits'`, `'bypassPermissions'`, `'plan'`, `'delegate'`, `'dontAsk'` |
+| Option                            | Description                                                                                               |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `betas`                           | Enable beta features (e.g., `['context-1m-2025-08-07']`)                                                  |
+| `sandbox`                         | Configure sandbox behavior (`{ enabled: true }`)                                                          |
+| `plugins`                         | Load custom plugins from local paths                                                                      |
+| `resumeSessionAt`                 | Resume session at a specific message UUID                                                                 |
+| `enableFileCheckpointing`         | Enable file rewind support                                                                                |
+| `maxBudgetUsd`                    | Maximum budget in USD for the query                                                                       |
+| `tools`                           | Tool configuration (array of names or preset)                                                             |
+| `allowDangerouslySkipPermissions` | Allow bypassing permissions                                                                               |
+| `persistSession`                  | When `false`, disables session persistence to disk (v3.2.0+)                                              |
+| `spawnClaudeCodeProcess`          | Custom process spawner for VMs/containers (v3.2.0+)                                                       |
+| `permissionMode`                  | Permission mode: `'default'`, `'acceptEdits'`, `'bypassPermissions'`, `'plan'`, `'delegate'`, `'dontAsk'` |
 
 **Agent definitions** (`agents`) now support additional fields (v3.2.0+):
+
 - `disallowedTools` - Tools to explicitly disallow for the agent
 - `mcpServers` - MCP servers available to the agent
 - `criticalSystemReminder_EXPERIMENTAL` - Experimental critical reminder
