@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-01-08
+
+### Added
+
+- **Agent SDK passthroughs + sdkOptions escape hatch** (backport from main)
+  - New passthroughs: `betas`, `sandbox`, `plugins`, `resumeSessionAt`, `enableFileCheckpointing`, `maxBudgetUsd`, `tools`, `allowDangerouslySkipPermissions`
+  - `sdkOptions` escape hatch to override explicit settings (provider-managed fields are ignored)
+  - `sdkOptions.resume` aligns streaming prompt `session_id` with the SDK resume target
+
 ## [2.2.4] - 2025-12-04
 
 ### Changed
