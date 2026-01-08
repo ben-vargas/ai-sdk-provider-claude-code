@@ -354,6 +354,63 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.allowDangerouslySkipPermissions).toBe(true);
     });
 
+    it('should pass through persistSession option', async () => {
+      const modelWithPersist = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          persistSession: false,
+        },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-persist',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithPersist.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.persistSession).toBe(false);
+    });
+
+    it('should pass through spawnClaudeCodeProcess option', async () => {
+      const customSpawner = vi.fn();
+      const modelWithSpawner = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          spawnClaudeCodeProcess: customSpawner,
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-spawn',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithSpawner.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.spawnClaudeCodeProcess).toBe(customSpawner);
+    });
+
     it('should sync sdkOptions.resume with streaming prompt session_id', async () => {
       const modelWithResume = new ClaudeCodeLanguageModel({
         id: 'sonnet',

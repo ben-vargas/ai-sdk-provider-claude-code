@@ -46,17 +46,13 @@ npm install ai-sdk-provider-claude-code@ai-sdk-v4 ai@^4.3.16
 
 ## Zod Compatibility
 
-This package is **fully compatible with both Zod 3 and Zod 4**.
+**Starting from v3.2.0, this package requires Zod 4.**
 
 ```bash
-# With Zod 3
-npm install ai-sdk-provider-claude-code ai zod@^3.0.0
-
-# With Zod 4
 npm install ai-sdk-provider-claude-code ai zod@^4.0.0
 ```
 
-Both this package and the underlying `@anthropic-ai/claude-agent-sdk` declare support for both versions (`peerDependencies: "zod": "^3.24.1 || ^4.0.0"`).
+> **Note:** Zod 3 support was dropped in v3.2.0 due to the underlying `@anthropic-ai/claude-agent-sdk@0.2.x` requiring Zod 4. If you need Zod 3 support, use `ai-sdk-provider-claude-code@3.1.x`.
 
 ## Installation
 
@@ -271,11 +267,30 @@ console.log(result.object); // Guaranteed to match schema
 
 ## Agent SDK Options (Advanced)
 
-This provider now exposes additional Agent SDK options directly (e.g. `betas`, `sandbox`,
-`plugins`, `resumeSessionAt`, `enableFileCheckpointing`, `maxBudgetUsd`, `tools`,
-`allowDangerouslySkipPermissions`).
+This provider exposes Agent SDK options directly. Key options include:
 
-For newer SDK options, use the `sdkOptions` escape hatch. It **overrides** explicit settings,
+| Option | Description |
+|--------|-------------|
+| `betas` | Enable beta features (e.g., `['context-1m-2025-08-07']`) |
+| `sandbox` | Configure sandbox behavior (`{ enabled: true }`) |
+| `plugins` | Load custom plugins from local paths |
+| `resumeSessionAt` | Resume session at a specific message UUID |
+| `enableFileCheckpointing` | Enable file rewind support |
+| `maxBudgetUsd` | Maximum budget in USD for the query |
+| `tools` | Tool configuration (array of names or preset) |
+| `allowDangerouslySkipPermissions` | Allow bypassing permissions |
+| `persistSession` | When `false`, disables session persistence to disk (v3.2.0+) |
+| `spawnClaudeCodeProcess` | Custom process spawner for VMs/containers (v3.2.0+) |
+| `permissionMode` | Permission mode: `'default'`, `'acceptEdits'`, `'bypassPermissions'`, `'plan'`, `'delegate'`, `'dontAsk'` |
+
+**Agent definitions** (`agents`) now support additional fields (v3.2.0+):
+- `disallowedTools` - Tools to explicitly disallow for the agent
+- `mcpServers` - MCP servers available to the agent
+- `criticalSystemReminder_EXPERIMENTAL` - Experimental critical reminder
+
+See [`ClaudeCodeSettings`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/blob/main/src/types.ts) for the full list of supported options (e.g., `allowedTools`, `disallowedTools`, `hooks`, `canUseTool`, `env`, `settingSources`).
+
+For options not explicitly exposed, use the `sdkOptions` escape hatch. It **overrides** explicit settings,
 but provider-managed fields are ignored (`model`, `abortController`, `prompt`, `outputFormat`).
 If you set `sdkOptions.resume`, it also drives the streaming prompt `session_id` so the SDK
 and prompt target the same session.
@@ -284,6 +299,7 @@ and prompt target the same session.
 const model = claudeCode('sonnet', {
   betas: ['context-1m-2025-08-07'],
   sandbox: { enabled: true },
+  persistSession: false, // Don't persist session to disk
   sdkOptions: {
     maxBudgetUsd: 1,
     resume: 'session-abc',

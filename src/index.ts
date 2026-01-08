@@ -61,6 +61,9 @@ export type {
   McpServerConfig,
   McpSdkServerConfigWithInstance,
   OutputFormat,
+  SpawnedProcess,
+  SpawnOptions,
+  AgentMcpServerSpec,
 } from '@anthropic-ai/claude-agent-sdk';
 
 /**
