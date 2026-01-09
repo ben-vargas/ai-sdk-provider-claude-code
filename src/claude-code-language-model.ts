@@ -1328,8 +1328,20 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               }
 
               const content = message.message.content;
+              const tools = this.extractToolUses(content);
 
-              for (const tool of this.extractToolUses(content)) {
+              // Close any active text part before tool calls start.
+              // This ensures tool calls split text into separate parts.
+              // We only do this if there are actual tools to avoid unnecessary text-end events.
+              if (textPartId && tools.length > 0) {
+                controller.enqueue({
+                  type: 'text-end',
+                  id: textPartId,
+                });
+                textPartId = undefined; // Reset so next text gets a new ID
+              }
+
+              for (const tool of tools) {
                 const toolId = tool.id;
                 let state = toolStates.get(toolId);
                 if (!state) {
