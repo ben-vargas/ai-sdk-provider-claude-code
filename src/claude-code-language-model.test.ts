@@ -1522,6 +1522,64 @@ describe('ClaudeCodeLanguageModel', () => {
         expect(textStarts).toHaveLength(1);
         expect(textEnds).toHaveLength(1);
       });
+
+      it('does not double-emit JSON when tool calls follow JSON streaming', async () => {
+        const toolUseId = 'toolu_json_1';
+        const toolName = 'noop';
+        const toolInput = { ok: true };
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // JSON deltas stream the content
+            yield createJsonDeltaEvent('{"name":"Bob"}');
+            // Assistant emits a tool call after JSON streaming
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: toolUseId,
+                    name: toolName,
+                    input: toolInput,
+                  },
+                ],
+              },
+            };
+            // Result arrives with structured_output (same content)
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'json-tool-session',
+              structured_output: { name: 'Bob' },
+              usage: { input_tokens: 10, output_tokens: 5 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+          responseFormat: { type: 'json', schema: { type: 'object' } },
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        // Should NOT have duplicate JSON - only the streamed delta
+        const textStarts = chunks.filter((c) => c.type === 'text-start');
+        const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+        const textEnds = chunks.filter((c) => c.type === 'text-end');
+        expect(textStarts).toHaveLength(1);
+        expect(textDeltas).toHaveLength(1);
+        expect(textDeltas[0].delta).toBe('{"name":"Bob"}');
+        expect(textEnds).toHaveLength(1);
+      });
     });
 
     it('emits streaming prerequisite warning when images are provided without streaming input', async () => {
