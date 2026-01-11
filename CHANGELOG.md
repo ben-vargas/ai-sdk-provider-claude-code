@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-01-11
+
+### Fixed
+
+- **Streaming text parts now close before tool calls** - Ensures proper text-end events are emitted before tool-input-start, fixing streaming semantics when text and tools are interleaved
+
 ## [3.2.0] - 2026-01-07
 
 ### Breaking Changes

@@ -1209,6 +1209,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         let textPartId: string | undefined;
         let streamedTextLength = 0; // Track text already emitted via stream_events to avoid duplication
         let hasReceivedStreamEvents = false; // Track if we've received any stream_events
+        let hasStreamedJson = false; // Track if JSON has been streamed via input_json_delta
 
         try {
           // Emit stream-start with warnings
@@ -1310,6 +1311,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   });
                   accumulatedText += jsonDelta;
                   streamedTextLength += jsonDelta.length;
+                  hasStreamedJson = true;
                 }
                 // In non-JSON mode, input_json_delta is ignored (it's internal tool use)
               }
@@ -1328,8 +1330,20 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               }
 
               const content = message.message.content;
+              const tools = this.extractToolUses(content);
 
-              for (const tool of this.extractToolUses(content)) {
+              // Close any active text part before tool calls start.
+              // This ensures tool calls split text into separate parts.
+              // We only do this if there are actual tools to avoid unnecessary text-end events.
+              if (textPartId && tools.length > 0) {
+                controller.enqueue({
+                  type: 'text-end',
+                  id: textPartId,
+                });
+                textPartId = undefined; // Reset so next text gets a new ID
+              }
+
+              for (const tool of tools) {
                 const toolId = tool.id;
                 let state = toolStates.get(toolId);
                 if (!state) {
@@ -1635,14 +1649,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
               // Check if we've already streamed JSON via input_json_delta
               const alreadyStreamedJson =
-                textPartId && options.responseFormat?.type === 'json' && hasReceivedStreamEvents;
+                hasStreamedJson && options.responseFormat?.type === 'json' && hasReceivedStreamEvents;
 
-              if (alreadyStreamedJson && textPartId) {
-                // We've already streamed JSON deltas, just close the text part
-                controller.enqueue({
-                  type: 'text-end',
-                  id: textPartId,
-                });
+              if (alreadyStreamedJson) {
+                // We've already streamed JSON deltas; only close the text part if it's still open.
+                if (textPartId) {
+                  controller.enqueue({
+                    type: 'text-end',
+                    id: textPartId,
+                  });
+                }
               } else if (structuredOutput !== undefined) {
                 // Emit structured output as text (fallback when streaming didn't occur)
                 const jsonTextId = generateId();
