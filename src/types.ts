@@ -10,6 +10,7 @@ import type {
   SpawnedProcess,
   SpawnOptions,
   AgentMcpServerSpec,
+  Query,
 } from '@anthropic-ai/claude-agent-sdk';
 
 export type StreamingInputMode = 'auto' | 'always' | 'off';
@@ -350,4 +351,21 @@ export interface ClaudeCodeSettings {
    * @default 10000
    */
   maxToolResultSize?: number;
+
+  /**
+   * Callback invoked when the Query object is created.
+   * Use this to access the Query for advanced features like mid-stream
+   * message injection via `query.streamInput()`.
+   *
+   * @example
+   * ```typescript
+   * const model = claudeCode('sonnet', {
+   *   onQueryCreated: (query) => {
+   *     // Store query for later injection
+   *     myQueryStore.set(sessionId, query);
+   *   }
+   * });
+   * ```
+   */
+  onQueryCreated?: (query: Query) => void;
 }
