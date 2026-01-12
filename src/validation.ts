@@ -195,6 +195,13 @@ export const claudeCodeSettingsSchema = z
       })
       .optional(),
     sdkOptions: z.record(z.string(), z.any()).optional(),
+    // Callback invoked when Query object is created - for mid-stream injection via streamInput()
+    onQueryCreated: z
+      .any()
+      .refine((val) => val === undefined || typeof val === 'function', {
+        message: 'onQueryCreated must be a function',
+      })
+      .optional(),
   })
   .strict();
 

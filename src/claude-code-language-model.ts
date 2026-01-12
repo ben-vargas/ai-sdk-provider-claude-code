@@ -962,6 +962,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         options: queryOptions,
       });
 
+      // Invoke onQueryCreated callback to expose Query object for advanced features
+      // like mid-stream message injection via query.streamInput()
+      this.settings.onQueryCreated?.(response);
+
       for await (const message of response) {
         this.logger.debug(`[claude-code] Received message type: ${message.type}`);
         if (message.type === 'assistant') {
@@ -1239,6 +1243,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             prompt: sdkPrompt,
             options: queryOptions,
           });
+
+          // Invoke onQueryCreated callback to expose Query object for advanced features
+          // like mid-stream message injection via query.streamInput()
+          this.settings.onQueryCreated?.(response);
 
           for await (const message of response) {
             this.logger.debug(`[claude-code] Stream received message type: ${message.type}`);
