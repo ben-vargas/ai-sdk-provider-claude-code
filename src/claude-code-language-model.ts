@@ -1377,6 +1377,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         let hasReceivedStreamEvents = false; // Track if we've received any stream_events
         let hasStreamedJson = false; // Track if JSON has been streamed via input_json_delta
 
+        // Content block streaming: Map block indices to tool IDs and accumulated JSON
+        const toolBlocksByIndex = new Map<number, string>();
+        const toolInputAccumulators = new Map<string, string>();
+
+        // Extended thinking: Map block indices to reasoning part IDs
+        const reasoningBlocksByIndex = new Map<number, string>();
+        let currentReasoningPartId: string | undefined;
+
         try {
           // Emit stream-start with warnings
           controller.enqueue({ type: 'stream-start', warnings });
@@ -1458,8 +1466,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               ) {
                 const jsonDelta = event.delta.partial_json;
                 hasReceivedStreamEvents = true;
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
 
-                // Only emit in JSON mode - this enables streamObject() to receive partial updates
+                // In JSON mode, prioritize streaming to text-delta for streamObject() support
+                // The SDK's internal StructuredOutput tool uses input_json_delta to stream JSON responses
                 if (options.responseFormat?.type === 'json') {
                   // Emit text-start if this is the first JSON delta
                   if (!textPartId) {
@@ -1478,12 +1488,186 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   accumulatedText += jsonDelta;
                   streamedTextLength += jsonDelta.length;
                   hasStreamedJson = true;
+                  continue;
                 }
-                // In non-JSON mode, input_json_delta is ignored (it's internal tool use)
+
+                // In non-JSON mode, route to tool-input-delta if we have a tracked tool
+                const toolId = toolBlocksByIndex.get(blockIndex);
+                if (toolId) {
+                  // Accumulate and emit tool-input-delta
+                  const accumulated = (toolInputAccumulators.get(toolId) ?? '') + jsonDelta;
+                  toolInputAccumulators.set(toolId, accumulated);
+
+                  controller.enqueue({
+                    type: 'tool-input-delta',
+                    id: toolId,
+                    delta: jsonDelta,
+                  });
+                  continue;
+                }
+                // input_json_delta without tool context in non-JSON mode is ignored
               }
 
-              // Other stream_event types (content_block_start, content_block_stop, etc.)
-              // are informational and don't need to be forwarded to the AI SDK stream
+              // Handle content_block_start for tool_use - emit tool-input-start immediately
+              if (
+                event.type === 'content_block_start' &&
+                'content_block' in event &&
+                event.content_block?.type === 'tool_use'
+              ) {
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
+                const toolBlock = event.content_block as {
+                  type: string;
+                  id?: string;
+                  name?: string;
+                };
+                const toolId =
+                  typeof toolBlock.id === 'string' && toolBlock.id.length > 0
+                    ? toolBlock.id
+                    : generateId();
+                const toolName =
+                  typeof toolBlock.name === 'string' && toolBlock.name.length > 0
+                    ? toolBlock.name
+                    : ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
+
+                hasReceivedStreamEvents = true;
+
+                // Close any active text part before tool starts
+                if (textPartId) {
+                  controller.enqueue({
+                    type: 'text-end',
+                    id: textPartId,
+                  });
+                  textPartId = undefined;
+                }
+
+                // Track this block for later delta/stop events
+                toolBlocksByIndex.set(blockIndex, toolId);
+
+                // Create tool state if not exists
+                let state = toolStates.get(toolId);
+                if (!state) {
+                  state = {
+                    name: toolName,
+                    inputStarted: false,
+                    inputClosed: false,
+                    callEmitted: false,
+                  };
+                  toolStates.set(toolId, state);
+                }
+
+                // Emit tool-input-start immediately
+                if (!state.inputStarted) {
+                  this.logger.debug(
+                    `[claude-code] Tool input started (content_block) - Tool: ${toolName}, ID: ${toolId}`
+                  );
+                  controller.enqueue({
+                    type: 'tool-input-start',
+                    id: toolId,
+                    toolName,
+                    providerExecuted: true,
+                    dynamic: true,
+                  } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                  state.inputStarted = true;
+                }
+                continue;
+              }
+
+              // Handle content_block_start for thinking - emit reasoning-start immediately
+              if (
+                event.type === 'content_block_start' &&
+                'content_block' in event &&
+                event.content_block?.type === 'thinking'
+              ) {
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
+                hasReceivedStreamEvents = true;
+
+                // Close any active text part before reasoning starts
+                if (textPartId) {
+                  controller.enqueue({
+                    type: 'text-end',
+                    id: textPartId,
+                  });
+                  textPartId = undefined;
+                }
+
+                const reasoningPartId = generateId();
+                reasoningBlocksByIndex.set(blockIndex, reasoningPartId);
+                currentReasoningPartId = reasoningPartId;
+
+                this.logger.debug(
+                  `[claude-code] Reasoning started (content_block) - ID: ${reasoningPartId}`
+                );
+                controller.enqueue({
+                  type: 'reasoning-start',
+                  id: reasoningPartId,
+                });
+                continue;
+              }
+
+              // Handle thinking_delta for extended thinking
+              if (
+                event.type === 'content_block_delta' &&
+                event.delta.type === 'thinking_delta' &&
+                'thinking' in event.delta &&
+                event.delta.thinking
+              ) {
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
+                const reasoningPartId =
+                  reasoningBlocksByIndex.get(blockIndex) ?? currentReasoningPartId;
+                hasReceivedStreamEvents = true;
+
+                if (reasoningPartId) {
+                  controller.enqueue({
+                    type: 'reasoning-delta',
+                    id: reasoningPartId,
+                    delta: event.delta.thinking,
+                  });
+                }
+                continue;
+              }
+
+              // Handle content_block_stop - finalize tool input or reasoning
+              if (event.type === 'content_block_stop') {
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
+                hasReceivedStreamEvents = true;
+
+                // Check if this is a tool block
+                const toolId = toolBlocksByIndex.get(blockIndex);
+                if (toolId) {
+                  const state = toolStates.get(toolId);
+                  if (state) {
+                    // Update state with accumulated input
+                    const accumulatedInput = toolInputAccumulators.get(toolId);
+                    if (accumulatedInput) {
+                      state.lastSerializedInput = accumulatedInput;
+                    }
+                    // Close tool input
+                    closeToolInput(toolId, state);
+                  }
+                  toolBlocksByIndex.delete(blockIndex);
+                  toolInputAccumulators.delete(toolId);
+                  continue;
+                }
+
+                // Check if this is a reasoning block
+                const reasoningPartId = reasoningBlocksByIndex.get(blockIndex);
+                if (reasoningPartId) {
+                  this.logger.debug(
+                    `[claude-code] Reasoning ended (content_block) - ID: ${reasoningPartId}`
+                  );
+                  controller.enqueue({
+                    type: 'reasoning-end',
+                    id: reasoningPartId,
+                  });
+                  reasoningBlocksByIndex.delete(blockIndex);
+                  if (currentReasoningPartId === reasoningPartId) {
+                    currentReasoningPartId = undefined;
+                  }
+                  continue;
+                }
+              }
+
+              // Other stream_event types are informational
               continue;
             }
 
