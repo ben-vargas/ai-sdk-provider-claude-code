@@ -101,6 +101,47 @@ function isAbortError(err: unknown): boolean {
   return false;
 }
 
+const DEFAULT_INHERITED_ENV_VARS =
+  process.platform === 'win32'
+    ? [
+        'APPDATA',
+        'HOMEDRIVE',
+        'HOMEPATH',
+        'LOCALAPPDATA',
+        'PATH',
+        'PATHEXT',
+        'SYSTEMDRIVE',
+        'SYSTEMROOT',
+        'TEMP',
+        'TMP',
+        'USERNAME',
+        'USERPROFILE',
+        'WINDIR',
+      ]
+    : ['HOME', 'LOGNAME', 'PATH', 'SHELL', 'TERM', 'USER', 'LANG', 'LC_ALL', 'TMPDIR'];
+
+const CLAUDE_ENV_VARS = ['CLAUDE_CONFIG_DIR'];
+
+function getBaseProcessEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  const allowedKeys = new Set([...DEFAULT_INHERITED_ENV_VARS, ...CLAUDE_ENV_VARS]);
+
+  for (const key of allowedKeys) {
+    const value = process.env[key];
+    if (typeof value !== 'string') {
+      continue;
+    }
+
+    if (value.startsWith('()')) {
+      continue;
+    }
+
+    env[key] = value;
+  }
+
+  return env;
+}
+
 const STREAMING_FEATURE_WARNING =
   "Claude Agent SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
 
@@ -748,7 +789,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     }
 
     if (this.settings.env !== undefined || sdkEnv !== undefined) {
-      opts.env = { ...process.env, ...this.settings.env, ...sdkEnv };
+      const baseEnv = getBaseProcessEnv();
+      opts.env = { ...baseEnv, ...this.settings.env, ...sdkEnv };
     }
 
     // Native structured outputs (SDK 0.1.45+)
@@ -1649,7 +1691,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
               // Check if we've already streamed JSON via input_json_delta
               const alreadyStreamedJson =
-                hasStreamedJson && options.responseFormat?.type === 'json' && hasReceivedStreamEvents;
+                hasStreamedJson &&
+                options.responseFormat?.type === 'json' &&
+                hasReceivedStreamEvents;
 
               if (alreadyStreamedJson) {
                 // We've already streamed JSON deltas; only close the text part if it's still open.

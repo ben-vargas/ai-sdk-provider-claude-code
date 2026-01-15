@@ -219,12 +219,14 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.canUseTool).toBe(canUseTool);
     });
 
-    it('should merge process.env with settings.env and allow undefined values', async () => {
+    it('should merge base env with settings.env and allow undefined values', async () => {
       const originalMerge = process.env.C2_TEST_MERGE;
       const originalOverride = process.env.C2_TEST_OVERRIDE;
+      const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
       try {
         process.env.C2_TEST_MERGE = 'from-process';
         process.env.C2_TEST_OVERRIDE = 'original';
+        process.env.CLAUDE_CONFIG_DIR = 'from-process';
 
         const modelWithEnv = new ClaudeCodeLanguageModel({
           id: 'sonnet',
@@ -260,8 +262,9 @@ describe('ClaudeCodeLanguageModel', () => {
         // Provided vars
         expect(call.options.env.CUSTOM_ENV).toBe('custom');
         expect(call.options.env.C2_TEST_OVERRIDE).toBe('override');
-        // Merged from process.env
-        expect(call.options.env.C2_TEST_MERGE).toBe('from-process');
+        // Whitelisted from process.env
+        expect(call.options.env.CLAUDE_CONFIG_DIR).toBe('from-process');
+        expect('C2_TEST_MERGE' in call.options.env).toBe(false);
         // Undefined values are preserved (key exists with undefined)
         expect('C2_TEST_UNDEF' in call.options.env).toBe(true);
         expect(call.options.env.C2_TEST_UNDEF).toBeUndefined();
@@ -275,6 +278,11 @@ describe('ClaudeCodeLanguageModel', () => {
           delete process.env.C2_TEST_OVERRIDE;
         } else {
           process.env.C2_TEST_OVERRIDE = originalOverride;
+        }
+        if (originalClaudeConfigDir === undefined) {
+          delete process.env.CLAUDE_CONFIG_DIR;
+        } else {
+          process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
         }
       }
     });
@@ -495,11 +503,12 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.abortController).not.toBe(externalAbortController);
     });
 
-    it('should merge env from process, settings, and sdkOptions', async () => {
+    it('should merge base env with settings and sdkOptions env', async () => {
       const originalProcessEnv = { ...process.env };
       try {
         process.env.C2_ENV_PROCESS = 'from-process';
         process.env.C2_ENV_OVERRIDE = 'process';
+        process.env.CLAUDE_CONFIG_DIR = 'from-process';
 
         const modelWithEnv = new ClaudeCodeLanguageModel({
           id: 'sonnet',
@@ -534,10 +543,11 @@ describe('ClaudeCodeLanguageModel', () => {
         } as any);
 
         const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
-        expect(call?.options?.env?.C2_ENV_PROCESS).toBe('from-process');
+        expect(call?.options?.env?.CLAUDE_CONFIG_DIR).toBe('from-process');
         expect(call?.options?.env?.C2_ENV_SETTINGS).toBe('from-settings');
         expect(call?.options?.env?.C2_ENV_SDK).toBe('from-sdk');
         expect(call?.options?.env?.C2_ENV_OVERRIDE).toBe('sdk');
+        expect(call?.options?.env?.C2_ENV_PROCESS).toBeUndefined();
       } finally {
         process.env = originalProcessEnv;
       }
