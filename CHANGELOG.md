@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MCP tool result normalization** - Handles MCP content format (`[{type: 'text', text: '...'}]`) in tool results, automatically extracting and parsing JSON content from text blocks while preserving non-text content blocks (images, resources, audio) unchanged
 - **Tool result stream truncation** - Adds `maxToolResultSize` (default 10k) to cap tool results sent to the client stream and truncates oversized `rawResult` metadata to avoid stream bloat
 - **Subagent hierarchy tracking** - Tool stream events now include `providerMetadata['claude-code'].parentToolCallId` to expose Task/subagent parent-child relationships; Task tools always emit null, and parallel Task parents remain null when ambiguous
+- **Content block streaming** - Supports streaming `content_block_*` events for tool input, text, and reasoning. Tool inputs now stream via `input_json_delta` with tool-call emission at block completion, and extended thinking emits `reasoning-*` stream parts.
 
 ### Security
 

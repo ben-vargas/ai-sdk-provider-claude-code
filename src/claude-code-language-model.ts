@@ -449,6 +449,7 @@ function truncateToolResultForStream(
  * });
  * ```
  */
+
 export class ClaudeCodeLanguageModel implements LanguageModelV3 {
   readonly specificationVersion = 'v3' as const;
   readonly defaultObjectGenerationMode = 'json' as const;
@@ -677,7 +678,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         return result;
       }
     }
-
     // Handle MCP content format: [{type: 'text', text: '...'}, ...]
     // MCP tools can return multiple content blocks; only normalize when all blocks are text.
     if (Array.isArray(result) && result.length > 0) {
@@ -1377,6 +1377,20 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         let hasReceivedStreamEvents = false; // Track if we've received any stream_events
         let hasStreamedJson = false; // Track if JSON has been streamed via input_json_delta
 
+        // Content block streaming: Map block indices to tool IDs and accumulated JSON
+        const toolBlocksByIndex = new Map<number, string>();
+        const toolInputAccumulators = new Map<string, string>();
+
+        // Track text content blocks by index for correlating text_delta with text parts
+        const textBlocksByIndex = new Map<number, string>();
+
+        // Track if text was streamed via content blocks to prevent double emission in result handler
+        let textStreamedViaContentBlock = false;
+
+        // Extended thinking: Map block indices to reasoning part IDs
+        const reasoningBlocksByIndex = new Map<number, string>();
+        let currentReasoningPartId: string | undefined;
+
         try {
           // Emit stream-start with warnings
           controller.enqueue({ type: 'stream-start', warnings });
@@ -1458,8 +1472,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               ) {
                 const jsonDelta = event.delta.partial_json;
                 hasReceivedStreamEvents = true;
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
 
-                // Only emit in JSON mode - this enables streamObject() to receive partial updates
+                // In JSON mode, prioritize streaming to text-delta for streamObject() support
+                // The SDK's internal StructuredOutput tool uses input_json_delta to stream JSON responses
                 if (options.responseFormat?.type === 'json') {
                   // Emit text-start if this is the first JSON delta
                   if (!textPartId) {
@@ -1478,12 +1494,266 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   accumulatedText += jsonDelta;
                   streamedTextLength += jsonDelta.length;
                   hasStreamedJson = true;
+                  continue;
                 }
-                // In non-JSON mode, input_json_delta is ignored (it's internal tool use)
+
+                // In non-JSON mode, route to tool-input-delta if we have a tracked tool
+                const toolId = toolBlocksByIndex.get(blockIndex);
+                if (toolId) {
+                  // Accumulate and emit tool-input-delta
+                  const accumulated = (toolInputAccumulators.get(toolId) ?? '') + jsonDelta;
+                  toolInputAccumulators.set(toolId, accumulated);
+
+                  controller.enqueue({
+                    type: 'tool-input-delta',
+                    id: toolId,
+                    delta: jsonDelta,
+                  });
+                  continue;
+                }
+                // input_json_delta without tool context in non-JSON mode is ignored
               }
 
-              // Other stream_event types (content_block_start, content_block_stop, etc.)
-              // are informational and don't need to be forwarded to the AI SDK stream
+              // Handle content_block_start for tool_use - emit tool-input-start immediately
+              if (
+                event.type === 'content_block_start' &&
+                'content_block' in event &&
+                event.content_block?.type === 'tool_use'
+              ) {
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
+                const toolBlock = event.content_block as {
+                  type: string;
+                  id?: string;
+                  name?: string;
+                };
+                const toolId =
+                  typeof toolBlock.id === 'string' && toolBlock.id.length > 0
+                    ? toolBlock.id
+                    : generateId();
+                const toolName =
+                  typeof toolBlock.name === 'string' && toolBlock.name.length > 0
+                    ? toolBlock.name
+                    : ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
+
+                hasReceivedStreamEvents = true;
+
+                // Close any active text part before tool starts
+                if (textPartId) {
+                  controller.enqueue({
+                    type: 'text-end',
+                    id: textPartId,
+                  });
+                  textPartId = undefined;
+                }
+
+                // Track this block for later delta/stop events
+                toolBlocksByIndex.set(blockIndex, toolId);
+                toolInputAccumulators.set(toolId, '');
+
+                // Create tool state if not exists
+                let state = toolStates.get(toolId);
+                if (!state) {
+                  // Use timing-based inference for parent (Task tools are top-level)
+                  const currentParentId = toolName === 'Task' ? null : getFallbackParentId();
+                  state = {
+                    name: toolName,
+                    inputStarted: false,
+                    inputClosed: false,
+                    callEmitted: false,
+                    parentToolCallId: currentParentId,
+                  };
+                  toolStates.set(toolId, state);
+                }
+
+                // Emit tool-input-start immediately with providerMetadata for parent context
+                if (!state.inputStarted) {
+                  this.logger.debug(
+                    `[claude-code] Tool input started (content_block) - Tool: ${toolName}, ID: ${toolId}, parent: ${state.parentToolCallId}`
+                  );
+                  controller.enqueue({
+                    type: 'tool-input-start',
+                    id: toolId,
+                    toolName,
+                    providerExecuted: true,
+                    dynamic: true,
+                    providerMetadata: {
+                      'claude-code': {
+                        parentToolCallId: state.parentToolCallId ?? null,
+                      },
+                    },
+                  } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+                  // Track Task tools as active so nested tools can reference them as parent
+                  if (toolName === 'Task') {
+                    activeTaskTools.set(toolId, { startTime: Date.now() });
+                  }
+                  state.inputStarted = true;
+                }
+                continue;
+              }
+
+              // Handle content_block_start for text - emit text-start early
+              if (
+                event.type === 'content_block_start' &&
+                'content_block' in event &&
+                event.content_block?.type === 'text'
+              ) {
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
+                hasReceivedStreamEvents = true;
+
+                // Generate text part ID early and map to block index
+                const partId = generateId();
+                textBlocksByIndex.set(blockIndex, partId);
+                textPartId = partId;
+
+                this.logger.debug(
+                  `[claude-code] Text content block started - Index: ${blockIndex}, ID: ${partId}`
+                );
+
+                controller.enqueue({
+                  type: 'text-start',
+                  id: partId,
+                });
+                textStreamedViaContentBlock = true;
+                continue;
+              }
+
+              // Handle content_block_start for thinking - emit reasoning-start immediately
+              if (
+                event.type === 'content_block_start' &&
+                'content_block' in event &&
+                event.content_block?.type === 'thinking'
+              ) {
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
+                hasReceivedStreamEvents = true;
+
+                // Close any active text part before reasoning starts
+                if (textPartId) {
+                  controller.enqueue({
+                    type: 'text-end',
+                    id: textPartId,
+                  });
+                  textPartId = undefined;
+                }
+
+                const reasoningPartId = generateId();
+                reasoningBlocksByIndex.set(blockIndex, reasoningPartId);
+                currentReasoningPartId = reasoningPartId;
+
+                this.logger.debug(
+                  `[claude-code] Reasoning started (content_block) - ID: ${reasoningPartId}`
+                );
+                controller.enqueue({
+                  type: 'reasoning-start',
+                  id: reasoningPartId,
+                });
+                continue;
+              }
+
+              // Handle thinking_delta for extended thinking
+              if (
+                event.type === 'content_block_delta' &&
+                event.delta.type === 'thinking_delta' &&
+                'thinking' in event.delta &&
+                event.delta.thinking
+              ) {
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
+                const reasoningPartId =
+                  reasoningBlocksByIndex.get(blockIndex) ?? currentReasoningPartId;
+                hasReceivedStreamEvents = true;
+
+                if (reasoningPartId) {
+                  controller.enqueue({
+                    type: 'reasoning-delta',
+                    id: reasoningPartId,
+                    delta: event.delta.thinking,
+                  });
+                }
+                continue;
+              }
+
+              // Handle content_block_stop - finalize tool input, text, or reasoning
+              if (event.type === 'content_block_stop') {
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
+                hasReceivedStreamEvents = true;
+
+                // Check if this is a tool block
+                const toolId = toolBlocksByIndex.get(blockIndex);
+                if (toolId) {
+                  const state = toolStates.get(toolId);
+                  if (state && !state.inputClosed) {
+                    const accumulatedInput = toolInputAccumulators.get(toolId) ?? '';
+                    this.logger.debug(
+                      `[claude-code] Tool content block stopped - Index: ${blockIndex}, Tool: ${state.name}, ID: ${toolId}`
+                    );
+                    controller.enqueue({
+                      type: 'tool-input-end',
+                      id: toolId,
+                    });
+                    state.inputClosed = true;
+                    state.lastSerializedInput = accumulatedInput;
+
+                    // Emit tool-call immediately when input is complete (don't wait for result)
+                    // This allows UI to show "running" state while tool executes
+                    if (!state.callEmitted) {
+                      controller.enqueue({
+                        type: 'tool-call',
+                        toolCallId: toolId,
+                        toolName: state.name,
+                        input: accumulatedInput,
+                        providerExecuted: true,
+                        dynamic: true,
+                        providerMetadata: {
+                          'claude-code': {
+                            rawInput: accumulatedInput,
+                            parentToolCallId: state.parentToolCallId ?? null,
+                          },
+                        },
+                      } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                      state.callEmitted = true;
+                    }
+                  }
+                  toolBlocksByIndex.delete(blockIndex);
+                  toolInputAccumulators.delete(toolId);
+                  continue;
+                }
+
+                // Check if this is a text block
+                const textId = textBlocksByIndex.get(blockIndex);
+                if (textId) {
+                  this.logger.debug(
+                    `[claude-code] Text content block stopped - Index: ${blockIndex}, ID: ${textId}`
+                  );
+                  controller.enqueue({
+                    type: 'text-end',
+                    id: textId,
+                  });
+                  textBlocksByIndex.delete(blockIndex);
+                  if (textPartId === textId) {
+                    textPartId = undefined;
+                  }
+                  continue;
+                }
+
+                // Check if this is a reasoning block
+                const reasoningPartId = reasoningBlocksByIndex.get(blockIndex);
+                if (reasoningPartId) {
+                  this.logger.debug(
+                    `[claude-code] Reasoning ended (content_block) - ID: ${reasoningPartId}`
+                  );
+                  controller.enqueue({
+                    type: 'reasoning-end',
+                    id: reasoningPartId,
+                  });
+                  reasoningBlocksByIndex.delete(blockIndex);
+                  if (currentReasoningPartId === reasoningPartId) {
+                    currentReasoningPartId = undefined;
+                  }
+                  continue;
+                }
+              }
+
+              // Other stream_event types are informational
               continue;
             }
 
@@ -1497,7 +1767,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
               // Extract parent_tool_use_id from SDK message - this is the authoritative source
               // SDK provides this field when tool is executed within a subagent context
-              const sdkParentToolUseId = (message as { parent_tool_use_id?: string }).parent_tool_use_id;
+              const sdkParentToolUseId = (message as { parent_tool_use_id?: string })
+                .parent_tool_use_id;
 
               const content = message.message.content;
               const tools = this.extractToolUses(content);
@@ -1671,7 +1942,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               }
 
               // Extract parent_tool_use_id from SDK message for late-arriving tool results
-              const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string }).parent_tool_use_id;
+              const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string })
+                .parent_tool_use_id;
 
               const content = message.message.content;
               for (const result of this.extractToolResults(content)) {
@@ -1689,7 +1961,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   );
                   // Use SDK parent if available, otherwise fall back to timing-based inference
                   const resolvedParentId =
-                    toolName === 'Task' ? null : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+                    toolName === 'Task'
+                      ? null
+                      : (sdkParentToolUseIdForResults ?? getFallbackParentId());
                   state = {
                     name: toolName,
                     inputStarted: false,
@@ -1788,7 +2062,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   );
                   // Use SDK parent if available, otherwise fall back to timing-based inference
                   const errorResolvedParentId =
-                    toolName === 'Task' ? null : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+                    toolName === 'Task'
+                      ? null
+                      : (sdkParentToolUseIdForResults ?? getFallbackParentId());
                   state = {
                     name: toolName,
                     inputStarted: true,
@@ -1918,7 +2194,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   type: 'text-end',
                   id: textPartId,
                 });
-              } else if (accumulatedText) {
+              } else if (accumulatedText && !textStreamedViaContentBlock) {
                 // Fallback for JSON mode without schema: emit accumulated text
                 // This handles the case where responseFormat.type === 'json' but no schema
                 // was provided, so the SDK returns plain text instead of structured_output
@@ -2004,7 +2280,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 type: 'text-end',
                 id: textPartId,
               });
-            } else if (accumulatedText) {
+            } else if (accumulatedText && !textStreamedViaContentBlock) {
               const fallbackTextId = generateId();
               controller.enqueue({
                 type: 'text-start',
