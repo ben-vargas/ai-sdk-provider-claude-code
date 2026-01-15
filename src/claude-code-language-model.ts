@@ -2239,6 +2239,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   },
                 },
               });
+              controller.close();
+              return;
             } else if (message.type === 'system' && message.subtype === 'init') {
               // Store session ID for future use
               this.setSessionId(message.session_id);
