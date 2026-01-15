@@ -748,7 +748,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     }
 
     if (this.settings.env !== undefined || sdkEnv !== undefined) {
-      opts.env = { ...process.env, ...this.settings.env, ...sdkEnv };
+      opts.env = { ...this.settings.env, ...sdkEnv };
     }
 
     // Native structured outputs (SDK 0.1.45+)
