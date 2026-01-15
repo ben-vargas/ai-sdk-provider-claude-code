@@ -1542,23 +1542,28 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
                 // Track this block for later delta/stop events
                 toolBlocksByIndex.set(blockIndex, toolId);
+                toolInputAccumulators.set(toolId, '');
 
                 // Create tool state if not exists
                 let state = toolStates.get(toolId);
                 if (!state) {
+                  // Use timing-based inference for parent (Task tools are top-level)
+                  const currentParentId =
+                    toolName === 'Task' ? null : getFallbackParentId();
                   state = {
                     name: toolName,
                     inputStarted: false,
                     inputClosed: false,
                     callEmitted: false,
+                    parentToolCallId: currentParentId,
                   };
                   toolStates.set(toolId, state);
                 }
 
-                // Emit tool-input-start immediately
+                // Emit tool-input-start immediately with providerMetadata for parent context
                 if (!state.inputStarted) {
                   this.logger.debug(
-                    `[claude-code] Tool input started (content_block) - Tool: ${toolName}, ID: ${toolId}`
+                    `[claude-code] Tool input started (content_block) - Tool: ${toolName}, ID: ${toolId}, parent: ${state.parentToolCallId}`
                   );
                   controller.enqueue({
                     type: 'tool-input-start',
@@ -1566,7 +1571,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     toolName,
                     providerExecuted: true,
                     dynamic: true,
+                    providerMetadata: {
+                      'claude-code': {
+                        parentToolCallId: state.parentToolCallId ?? null,
+                      },
+                    },
                   } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+                  // Track Task tools as active so nested tools can reference them as parent
+                  if (toolName === 'Task') {
+                    activeTaskTools.set(toolId, { startTime: Date.now() });
+                  }
                   state.inputStarted = true;
                 }
                 continue;
