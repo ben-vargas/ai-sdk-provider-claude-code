@@ -561,16 +561,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     }
 
     // Handle MCP content format: [{type: 'text', text: '...'}, ...]
-    // MCP tools can return multiple content blocks; aggregate all text blocks
-    if (Array.isArray(result) && result.length > 0 && result[0]?.type === 'text') {
+    // MCP tools can return multiple content blocks; only normalize when all blocks are text.
+    if (Array.isArray(result) && result.length > 0) {
       // Collect all text content from text blocks
       const textBlocks = result
-        .filter((block): block is { type: 'text'; text: string } =>
-          block?.type === 'text' && typeof block.text === 'string'
+        .filter(
+          (block): block is { type: 'text'; text: string } =>
+            block?.type === 'text' && typeof block.text === 'string'
         )
         .map((block) => block.text);
 
-      if (textBlocks.length === 0) {
+      if (textBlocks.length !== result.length) {
         return result;
       }
 
@@ -1681,7 +1682,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
               // Check if we've already streamed JSON via input_json_delta
               const alreadyStreamedJson =
-                hasStreamedJson && options.responseFormat?.type === 'json' && hasReceivedStreamEvents;
+                hasStreamedJson &&
+                options.responseFormat?.type === 'json' &&
+                hasReceivedStreamEvents;
 
               if (alreadyStreamedJson) {
                 // We've already streamed JSON deltas; only close the text part if it's still open.

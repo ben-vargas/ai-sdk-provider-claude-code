@@ -1977,6 +1977,156 @@ describe('ClaudeCodeLanguageModel', () => {
       });
     });
 
+    it('normalizes MCP text content arrays into structured results', async () => {
+      const toolUseId = 'toolu_mcp_text';
+      const toolName = 'mcp_tool';
+      const toolInput = { query: 'status' };
+      const toolResultContent = [
+        { type: 'text', text: '{ "foo": "bar",' },
+        { type: 'text', text: '"baz": 1 }' },
+      ];
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: toolInput,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  content: toolResultContent,
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'tool-session-text',
+            usage: {
+              input_tokens: 4,
+              output_tokens: 2,
+            },
+            total_cost_usd: 0.001,
+            duration_ms: 120,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Summarize' }] }],
+      });
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolResult = events.find((event) => event.type === 'tool-result') as
+        | (ExtendedStreamPart & { type: 'tool-result'; result: unknown })
+        | undefined;
+
+      expect(toolResult).toBeDefined();
+      expect(toolResult?.result).toEqual({ foo: 'bar', baz: 1 });
+    });
+
+    it('preserves non-text MCP content blocks in tool results', async () => {
+      const toolUseId = 'toolu_mcp_mixed';
+      const toolName = 'mcp_tool';
+      const toolInput = { query: 'image' };
+      const toolResultContent = [
+        { type: 'text', text: 'Here is an image' },
+        { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' },
+      ];
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: toolInput,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  content: toolResultContent,
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'tool-session-mixed',
+            usage: {
+              input_tokens: 6,
+              output_tokens: 3,
+            },
+            total_cost_usd: 0.0015,
+            duration_ms: 140,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Show image' }] }],
+      });
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolResult = events.find((event) => event.type === 'tool-result') as
+        | (ExtendedStreamPart & { type: 'tool-result'; result: unknown })
+        | undefined;
+
+      expect(toolResult).toBeDefined();
+      expect(toolResult?.result).toEqual(toolResultContent);
+    });
+
     it('finalizes tool calls even when no tool result is emitted', async () => {
       const toolUseId = 'toolu_missing_result';
       const toolName = 'Read';
