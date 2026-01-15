@@ -2051,7 +2051,10 @@ describe('ClaudeCodeLanguageModel', () => {
       }
 
       const toolInputStart = events.find((event) => event.type === 'tool-input-start') as
-        | (ExtendedStreamPart & { type: 'tool-input-start'; providerMetadata?: Record<string, unknown> })
+        | (ExtendedStreamPart & {
+            type: 'tool-input-start';
+            providerMetadata?: Record<string, unknown>;
+          })
         | undefined;
       const toolCall = events.find((event) => event.type === 'tool-call') as
         | (ExtendedStreamPart & { type: 'tool-call'; providerMetadata?: Record<string, unknown> })

@@ -1554,8 +1554,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 let state = toolStates.get(toolId);
                 if (!state) {
                   // Use timing-based inference for parent (Task tools are top-level)
-                  const currentParentId =
-                    toolName === 'Task' ? null : getFallbackParentId();
+                  const currentParentId = toolName === 'Task' ? null : getFallbackParentId();
                   state = {
                     name: toolName,
                     inputStarted: false,
@@ -1768,7 +1767,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
               // Extract parent_tool_use_id from SDK message - this is the authoritative source
               // SDK provides this field when tool is executed within a subagent context
-              const sdkParentToolUseId = (message as { parent_tool_use_id?: string }).parent_tool_use_id;
+              const sdkParentToolUseId = (message as { parent_tool_use_id?: string })
+                .parent_tool_use_id;
 
               const content = message.message.content;
               const tools = this.extractToolUses(content);
@@ -1942,7 +1942,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               }
 
               // Extract parent_tool_use_id from SDK message for late-arriving tool results
-              const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string }).parent_tool_use_id;
+              const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string })
+                .parent_tool_use_id;
 
               const content = message.message.content;
               for (const result of this.extractToolResults(content)) {
@@ -1960,7 +1961,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   );
                   // Use SDK parent if available, otherwise fall back to timing-based inference
                   const resolvedParentId =
-                    toolName === 'Task' ? null : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+                    toolName === 'Task'
+                      ? null
+                      : (sdkParentToolUseIdForResults ?? getFallbackParentId());
                   state = {
                     name: toolName,
                     inputStarted: false,
@@ -2059,7 +2062,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   );
                   // Use SDK parent if available, otherwise fall back to timing-based inference
                   const errorResolvedParentId =
-                    toolName === 'Task' ? null : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+                    toolName === 'Task'
+                      ? null
+                      : (sdkParentToolUseIdForResults ?? getFallbackParentId());
                   state = {
                     name: toolName,
                     inputStarted: true,
