@@ -449,6 +449,38 @@ function truncateToolResultForStream(
  * });
  * ```
  */
+
+// Truncate tool results to prevent stream bloat when sending to Vercel AI SDK
+// Interior Claude Code process has full data; this only affects client stream
+const MAX_TOOL_RESULT_SIZE = 10000;
+function truncateToolResultForStream(
+  result: unknown,
+  maxSize: number = MAX_TOOL_RESULT_SIZE
+): unknown {
+  if (typeof result === 'string') {
+    if (result.length <= maxSize) return result;
+    return result.slice(0, maxSize) + `\n...[truncated ${result.length - maxSize} chars]`;
+  }
+  if (typeof result !== 'object' || result === null) return result;
+  // For objects, find and truncate only the largest string value
+  const obj = result as Record<string, unknown>;
+  let largestKey: string | null = null;
+  let largestSize = 0;
+  for (const [key, value] of Object.entries(obj)) {
+    if (typeof value === 'string' && value.length > largestSize) {
+      largestKey = key;
+      largestSize = value.length;
+    }
+  }
+  if (largestKey && largestSize > maxSize) {
+    const truncatedValue =
+      (obj[largestKey] as string).slice(0, maxSize) +
+      `\n...[truncated ${largestSize - maxSize} chars]`;
+    return { ...obj, [largestKey]: truncatedValue };
+  }
+  return result;
+}
+
 export class ClaudeCodeLanguageModel implements LanguageModelV3 {
   readonly specificationVersion = 'v3' as const;
   readonly defaultObjectGenerationMode = 'json' as const;
@@ -675,6 +707,18 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         return JSON.parse(result);
       } catch {
         return result;
+      }
+    }
+    // Handle MCP content format: [{type: 'text', text: '...'}]
+    if (
+      Array.isArray(result) &&
+      result.length > 0 &&
+      (result[0] as { type?: string })?.type === 'text'
+    ) {
+      try {
+        return JSON.parse((result[0] as { text?: string }).text ?? '');
+      } catch {
+        return (result[0] as { text?: string }).text;
       }
     }
 
@@ -1381,6 +1425,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         const toolBlocksByIndex = new Map<number, string>();
         const toolInputAccumulators = new Map<string, string>();
 
+        // Track text content blocks by index for correlating text_delta with text parts
+        const textBlocksByIndex = new Map<number, string>();
+
+        // Track if text was streamed via content blocks to prevent double emission in result handler
+        let textStreamedViaContentBlock = false;
+
         // Extended thinking: Map block indices to reasoning part IDs
         const reasoningBlocksByIndex = new Map<number, string>();
         let currentReasoningPartId: string | undefined;
@@ -1587,6 +1637,32 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 continue;
               }
 
+              // Handle content_block_start for text - emit text-start early
+              if (
+                event.type === 'content_block_start' &&
+                'content_block' in event &&
+                event.content_block?.type === 'text'
+              ) {
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
+                hasReceivedStreamEvents = true;
+
+                // Generate text part ID early and map to block index
+                const partId = generateId();
+                textBlocksByIndex.set(blockIndex, partId);
+                textPartId = partId;
+
+                this.logger.debug(
+                  `[claude-code] Text content block started - Index: ${blockIndex}, ID: ${partId}`
+                );
+
+                controller.enqueue({
+                  type: 'text-start',
+                  id: partId,
+                });
+                textStreamedViaContentBlock = true;
+                continue;
+              }
+
               // Handle content_block_start for thinking - emit reasoning-start immediately
               if (
                 event.type === 'content_block_start' &&
@@ -1641,7 +1717,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 continue;
               }
 
-              // Handle content_block_stop - finalize tool input or reasoning
+              // Handle content_block_stop - finalize tool input, text, or reasoning
               if (event.type === 'content_block_stop') {
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
                 hasReceivedStreamEvents = true;
@@ -1650,17 +1726,57 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 const toolId = toolBlocksByIndex.get(blockIndex);
                 if (toolId) {
                   const state = toolStates.get(toolId);
-                  if (state) {
-                    // Update state with accumulated input
-                    const accumulatedInput = toolInputAccumulators.get(toolId);
-                    if (accumulatedInput) {
-                      state.lastSerializedInput = accumulatedInput;
+                  if (state && !state.inputClosed) {
+                    const accumulatedInput = toolInputAccumulators.get(toolId) ?? '';
+                    this.logger.debug(
+                      `[claude-code] Tool content block stopped - Index: ${blockIndex}, Tool: ${state.name}, ID: ${toolId}`
+                    );
+                    controller.enqueue({
+                      type: 'tool-input-end',
+                      id: toolId,
+                    });
+                    state.inputClosed = true;
+                    state.lastSerializedInput = accumulatedInput;
+
+                    // Emit tool-call immediately when input is complete (don't wait for result)
+                    // This allows UI to show "running" state while tool executes
+                    if (!state.callEmitted) {
+                      controller.enqueue({
+                        type: 'tool-call',
+                        toolCallId: toolId,
+                        toolName: state.name,
+                        input: accumulatedInput,
+                        providerExecuted: true,
+                        dynamic: true,
+                        providerMetadata: {
+                          'claude-code': {
+                            rawInput: accumulatedInput,
+                            parentToolCallId: state.parentToolCallId ?? null,
+                          },
+                        },
+                      } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                      state.callEmitted = true;
                     }
-                    // Close tool input
-                    closeToolInput(toolId, state);
                   }
                   toolBlocksByIndex.delete(blockIndex);
                   toolInputAccumulators.delete(toolId);
+                  continue;
+                }
+
+                // Check if this is a text block
+                const textId = textBlocksByIndex.get(blockIndex);
+                if (textId) {
+                  this.logger.debug(
+                    `[claude-code] Text content block stopped - Index: ${blockIndex}, ID: ${textId}`
+                  );
+                  controller.enqueue({
+                    type: 'text-end',
+                    id: textId,
+                  });
+                  textBlocksByIndex.delete(blockIndex);
+                  if (textPartId === textId) {
+                    textPartId = undefined;
+                  }
                   continue;
                 }
 
@@ -2117,7 +2233,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   type: 'text-end',
                   id: textPartId,
                 });
-              } else if (accumulatedText) {
+              } else if (accumulatedText && !textStreamedViaContentBlock) {
                 // Fallback for JSON mode without schema: emit accumulated text
                 // This handles the case where responseFormat.type === 'json' but no schema
                 // was provided, so the SDK returns plain text instead of structured_output
@@ -2203,7 +2319,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 type: 'text-end',
                 id: textPartId,
               });
-            } else if (accumulatedText) {
+            } else if (accumulatedText && !textStreamedViaContentBlock) {
               const fallbackTextId = generateId();
               controller.enqueue({
                 type: 'text-start',
