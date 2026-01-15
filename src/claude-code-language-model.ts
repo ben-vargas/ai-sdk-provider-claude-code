@@ -450,37 +450,6 @@ function truncateToolResultForStream(
  * ```
  */
 
-// Truncate tool results to prevent stream bloat when sending to Vercel AI SDK
-// Interior Claude Code process has full data; this only affects client stream
-const MAX_TOOL_RESULT_SIZE = 10000;
-function truncateToolResultForStream(
-  result: unknown,
-  maxSize: number = MAX_TOOL_RESULT_SIZE
-): unknown {
-  if (typeof result === 'string') {
-    if (result.length <= maxSize) return result;
-    return result.slice(0, maxSize) + `\n...[truncated ${result.length - maxSize} chars]`;
-  }
-  if (typeof result !== 'object' || result === null) return result;
-  // For objects, find and truncate only the largest string value
-  const obj = result as Record<string, unknown>;
-  let largestKey: string | null = null;
-  let largestSize = 0;
-  for (const [key, value] of Object.entries(obj)) {
-    if (typeof value === 'string' && value.length > largestSize) {
-      largestKey = key;
-      largestSize = value.length;
-    }
-  }
-  if (largestKey && largestSize > maxSize) {
-    const truncatedValue =
-      (obj[largestKey] as string).slice(0, maxSize) +
-      `\n...[truncated ${largestSize - maxSize} chars]`;
-    return { ...obj, [largestKey]: truncatedValue };
-  }
-  return result;
-}
-
 export class ClaudeCodeLanguageModel implements LanguageModelV3 {
   readonly specificationVersion = 'v3' as const;
   readonly defaultObjectGenerationMode = 'json' as const;
