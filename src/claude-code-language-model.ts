@@ -678,19 +678,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         return result;
       }
     }
-    // Handle MCP content format: [{type: 'text', text: '...'}]
-    if (
-      Array.isArray(result) &&
-      result.length > 0 &&
-      (result[0] as { type?: string })?.type === 'text'
-    ) {
-      try {
-        return JSON.parse((result[0] as { text?: string }).text ?? '');
-      } catch {
-        return (result[0] as { text?: string }).text;
-      }
-    }
-
     // Handle MCP content format: [{type: 'text', text: '...'}, ...]
     // MCP tools can return multiple content blocks; only normalize when all blocks are text.
     if (Array.isArray(result) && result.length > 0) {
