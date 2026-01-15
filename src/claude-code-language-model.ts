@@ -1913,31 +1913,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     });
                   }
                   state.lastSerializedInput = serializedInput;
-
-                  // Emit tool-call immediately when we have complete input from assistant message
-                  // This allows UI to show "running" state while MCP tool executes
-                  if (!state.callEmitted && !state.inputClosed) {
-                    controller.enqueue({
-                      type: 'tool-input-end',
-                      id: toolId,
-                    });
-                    controller.enqueue({
-                      type: 'tool-call',
-                      toolCallId: toolId,
-                      toolName: state.name,
-                      input: serializedInput,
-                      providerExecuted: true,
-                      dynamic: true,
-                      providerMetadata: {
-                        'claude-code': {
-                          rawInput: serializedInput,
-                          parentToolCallId: state.parentToolCallId ?? null,
-                        },
-                      },
-                    } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
-                    state.inputClosed = true;
-                    state.callEmitted = true;
-                  }
                 }
               }
 

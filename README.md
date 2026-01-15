@@ -361,6 +361,16 @@ See [examples/skills-management.ts](examples/skills-management.ts) for more exam
 - For parity with other tool events, `tool-error` includes `providerExecuted: true` and `providerMetadata['claude-code']` (e.g., `rawError`). These fields are documented extensions; downstream consumers may safely ignore them if unused.
 - See Tool Streaming Support for full event list, ordering guarantees, and performance considerations.
 
+## Content Block Streaming
+
+This provider handles Anthropic `content_block_*` stream events directly for more responsive UIs:
+
+- **Tool input streaming** — `tool-input-delta` streams arguments incrementally; `tool-call` emits when the tool input block completes (before results), enabling “running” state in UIs.
+- **Text streaming** — `text-start/delta/end` emitted from content blocks with proper lifecycle management.
+- **Extended thinking** — `reasoning-start/delta/end` emitted from `thinking` content blocks (availability depends on model and request).
+
+For subagent parent/child tracking, see **Subagent Hierarchy Tracking** in this README.
+
 ## Subagent Hierarchy Tracking
 
 When Claude Code spawns subagents via the `Task` tool, this provider exposes parent-child relationships through `providerMetadata`:
