@@ -195,6 +195,7 @@ export const claudeCodeSettingsSchema = z
       })
       .optional(),
     sdkOptions: z.record(z.string(), z.any()).optional(),
+    maxToolResultSize: z.number().int().min(100).max(1000000).optional(),
   })
   .strict();
 

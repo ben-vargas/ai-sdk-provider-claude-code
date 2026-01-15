@@ -342,4 +342,12 @@ export interface ClaudeCodeSettings {
    * are ignored if supplied here.
    */
   sdkOptions?: Partial<Options>;
+
+  /**
+   * Maximum size (in characters) for tool results sent to the client stream.
+   * The interior Claude Code process retains full data; this only affects client stream.
+   * Tool results exceeding this size will be truncated with a `...[truncated N chars]` suffix.
+   * @default 10000
+   */
+  maxToolResultSize?: number;
 }
