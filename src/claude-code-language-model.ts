@@ -560,6 +560,38 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       }
     }
 
+    // Handle MCP content format: [{type: 'text', text: '...'}, ...]
+    // MCP tools can return multiple content blocks; aggregate all text blocks
+    if (Array.isArray(result) && result.length > 0 && result[0]?.type === 'text') {
+      // Collect all text content from text blocks
+      const textBlocks = result
+        .filter((block): block is { type: 'text'; text: string } =>
+          block?.type === 'text' && typeof block.text === 'string'
+        )
+        .map((block) => block.text);
+
+      if (textBlocks.length === 0) {
+        return result;
+      }
+
+      // If single text block, try to parse as JSON
+      if (textBlocks.length === 1) {
+        try {
+          return JSON.parse(textBlocks[0]);
+        } catch {
+          return textBlocks[0];
+        }
+      }
+
+      // Multiple text blocks: join them and try to parse as JSON
+      const combined = textBlocks.join('\n');
+      try {
+        return JSON.parse(combined);
+      } catch {
+        return combined;
+      }
+    }
+
     return result;
   }
 
