@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **MCP tool result normalization** - Handles MCP content format (`[{type: 'text', text: '...'}]`) in tool results, automatically extracting and parsing JSON content from text blocks while preserving non-text content blocks (images, resources, audio) unchanged
+
 ## [3.2.1] - 2026-01-11
 
 ### Fixed
