@@ -1987,6 +1987,292 @@ describe('ClaudeCodeLanguageModel', () => {
       });
     });
 
+    it('propagates parent_tool_use_id into tool stream metadata', async () => {
+      const parentToolId = 'toolu_task_parent';
+      const toolUseId = 'toolu_child';
+      const toolName = 'Bash';
+      const toolInput = { command: 'echo "hi"' };
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            parent_tool_use_id: parentToolId,
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: toolInput,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            parent_tool_use_id: parentToolId,
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  content: 'ok',
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'tool-parent-session',
+            usage: {
+              input_tokens: 1,
+              output_tokens: 1,
+            },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Run command' }] }],
+      });
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolInputStart = events.find((event) => event.type === 'tool-input-start') as
+        | (ExtendedStreamPart & { type: 'tool-input-start'; providerMetadata?: Record<string, unknown> })
+        | undefined;
+      const toolCall = events.find((event) => event.type === 'tool-call') as
+        | (ExtendedStreamPart & { type: 'tool-call'; providerMetadata?: Record<string, unknown> })
+        | undefined;
+      const toolResult = events.find((event) => event.type === 'tool-result') as
+        | (ExtendedStreamPart & { type: 'tool-result'; providerMetadata?: Record<string, unknown> })
+        | undefined;
+
+      expect(toolInputStart).toMatchObject({
+        type: 'tool-input-start',
+        id: toolUseId,
+        providerMetadata: {
+          'claude-code': {
+            parentToolCallId: parentToolId,
+          },
+        },
+      });
+
+      expect(toolCall).toMatchObject({
+        type: 'tool-call',
+        toolCallId: toolUseId,
+        providerMetadata: {
+          'claude-code': {
+            parentToolCallId: parentToolId,
+          },
+        },
+      });
+
+      expect(toolResult).toMatchObject({
+        type: 'tool-result',
+        toolCallId: toolUseId,
+        providerMetadata: {
+          'claude-code': {
+            parentToolCallId: parentToolId,
+          },
+        },
+      });
+    });
+
+    it('infers parentToolCallId from a single active Task tool', async () => {
+      const taskToolId = 'toolu_task';
+      const childToolId = 'toolu_child_inferred';
+      const childToolName = 'Bash';
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: taskToolId,
+                  name: 'Task',
+                  input: { objective: 'Run command' },
+                },
+                {
+                  type: 'tool_use',
+                  id: childToolId,
+                  name: childToolName,
+                  input: { command: 'ls' },
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: childToolId,
+                  name: childToolName,
+                  content: 'done',
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'tool-fallback-session',
+            usage: {
+              input_tokens: 2,
+              output_tokens: 1,
+            },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Do work' }] }],
+      });
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolCall = events.find(
+        (event) => event.type === 'tool-call' && (event as any).toolCallId === childToolId
+      ) as ExtendedStreamPart | undefined;
+      const toolResult = events.find(
+        (event) => event.type === 'tool-result' && (event as any).toolCallId === childToolId
+      ) as ExtendedStreamPart | undefined;
+
+      expect(toolCall).toMatchObject({
+        type: 'tool-call',
+        toolCallId: childToolId,
+        providerMetadata: {
+          'claude-code': {
+            parentToolCallId: taskToolId,
+          },
+        },
+      });
+
+      expect(toolResult).toMatchObject({
+        type: 'tool-result',
+        toolCallId: childToolId,
+        providerMetadata: {
+          'claude-code': {
+            parentToolCallId: taskToolId,
+          },
+        },
+      });
+    });
+
+    it('does not infer parentToolCallId when multiple Task tools are active', async () => {
+      const taskToolIdA = 'toolu_task_a';
+      const taskToolIdB = 'toolu_task_b';
+      const childToolId = 'toolu_child_ambiguous';
+      const childToolName = 'Bash';
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: taskToolIdA,
+                  name: 'Task',
+                  input: { objective: 'Task A' },
+                },
+                {
+                  type: 'tool_use',
+                  id: taskToolIdB,
+                  name: 'Task',
+                  input: { objective: 'Task B' },
+                },
+                {
+                  type: 'tool_use',
+                  id: childToolId,
+                  name: childToolName,
+                  input: { command: 'pwd' },
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: childToolId,
+                  name: childToolName,
+                  content: 'ok',
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'tool-ambiguous-session',
+            usage: {
+              input_tokens: 3,
+              output_tokens: 1,
+            },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Do work' }] }],
+      });
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolCall = events.find(
+        (event) => event.type === 'tool-call' && (event as any).toolCallId === childToolId
+      ) as ExtendedStreamPart | undefined;
+
+      expect(toolCall).toMatchObject({
+        type: 'tool-call',
+        toolCallId: childToolId,
+        providerMetadata: {
+          'claude-code': {
+            parentToolCallId: null,
+          },
+        },
+      });
+    });
+
     it('normalizes MCP text content arrays into structured results', async () => {
       const toolUseId = 'toolu_mcp_text';
       const toolName = 'mcp_tool';

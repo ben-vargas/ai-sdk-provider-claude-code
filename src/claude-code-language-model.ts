@@ -151,6 +151,7 @@ type ClaudeToolUse = {
   id: string;
   name: string;
   input: unknown;
+  parentToolUseId?: string | null;
 };
 
 type ClaudeToolResult = {
@@ -263,6 +264,7 @@ type ToolStreamState = {
   inputStarted: boolean;
   inputClosed: boolean;
   callEmitted: boolean;
+  parentToolCallId?: string | null;
 };
 
 function toAsyncIterablePrompt(
@@ -541,7 +543,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           (item as { type: unknown }).type === 'tool_use'
       )
       .map((item) => {
-        const { id, name, input } = item as { id?: unknown; name?: unknown; input?: unknown };
+        const { id, name, input, parent_tool_use_id } = item as {
+          id?: unknown;
+          name?: unknown;
+          input?: unknown;
+          parent_tool_use_id?: unknown;
+        };
         return {
           id: typeof id === 'string' && id.length > 0 ? id : generateId(),
           name:
@@ -549,6 +556,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               ? name
               : ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME,
           input,
+          parentToolUseId: typeof parent_tool_use_id === 'string' ? parent_tool_use_id : null,
         } satisfies ClaudeToolUse;
       });
   }
@@ -1303,6 +1311,19 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           done = () => resolve(undefined);
         });
         const toolStates = new Map<string, ToolStreamState>();
+        // Track active Task tools for subagent hierarchy
+        // Using a Map instead of stack to correctly handle parallel agents
+        const activeTaskTools = new Map<string, { startTime: number }>();
+
+        // Helper to get fallback parent - only returns a parent when exactly ONE Task is active
+        // This prevents incorrect grouping when parallel agents run simultaneously
+        const getFallbackParentId = (): string | null => {
+          if (activeTaskTools.size === 1) {
+            return activeTaskTools.keys().next().value ?? null;
+          }
+          return null;
+        };
+
         const streamWarnings: SharedV3Warning[] = [];
 
         const closeToolInput = (toolId: string, state: ToolStreamState) => {
@@ -1335,6 +1356,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 // Use this if you need the exact string sent to the Claude CLI, which may differ
                 // from the `input` field after AI SDK processing.
                 rawInput: state.lastSerializedInput ?? '',
+                parentToolCallId: state.parentToolCallId ?? null,
               },
             },
           } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -1473,6 +1495,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 continue;
               }
 
+              // Extract parent_tool_use_id from SDK message - this is the authoritative source
+              // SDK provides this field when tool is executed within a subagent context
+              const sdkParentToolUseId = (message as { parent_tool_use_id?: string }).parent_tool_use_id;
+
               const content = message.message.content;
               const tools = this.extractToolUses(content);
 
@@ -1491,15 +1517,30 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 const toolId = tool.id;
                 let state = toolStates.get(toolId);
                 if (!state) {
+                  // Prefer SDK message-level parent (works for parallel agents)
+                  // Fall back to content-level parent, then timing-based inference
+                  // Task tools never have a parent (they're top-level)
+                  const currentParentId =
+                    tool.name === 'Task'
+                      ? null
+                      : (sdkParentToolUseId ?? tool.parentToolUseId ?? getFallbackParentId());
                   state = {
                     name: tool.name,
                     inputStarted: false,
                     inputClosed: false,
                     callEmitted: false,
+                    parentToolCallId: currentParentId,
                   };
                   toolStates.set(toolId, state);
                   this.logger.debug(
-                    `[claude-code] New tool use detected - Tool: ${tool.name}, ID: ${toolId}`
+                    `[claude-code] New tool use detected - Tool: ${tool.name}, ID: ${toolId}, SDK parent: ${sdkParentToolUseId}, resolved parent: ${currentParentId}`
+                  );
+                } else if (!state.parentToolCallId && sdkParentToolUseId && tool.name !== 'Task') {
+                  // RETROACTIVE PARENT CONTEXT: Tool state was created by streaming events
+                  // but we now have authoritative parent from SDK message - update state
+                  state.parentToolCallId = sdkParentToolUseId;
+                  this.logger.debug(
+                    `[claude-code] Retroactive parent context - Tool: ${tool.name}, ID: ${toolId}, parent: ${sdkParentToolUseId}`
                   );
                 }
 
@@ -1515,7 +1556,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     toolName: tool.name,
                     providerExecuted: true,
                     dynamic: true, // V3 field: indicates tool is provider-defined
+                    providerMetadata: {
+                      'claude-code': {
+                        parentToolCallId: state.parentToolCallId ?? null,
+                      },
+                    },
                   } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                  // Track Task tools as active so nested tools can reference them as parent
+                  if (tool.name === 'Task') {
+                    activeTaskTools.set(toolId, { startTime: Date.now() });
+                  }
                   state.inputStarted = true;
                 }
 
@@ -1619,6 +1669,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 );
                 continue;
               }
+
+              // Extract parent_tool_use_id from SDK message for late-arriving tool results
+              const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string }).parent_tool_use_id;
+
               const content = message.message.content;
               for (const result of this.extractToolResults(content)) {
                 let state = toolStates.get(result.id);
@@ -1633,11 +1687,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   this.logger.warn(
                     `[claude-code] Received tool result for unknown tool ID: ${result.id}`
                   );
+                  // Use SDK parent if available, otherwise fall back to timing-based inference
+                  const resolvedParentId =
+                    toolName === 'Task' ? null : (sdkParentToolUseIdForResults ?? getFallbackParentId());
                   state = {
                     name: toolName,
                     inputStarted: false,
                     inputClosed: false,
                     callEmitted: false,
+                    parentToolCallId: resolvedParentId,
                   };
                   toolStates.set(result.id, state);
                   // Synthesize input lifecycle to preserve ordering when no prior tool_use was seen
@@ -1648,6 +1706,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       toolName,
                       providerExecuted: true,
                       dynamic: true, // V3 field: indicates tool is provider-defined
+                      providerMetadata: {
+                        'claude-code': {
+                          parentToolCallId: state.parentToolCallId ?? null,
+                        },
+                      },
                     } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
                     state.inputStarted = true;
                   }
@@ -1684,6 +1747,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
                 emitToolCall(result.id, state);
 
+                // Remove Task tools from active set when they complete
+                if (toolName === 'Task') {
+                  activeTaskTools.delete(result.id);
+                }
+
                 controller.enqueue({
                   type: 'tool-result',
                   toolCallId: result.id,
@@ -1699,6 +1767,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       // if the `result` field has been parsed/normalized and you need the original format.
                       rawResult: truncatedRawResult,
                       rawResultTruncated,
+                      parentToolCallId: state.parentToolCallId ?? null,
                     },
                   },
                 } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -1717,17 +1786,26 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   this.logger.warn(
                     `[claude-code] Received tool error for unknown tool ID: ${error.id}`
                   );
+                  // Use SDK parent if available, otherwise fall back to timing-based inference
+                  const errorResolvedParentId =
+                    toolName === 'Task' ? null : (sdkParentToolUseIdForResults ?? getFallbackParentId());
                   state = {
                     name: toolName,
                     inputStarted: true,
                     inputClosed: true,
                     callEmitted: false,
+                    parentToolCallId: errorResolvedParentId,
                   };
                   toolStates.set(error.id, state);
                 }
 
                 // Ensure tool-call is emitted before tool-error
                 emitToolCall(error.id, state);
+
+                // Remove Task tools from active set when they error
+                if (toolName === 'Task') {
+                  activeTaskTools.delete(error.id);
+                }
 
                 const rawError =
                   typeof error.error === 'string'
@@ -1752,6 +1830,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   providerMetadata: {
                     'claude-code': {
                       rawError,
+                      parentToolCallId: state.parentToolCallId ?? null,
                     },
                   },
                 } as any); // eslint-disable-line @typescript-eslint/no-explicit-any

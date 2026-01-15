@@ -361,6 +361,21 @@ See [examples/skills-management.ts](examples/skills-management.ts) for more exam
 - For parity with other tool events, `tool-error` includes `providerExecuted: true` and `providerMetadata['claude-code']` (e.g., `rawError`). These fields are documented extensions; downstream consumers may safely ignore them if unused.
 - See Tool Streaming Support for full event list, ordering guarantees, and performance considerations.
 
+## Subagent Hierarchy Tracking
+
+When Claude Code spawns subagents via the `Task` tool, this provider exposes parent-child relationships through `providerMetadata`:
+
+```ts
+// Available on tool-input-start, tool-call, tool-result, and tool-error events
+providerMetadata['claude-code'].parentToolCallId: string | null;
+```
+
+- Task tools: Always null (top-level)
+- Child tools: Reference their parent Task's ID
+- Parallel Tasks: Child returns null if parent is ambiguous
+
+This enables UIs to build hierarchical views of nested agent execution.
+
 ## Contributing
 
 We welcome contributions, especially:
