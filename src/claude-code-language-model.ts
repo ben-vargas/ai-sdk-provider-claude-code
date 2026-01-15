@@ -1671,6 +1671,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                           return String(result.result);
                         }
                       })();
+                const maxToolResultSize = this.settings.maxToolResultSize;
+                const truncatedResult = truncateToolResultForStream(
+                  normalizedResult,
+                  maxToolResultSize
+                );
+                const truncatedRawResult = truncateToolResultForStream(
+                  rawResult,
+                  maxToolResultSize
+                ) as string;
+                const rawResultTruncated = truncatedRawResult !== rawResult;
 
                 emitToolCall(result.id, state);
 
@@ -1678,7 +1688,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   type: 'tool-result',
                   toolCallId: result.id,
                   toolName,
-                  result: truncateToolResultForStream(normalizedResult, this.settings.maxToolResultSize),
+                  result: truncatedResult,
                   isError: result.isError,
                   providerExecuted: true,
                   dynamic: true, // V3 field: indicates tool is provider-defined
@@ -1687,7 +1697,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       // rawResult preserves the original CLI output string before JSON parsing.
                       // Use this when you need the exact string returned by the tool, especially
                       // if the `result` field has been parsed/normalized and you need the original format.
-                      rawResult,
+                      rawResult: truncatedRawResult,
+                      rawResultTruncated,
                     },
                   },
                 } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
