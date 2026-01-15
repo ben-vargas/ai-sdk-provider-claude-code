@@ -2137,6 +2137,261 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(toolResult?.result).toEqual(toolResultContent);
     });
 
+    it('truncates long string tool results in stream metadata', async () => {
+      const maxToolResultSize = 100;
+      const modelWithLimit = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { maxToolResultSize },
+      });
+      const toolUseId = 'toolu_truncate_string';
+      const toolName = 'Read';
+      const toolInput = { file_path: '/tmp/example.txt' };
+      const longText = 'x'.repeat(maxToolResultSize + 15);
+      const truncatedText = `${longText.slice(0, maxToolResultSize)}\n...[truncated ${
+        longText.length - maxToolResultSize
+      } chars]`;
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: toolInput,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  content: longText,
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'tool-session-truncate-string',
+            usage: {
+              input_tokens: 4,
+              output_tokens: 2,
+            },
+            total_cost_usd: 0.001,
+            duration_ms: 80,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await modelWithLimit.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read file' }] }],
+      });
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolResult = events.find((event) => event.type === 'tool-result') as
+        | (ExtendedStreamPart & { type: 'tool-result'; result: unknown })
+        | undefined;
+
+      const metadata = toolResult?.providerMetadata?.['claude-code'] as
+        | { rawResult?: string; rawResultTruncated?: boolean }
+        | undefined;
+
+      expect(toolResult?.result).toBe(truncatedText);
+      expect(metadata?.rawResult).toBe(truncatedText);
+      expect(metadata?.rawResultTruncated).toBe(true);
+    });
+
+    it('truncates the largest string field in object tool results', async () => {
+      const maxToolResultSize = 100;
+      const modelWithLimit = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { maxToolResultSize },
+      });
+      const toolUseId = 'toolu_truncate_object';
+      const toolName = 'Read';
+      const toolInput = { file_path: '/tmp/example.txt' };
+      const longText = 'y'.repeat(maxToolResultSize + 18);
+      const truncatedText = `${longText.slice(0, maxToolResultSize)}\n...[truncated ${
+        longText.length - maxToolResultSize
+      } chars]`;
+      const toolResultContent = { short: 'ok', long: longText };
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: toolInput,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  content: toolResultContent,
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'tool-session-truncate-object',
+            usage: {
+              input_tokens: 4,
+              output_tokens: 2,
+            },
+            total_cost_usd: 0.001,
+            duration_ms: 80,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await modelWithLimit.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read file' }] }],
+      });
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolResult = events.find((event) => event.type === 'tool-result') as
+        | (ExtendedStreamPart & { type: 'tool-result'; result: unknown })
+        | undefined;
+
+      const metadata = toolResult?.providerMetadata?.['claude-code'] as
+        | { rawResultTruncated?: boolean }
+        | undefined;
+
+      expect(toolResult?.result).toEqual({ short: 'ok', long: truncatedText });
+      expect(metadata?.rawResultTruncated).toBe(true);
+    });
+
+    it('truncates the largest string element in array tool results', async () => {
+      const maxToolResultSize = 100;
+      const modelWithLimit = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { maxToolResultSize },
+      });
+      const toolUseId = 'toolu_truncate_array';
+      const toolName = 'Read';
+      const toolInput = { file_path: '/tmp/example.txt' };
+      const longText = 'z'.repeat(maxToolResultSize + 14);
+      const truncatedText = `${longText.slice(0, maxToolResultSize)}\n...[truncated ${
+        longText.length - maxToolResultSize
+      } chars]`;
+      const toolResultContent = ['ok', longText, 'done'];
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: toolName,
+                  input: toolInput,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  content: toolResultContent,
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'tool-session-truncate-array',
+            usage: {
+              input_tokens: 4,
+              output_tokens: 2,
+            },
+            total_cost_usd: 0.001,
+            duration_ms: 80,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await modelWithLimit.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read file' }] }],
+      });
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const toolResult = events.find((event) => event.type === 'tool-result') as
+        | (ExtendedStreamPart & { type: 'tool-result'; result: unknown })
+        | undefined;
+
+      const metadata = toolResult?.providerMetadata?.['claude-code'] as
+        | { rawResultTruncated?: boolean }
+        | undefined;
+
+      expect(toolResult?.result).toEqual(['ok', truncatedText, 'done']);
+      expect(metadata?.rawResultTruncated).toBe(true);
+    });
+
     it('finalizes tool calls even when no tool result is emitted', async () => {
       const toolUseId = 'toolu_missing_result';
       const toolName = 'Read';

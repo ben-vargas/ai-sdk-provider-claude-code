@@ -351,6 +351,75 @@ const modelMap: Record<string, string> = {
 };
 
 /**
+ * Maximum size for tool results sent to the client stream.
+ * Interior Claude Code process has full data; this only affects client stream.
+ */
+const MAX_TOOL_RESULT_SIZE = 10000;
+
+/**
+ * Truncates large tool results to prevent stream bloat.
+ * Only the largest string value in an object/array is truncated.
+ * Preserves the original type (array stays array, object stays object).
+ */
+function truncateToolResultForStream(
+  result: unknown,
+  maxSize: number = MAX_TOOL_RESULT_SIZE
+): unknown {
+  if (typeof result === 'string') {
+    if (result.length <= maxSize) return result;
+    return result.slice(0, maxSize) + `\n...[truncated ${result.length - maxSize} chars]`;
+  }
+
+  if (typeof result !== 'object' || result === null) return result;
+
+  // Handle arrays separately to preserve array type
+  if (Array.isArray(result)) {
+    let largestIndex = -1;
+    let largestSize = 0;
+
+    for (let i = 0; i < result.length; i++) {
+      const value = result[i];
+      if (typeof value === 'string' && value.length > largestSize) {
+        largestIndex = i;
+        largestSize = value.length;
+      }
+    }
+
+    if (largestIndex >= 0 && largestSize > maxSize) {
+      const truncatedValue =
+        (result[largestIndex] as string).slice(0, maxSize) +
+        `\n...[truncated ${largestSize - maxSize} chars]`;
+      const cloned = [...result];
+      cloned[largestIndex] = truncatedValue;
+      return cloned;
+    }
+
+    return result;
+  }
+
+  // For objects, find and truncate only the largest string value
+  const obj = result as Record<string, unknown>;
+  let largestKey: string | null = null;
+  let largestSize = 0;
+
+  for (const [key, value] of Object.entries(obj)) {
+    if (typeof value === 'string' && value.length > largestSize) {
+      largestKey = key;
+      largestSize = value.length;
+    }
+  }
+
+  if (largestKey && largestSize > maxSize) {
+    const truncatedValue =
+      (obj[largestKey] as string).slice(0, maxSize) +
+      `\n...[truncated ${largestSize - maxSize} chars]`;
+    return { ...obj, [largestKey]: truncatedValue };
+  }
+
+  return result;
+}
+
+/**
  * Language model implementation for Claude Code SDK.
  * This class implements the AI SDK's LanguageModelV3 interface to provide
  * integration with Claude models through the Claude Agent SDK.
@@ -1602,6 +1671,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                           return String(result.result);
                         }
                       })();
+                const maxToolResultSize = this.settings.maxToolResultSize;
+                const truncatedResult = truncateToolResultForStream(
+                  normalizedResult,
+                  maxToolResultSize
+                );
+                const truncatedRawResult = truncateToolResultForStream(
+                  rawResult,
+                  maxToolResultSize
+                ) as string;
+                const rawResultTruncated = truncatedRawResult !== rawResult;
 
                 emitToolCall(result.id, state);
 
@@ -1609,7 +1688,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   type: 'tool-result',
                   toolCallId: result.id,
                   toolName,
-                  result: normalizedResult,
+                  result: truncatedResult,
                   isError: result.isError,
                   providerExecuted: true,
                   dynamic: true, // V3 field: indicates tool is provider-defined
@@ -1618,7 +1697,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       // rawResult preserves the original CLI output string before JSON parsing.
                       // Use this when you need the exact string returned by the tool, especially
                       // if the `result` field has been parsed/normalized and you need the original format.
-                      rawResult,
+                      rawResult: truncatedRawResult,
+                      rawResultTruncated,
                     },
                   },
                 } as any); // eslint-disable-line @typescript-eslint/no-explicit-any

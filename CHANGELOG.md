@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **MCP tool result normalization** - Handles MCP content format (`[{type: 'text', text: '...'}]`) in tool results, automatically extracting and parsing JSON content from text blocks while preserving non-text content blocks (images, resources, audio) unchanged
+- **Tool result stream truncation** - Adds `maxToolResultSize` (default 10k) to cap tool results sent to the client stream and truncates oversized `rawResult` metadata to avoid stream bloat
 
 ### Security
 
