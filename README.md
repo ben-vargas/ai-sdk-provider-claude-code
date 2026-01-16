@@ -225,7 +225,7 @@ If you're upgrading from version 1.x:
 
 ## Structured Outputs
 
-This provider supports **native structured outputs** via the Claude Agent SDK (v0.1.45+). When using `generateObject()` or `streamObject()`, the SDK guarantees schema-compliant JSON responses through constrained decoding.
+This provider supports **native structured outputs** via the Claude Agent SDK (v0.1.45+). When using `generateObject()` or `streamObject()`, the SDK returns schema-compliant JSON for **supported** JSON Schema features via constrained decoding.
 
 ```typescript
 import { generateObject } from 'ai';
@@ -237,30 +237,32 @@ const result = await generateObject({
   schema: z.object({
     name: z.string(),
     age: z.number(),
-    email: z.string().email(),
+    email: z.string().describe('Email address (validate client-side)'),
   }),
   prompt: 'Generate a user profile for a software developer',
 });
 
-console.log(result.object); // Guaranteed to match schema
+console.log(result.object); // Matches the schema above
 // { name: "Alex Chen", age: 28, email: "alex@example.com" }
 ```
 
 **Benefits:**
 
-- ✅ **Guaranteed schema compliance** - Constrained decoding ensures valid output
+- ✅ **Schema compliance (supported features)** - Constrained decoding ensures valid output
 - ✅ **No JSON parsing errors** - SDK handles all validation
 - ✅ **No prompt engineering** - Schema enforcement is native to the SDK
 - ✅ **Better performance** - No retry/extraction logic needed
 
-> **Note:** A schema is required for JSON output. Using `responseFormat: { type: 'json' }` without a schema is not supported by Claude Code (matching Anthropic's official provider behavior). An `unsupported-setting` warning will be emitted and the call will be treated as plain text. Always use `generateObject()` or `streamObject()` with a Zod schema for guaranteed JSON output.
+> **Note:** A schema is required for JSON output. Using `responseFormat: { type: 'json' }` without a schema is not supported by Claude Code (matching Anthropic's official provider behavior). An `unsupported-setting` warning will be emitted and the call will be treated as plain text.
+>
+> **Current CLI limitation:** Some JSON Schema features can cause the Claude Code CLI to silently fall back to prose (no `structured_output`). This includes `format` constraints (e.g., `email`, `uri`) and complex regex patterns (lookaheads/backreferences). Workaround: keep the generation schema simple, then validate with a stricter schema client-side. See `examples/structured-output-repro.ts` and `examples/limitations.ts`.
 
 ## Core Features
 
 - 🚀 Vercel AI SDK compatibility
 - 🔄 Streaming support
 - 💬 Multi-turn conversations
-- 🎯 Native structured outputs with guaranteed schema compliance
+- 🎯 Native structured outputs with schema compliance for supported features
 - 🛑 AbortSignal support
 - 🔧 Tool management (MCP servers, permissions)
 - 🧩 Callbacks (hooks, canUseTool)
