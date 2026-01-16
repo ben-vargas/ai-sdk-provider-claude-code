@@ -205,7 +205,8 @@ npx tsx examples/skills-management.ts
 
 ## Object Generation (Structured Output)
 
-> **Native Support**: Object generation uses the SDK's native `outputFormat` option with constrained decoding, providing **guaranteed schema compliance** - no JSON parsing errors!
+> **Native Support**: Object generation uses the SDK's native `outputFormat` option with constrained decoding, providing schema-compliant JSON for **supported** features.
+> **Limitation**: Some JSON Schema features (e.g., `format` constraints like `email`/`uri`, or complex regex patterns) can cause the Claude Code CLI to silently fall back to prose. Use a simplified generation schema and validate client-side if you need those constraints.
 
 ### 17. Object Generation Overview (`generate-object.ts`)
 
@@ -257,9 +258,19 @@ npx tsx examples/generate-object-constraints.ts
 
 **Key concepts**: Enums, number ranges, string patterns, business rules
 
+### 22. Structured Output Repro (`structured-output-repro.ts`)
+
+**Purpose**: Reproduce CLI structured output fallbacks for certain JSON Schema features.
+
+```bash
+npx tsx examples/structured-output-repro.ts
+```
+
+**Key concepts**: `format` constraints, regex limitations, fallback behavior
+
 ## Testing & Troubleshooting
 
-### 22. Integration Test (`integration-test.ts`)
+### 23. Integration Test (`integration-test.ts`)
 
 **Purpose**: Comprehensive test suite to verify your setup and all features.
 
@@ -269,7 +280,7 @@ npx tsx examples/integration-test.ts
 
 **Key concepts**: Feature verification, error handling, test patterns
 
-### 23. Check CLI (`check-cli.ts`)
+### 24. Check CLI (`check-cli.ts`)
 
 **Purpose**: Troubleshooting tool to verify CLI installation and authentication.
 
@@ -279,7 +290,7 @@ npx tsx examples/check-cli.ts
 
 **Key concepts**: Setup verification, error diagnosis, troubleshooting steps
 
-### 24. Limitations (`limitations.ts`)
+### 25. Limitations (`limitations.ts`)
 
 **Purpose**: Understand what AI SDK features are not supported by the CLI.
 
@@ -302,7 +313,7 @@ const { object } = await generateObject({
   schema: z.object({
     name: z.string(),
     age: z.number(),
-    email: z.string().email(),
+    email: z.string(), // validate client-side if you need format constraints
   }),
   prompt: 'Generate a random user profile',
 });
@@ -415,26 +426,28 @@ const result4 = streamText({
 
 ## Quick Reference
 
-| Example               | Primary Use Case      | Key Feature            |
-| --------------------- | --------------------- | ---------------------- |
-| basic-usage           | Getting started       | Simple text generation |
-| streaming             | Responsive UIs        | Real-time output       |
-| tool-streaming        | Tool observability    | Tool event inspection  |
-| images                | Multimodal prompts    | Image input support    |
-| conversation-history  | Chatbots              | Context preservation   |
-| logging-default       | Default behavior      | Warn/error only        |
-| logging-verbose       | Development/debugging | All log levels         |
-| logging-custom-logger | External integration  | Custom logger impl     |
-| logging-disabled      | Silent operation      | No logs at all         |
-| custom-config         | Enterprise setup      | Configuration options  |
-| tool-management       | Security              | Access control         |
-| hooks-callbacks       | Event handling        | Lifecycle hooks        |
-| sdk-tools-callbacks   | Custom tools          | In-process MCP tools   |
-| skills-management     | Skills configuration  | settingSources setup   |
-| long-running-tasks    | Complex reasoning     | Timeout handling       |
-| generate-object       | Advanced patterns     | Real-world schemas     |
-| generate-object-basic | Learning              | Step-by-step tutorial  |
-| stream-object         | Real-time UI          | Partial object updates |
+| Example                 | Primary Use Case      | Key Feature            |
+| ----------------------- | --------------------- | ---------------------- |
+| basic-usage             | Getting started       | Simple text generation |
+| streaming               | Responsive UIs        | Real-time output       |
+| tool-streaming          | Tool observability    | Tool event inspection  |
+| images                  | Multimodal prompts    | Image input support    |
+| conversation-history    | Chatbots              | Context preservation   |
+| logging-default         | Default behavior      | Warn/error only        |
+| logging-verbose         | Development/debugging | All log levels         |
+| logging-custom-logger   | External integration  | Custom logger impl     |
+| logging-disabled        | Silent operation      | No logs at all         |
+| custom-config           | Enterprise setup      | Configuration options  |
+| tool-management         | Security              | Access control         |
+| hooks-callbacks         | Event handling        | Lifecycle hooks        |
+| sdk-tools-callbacks     | Custom tools          | In-process MCP tools   |
+| skills-management       | Skills configuration  | settingSources setup   |
+| long-running-tasks      | Complex reasoning     | Timeout handling       |
+| generate-object         | Advanced patterns     | Real-world schemas     |
+| generate-object-basic   | Learning              | Step-by-step tutorial  |
+| stream-object           | Real-time UI          | Partial object updates |
+| structured-output-repro | Troubleshooting       | Schema fallback repro  |
+| limitations             | Constraints overview  | Unsupported features   |
 
 ## Learning Path
 
@@ -443,6 +456,6 @@ const result4 = streamText({
 3. **Logging**: `logging-default.ts` → `logging-verbose.ts` → `logging-custom-logger.ts` → `logging-disabled.ts`
 4. **Object Generation**: `generate-object-basic.ts` → `stream-object.ts` → `generate-object-nested.ts` → `generate-object-constraints.ts` → `generate-object.ts`
 5. **Advanced**: `custom-config.ts` → `tool-management.ts` → `skills-management.ts` → `hooks-callbacks.ts` → `sdk-tools-callbacks.ts` → `long-running-tasks.ts`
-6. **Testing**: Run `integration-test.ts` to verify everything works
+6. **Testing/Troubleshooting**: Run `integration-test.ts`, then `structured-output-repro.ts` and `limitations.ts` if behavior seems off
 
 For more details, see the main [README](../README.md).

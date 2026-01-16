@@ -21,6 +21,9 @@ import { z } from 'zod';
 const claudeCode = createClaudeCode();
 
 console.log('=== Claude Code: Constrained Object Generation ===\n');
+// NOTE: Some JSON Schema features (format/email, complex regex) can trigger
+// Claude Code CLI fallback to prose. If that happens, simplify the schema
+// and validate client-side. See examples/structured-output-repro.ts.
 
 // Example 1: Enums and status fields
 async function example1_enumsAndStatus() {

@@ -48,8 +48,8 @@ async function main() {
     console.error('   Error:', error);
   }
 
-  // 2. Object generation - native SDK support with guaranteed schema compliance
-  console.log('2. Object generation (fully supported with native SDK):');
+  // 2. Object generation - native SDK support with caveats
+  console.log('2. Object generation (supported with native SDK, with caveats):');
 
   const PersonSchema = z.object({
     name: z.string(),
@@ -66,7 +66,10 @@ async function main() {
     });
     console.log('   ✅ Object generated:', object);
     console.log('   Note: Uses native SDK constrained decoding (outputFormat)');
-    console.log('         Guaranteed schema compliance - no JSON parsing errors!');
+    console.log('         Schema compliance for supported JSON Schema features');
+    console.log('         Some constraints (e.g., format: "email"/"uri", complex regex) can');
+    console.log('         cause the CLI to fall back to prose with no structured_output.');
+    console.log('         See examples/structured-output-repro.ts for details.');
   } catch (error: any) {
     console.log('   ❌ Error:', error.message);
   }
@@ -111,9 +114,10 @@ async function main() {
   console.log('   - Use explicit instructions: "Keep your response brief"\n');
 
   console.log('3. For structured output:');
-  console.log('   - ✅ Fully supported via native SDK constrained decoding');
+  console.log('   - ✅ Supported via native SDK constrained decoding (outputFormat)');
   console.log('   - Use generateObject/streamObject with Zod schemas');
-  console.log('   - Guaranteed schema compliance - no JSON parsing errors\n');
+  console.log('   - Prefer a simplified generation schema, then validate client-side');
+  console.log('   - See structured-output-repro.ts for known CLI limitations\n');
 
   console.log('4. For deterministic output:');
   console.log('   - Not possible with Claude Code SDK');
@@ -130,7 +134,7 @@ async function main() {
 
   console.log('✅ What DOES work well:');
   console.log('- Basic text generation and streaming');
-  console.log('- Native structured outputs with guaranteed schema compliance');
+  console.log('- Native structured outputs for supported schema features');
   console.log('- Conversation context via message history');
   console.log('- Custom timeouts and session management');
   console.log('- Abort signals for cancellation');

@@ -1,6 +1,6 @@
 {
   "name": "ai-sdk-provider-claude-code",
-  "version": "3.3.0",
+  "version": "3.3.1",
   "description": "AI SDK v6 provider for Claude via Claude Agent SDK (use Pro/Max subscription)",
   "keywords": [
     "ai-sdk",
@@ -67,12 +67,13 @@
     "example:tools": "npm run build && npx tsx examples/tool-management.ts",
     "example:timeout": "npm run build && npx tsx examples/long-running-tasks.ts",
     "example:zod4": "npm run build && npx tsx examples/zod4-compatibility-test.ts",
+    "example:structured-repro": "npx tsx examples/structured-output-repro.ts",
     "example:all": "npm run build && npm run example:basic && npm run example:streaming && npm run example:conversation && npm run example:config && npm run example:object:basic && npm run example:object:nested && npm run example:object:constraints && npm run example:tools && npm run example:timeout"
   },
   "dependencies": {
     "@ai-sdk/provider": "^3.0.0",
     "@ai-sdk/provider-utils": "^4.0.1",
-    "@anthropic-ai/claude-agent-sdk": "^0.2.1"
+    "@anthropic-ai/claude-agent-sdk": "^0.2.9"
   },
   "devDependencies": {
     "@edge-runtime/vm": "5.0.0",

@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [3.3.1] - 2026-01-16
+
+### Added
+
+- **Structured output repro example** - Added `examples/structured-output-repro.ts` to demonstrate CLI fallbacks for certain JSON Schema features (format constraints, complex regex)
+- **Documentation updates** - Clarified structured output limitations and recommended client-side validation in README and examples
+
+### Changed
+
+- **Updated Claude Agent SDK to ^0.2.9** - Keeps provider aligned with latest CLI/SDK behavior
+
 ## [3.3.0] - 2026-01-15
 
 ### Added
