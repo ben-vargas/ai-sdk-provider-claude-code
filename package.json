@@ -1,6 +1,6 @@
 {
   "name": "ai-sdk-provider-claude-code",
-  "version": "3.2.1",
+  "version": "3.3.0",
   "description": "AI SDK v6 provider for Claude via Claude Agent SDK (use Pro/Max subscription)",
   "keywords": [
     "ai-sdk",
