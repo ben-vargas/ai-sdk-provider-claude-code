@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Environment variable isolation** - When custom environment variables are provided via `settings.env` or `sdkOptions.env`, only essential system variables are now inherited from the host environment. On POSIX: `PATH`, `HOME`, `SHELL`, `TERM`, `USER`, `LOGNAME`, `LANG`, `LC_ALL`, `TMPDIR`. On Windows: `PATH`, `APPDATA`, `LOCALAPPDATA`, `USERPROFILE`, `TEMP`, `TMP`, `SYSTEMROOT`, `HOMEDRIVE`, `HOMEPATH`, `PATHEXT`, `SYSTEMDRIVE`, `USERNAME`, `WINDIR`. The Claude-specific `CLAUDE_CONFIG_DIR` is also preserved. Previously, all of `process.env` was passed to the subprocess, potentially exposing sensitive credentials. Note: when no custom env is provided, the SDK still inherits the full `process.env` (default behavior). Users who provided custom env and relied on implicit passthrough of other variables will need to explicitly add them to `settings.env`.
 
+### Fixed
+
+- **Streaming finish now closes response** - Closes the stream controller immediately after emitting the `finish` event to prevent streams from hanging when the SDK has already completed the session.
+
 ## [3.2.1] - 2026-01-11
 
 ### Fixed
