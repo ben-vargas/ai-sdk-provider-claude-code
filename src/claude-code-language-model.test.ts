@@ -48,6 +48,33 @@ describe('ClaudeCodeLanguageModel', () => {
   });
 
   describe('doGenerate', () => {
+    it('invokes onQueryCreated with the query response', async () => {
+      const onQueryCreated = vi.fn();
+      const modelWithHook = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onQueryCreated } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-onquery',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithHook.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      expect(onQueryCreated).toHaveBeenCalledTimes(1);
+      expect(onQueryCreated).toHaveBeenCalledWith(mockResponse);
+    });
+
     it('uses AsyncIterable prompt when streamingInput auto and canUseTool provided', async () => {
       const hooks = {} as any;
       const canUseTool = async () => ({ behavior: 'allow', updatedInput: {} });
@@ -975,6 +1002,46 @@ describe('ClaudeCodeLanguageModel', () => {
   });
 
   describe('doStream', () => {
+    it('invokes onQueryCreated with the query response', async () => {
+      const onQueryCreated = vi.fn();
+      const modelWithHook = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onQueryCreated } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Hello' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'stream-query',
+            usage: { input_tokens: 1, output_tokens: 1 },
+            total_cost_usd: 0.001,
+            duration_ms: 50,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await modelWithHook.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+
+      const reader = stream.getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+
+      expect(onQueryCreated).toHaveBeenCalledTimes(1);
+      expect(onQueryCreated).toHaveBeenCalledWith(mockResponse);
+    });
+
     it('should stream text chunks from SDK response', async () => {
       const mockResponse = {
         async *[Symbol.asyncIterator]() {

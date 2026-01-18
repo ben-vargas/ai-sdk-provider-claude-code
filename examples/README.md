@@ -199,6 +199,16 @@ npx tsx examples/sdk-tools-callbacks.ts
 npx tsx examples/skills-management.ts
 ```
 
+### 17. Mid-Stream Injection (`mid-stream-injection.ts`)
+
+**Purpose**: Re-steer a running query by injecting a new user message mid-stream.
+
+```bash
+npx tsx examples/mid-stream-injection.ts
+```
+
+**Key concepts**: streaming input, `onQueryCreated`, `query.streamInput()`, live prompt updates
+
 **Key concepts**: settingSources configuration, Skill tool permission, user/project skills, validation warnings
 
 **What you'll see**: Configuration examples showing how to enable Skills, with a demonstration of the validation warning when 'Skill' is in allowedTools but settingSources is not set.
