@@ -73,15 +73,23 @@ async function main() {
 
   console.log('--- Streaming response (watch for the tone shift) ---\n');
 
-  const stream = result.fullStream as AsyncIterable<any>;
+  const stream = result.fullStream as AsyncIterable<unknown>;
 
   for await (const part of stream) {
-    if (part.type === 'response-metadata') {
-      void tryInject(part.id ?? '');
+    if (!part || typeof part !== 'object') continue;
+    const typed = part as {
+      type?: string;
+      id?: string;
+      delta?: unknown;
+      text?: unknown;
+    };
+
+    if (typed.type === 'response-metadata') {
+      void tryInject(typed.id ?? '');
     }
 
-    if (part.type === 'text-delta') {
-      const chunk = part.delta ?? part.text;
+    if (typed.type === 'text-delta') {
+      const chunk = typed.delta ?? typed.text;
       if (typeof chunk === 'string') {
         process.stdout.write(chunk);
         streamedChars += chunk.length;
