@@ -213,6 +213,18 @@ npx tsx examples/mid-stream-injection.ts
 
 **What you'll see**: Configuration examples showing how to enable Skills, with a demonstration of the validation warning when 'Skill' is in allowedTools but settingSources is not set.
 
+### 17. Message Injection (`message-injection.ts`)
+
+**Purpose**: Inject messages mid-session to interrupt, redirect, or provide feedback to the agent.
+
+```bash
+npx tsx examples/message-injection.ts
+```
+
+**Key concepts**: `onStreamStart` callback, `MessageInjector`, delivery tracking, supervisor patterns, recovery from failed injection
+
+**What you'll see**: Two examples demonstrating successful injection (agent stops writing files) and failed injection with recovery (detecting when injection arrives too late and retrying).
+
 ## Object Generation (Structured Output)
 
 > **Native Support**: Object generation uses the SDK's native `outputFormat` option with constrained decoding, providing schema-compliant JSON for **supported** features.

@@ -9,7 +9,7 @@ import type {
 } from '@ai-sdk/provider';
 import { NoSuchModelError, APICallError, LoadAPIKeyError } from '@ai-sdk/provider';
 import { generateId } from '@ai-sdk/provider-utils';
-import type { ClaudeCodeSettings, Logger } from './types.js';
+import type { ClaudeCodeSettings, Logger, MessageInjector } from './types.js';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
 import { createAPICallError, createAuthenticationError, createTimeoutError } from './errors.js';
 import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
@@ -267,11 +267,103 @@ type ToolStreamState = {
   parentToolCallId?: string | null;
 };
 
+/**
+ * Queued injection item with content and optional delivery callback.
+ */
+type QueuedInjection = {
+  content: string;
+  onResult?: (delivered: boolean) => void;
+};
+
+/**
+ * Creates a MessageInjector implementation that can queue messages for mid-session injection.
+ * The injector uses a queue and signals to coordinate between the producer (user code)
+ * and consumer (async generator).
+ */
+function createMessageInjector(): {
+  injector: MessageInjector;
+  getNextMessage: () => Promise<string | null>;
+  notifySessionEnded: () => void;
+} {
+  const queue: QueuedInjection[] = [];
+  let closed = false;
+  let resolver: ((item: QueuedInjection | null) => void) | null = null;
+
+  const injector: MessageInjector = {
+    inject(content, onResult) {
+      if (closed) {
+        // Already closed - immediately notify not delivered
+        onResult?.(false);
+        return;
+      }
+      const item: QueuedInjection = { content, onResult };
+      if (resolver) {
+        // Consumer is waiting, resolve immediately
+        const r = resolver;
+        resolver = null;
+        r(item);
+      } else {
+        // Queue for later consumption
+        queue.push(item);
+      }
+    },
+    close() {
+      // Stop accepting new messages, but don't cancel pending ones
+      // Pending messages can still be delivered until session ends
+      closed = true;
+      if (resolver && queue.length === 0) {
+        // No pending messages and consumer is waiting - signal done
+        resolver(null);
+        resolver = null;
+      }
+    },
+  };
+
+  const getNextMessage = (): Promise<string | null> => {
+    if (queue.length > 0) {
+      const item = queue.shift()!;
+      // Message is being delivered
+      item.onResult?.(true);
+      return Promise.resolve(item.content);
+    }
+    if (closed) {
+      // Closed and queue is empty - no more messages
+      return Promise.resolve(null);
+    }
+    return new Promise((resolve) => {
+      resolver = (item) => {
+        if (item) {
+          item.onResult?.(true);
+          resolve(item.content);
+        } else {
+          resolve(null);
+        }
+      };
+    });
+  };
+
+  const notifySessionEnded = () => {
+    // Session ended - any remaining queued messages won't be delivered
+    for (const item of queue) {
+      item.onResult?.(false);
+    }
+    queue.length = 0;
+    closed = true;
+    if (resolver) {
+      resolver(null);
+      resolver = null;
+    }
+  };
+
+  return { injector, getNextMessage, notifySessionEnded };
+}
+
 function toAsyncIterablePrompt(
   messagesPrompt: string,
   outputStreamEnded: Promise<unknown>,
   sessionId?: string,
-  contentParts?: SDKUserMessage['message']['content']
+  contentParts?: SDKUserMessage['message']['content'],
+  onStreamStart?: (injector: MessageInjector) => void
 ): AsyncIterable<SDKUserMessage> {
   const content = (
     contentParts && contentParts.length > 0
@@ -279,7 +371,7 @@ function toAsyncIterablePrompt(
       : [{ type: 'text', text: messagesPrompt }]
   ) as SDKUserMessage['message']['content'];
 
-  const msg: SDKUserMessage = {
+  const initialMsg: SDKUserMessage = {
     type: 'user',
     message: {
       role: 'user',
@@ -288,10 +380,58 @@ function toAsyncIterablePrompt(
     parent_tool_use_id: null,
     session_id: sessionId ?? '',
   };
+
+  // If no callback, use simple behavior (backwards compatible)
+  if (!onStreamStart) {
+    return {
+      async *[Symbol.asyncIterator]() {
+        yield initialMsg;
+        await outputStreamEnded;
+      },
+    };
+  }
+
+  // With injection support: create injector and yield messages as they arrive
+  const { injector, getNextMessage, notifySessionEnded } = createMessageInjector();
+
   return {
     async *[Symbol.asyncIterator]() {
-      yield msg;
-      await outputStreamEnded;
+      // Yield initial message
+      yield initialMsg;
+
+      // Notify consumer that streaming has started
+      onStreamStart(injector);
+
+      // Race between output ending and new messages arriving
+      let streamEnded = false;
+      void outputStreamEnded.then(() => {
+        streamEnded = true;
+        // Notify any pending injections that the session ended
+        notifySessionEnded();
+      });
+
+      // Keep yielding injected messages until stream ends or injector closes
+      while (!streamEnded) {
+        const content = await Promise.race([
+          getNextMessage(),
+          outputStreamEnded.then(() => null),
+        ]);
+
+        if (content === null) {
+          break;
+        }
+
+        const sdkMsg: SDKUserMessage = {
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: content }],
+          },
+          parent_tool_use_id: null,
+          session_id: sessionId ?? '',
+        };
+        yield sdkMsg;
+      }
     },
   };
 }
@@ -1101,7 +1241,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             messagesPrompt,
             outputStreamEnded,
             effectiveResume,
-            streamingContentParts
+            streamingContentParts,
+            this.settings.onStreamStart
           )
         : messagesPrompt;
 
@@ -1411,7 +1552,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 messagesPrompt,
                 outputStreamEnded,
                 effectiveResume,
-                streamingContentParts
+                streamingContentParts,
+                this.settings.onStreamStart
               )
             : messagesPrompt;
 

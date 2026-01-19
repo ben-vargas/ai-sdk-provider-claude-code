@@ -37,7 +37,7 @@ export type {
  * Settings for configuring Claude Code behavior.
  * Includes options for customizing the CLI execution, permissions, and tool usage.
  */
-export type { ClaudeCodeSettings, Logger } from './types.js';
+export type { ClaudeCodeSettings, Logger, MessageInjector } from './types.js';
 
 // Convenience re-exports from the SDK for custom tools and hooks
 export { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
