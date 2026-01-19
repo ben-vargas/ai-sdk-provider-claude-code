@@ -64,6 +64,8 @@ export type {
   SpawnedProcess,
   SpawnOptions,
   AgentMcpServerSpec,
+  // Query interface for mid-stream message injection via streamInput()
+  Query,
 } from '@anthropic-ai/claude-agent-sdk';
 
 /**

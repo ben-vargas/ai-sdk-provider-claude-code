@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [3.3.2] - 2026-01-18
+
+### Added
+
+- **Mid-stream query access** - Added `onQueryCreated` to expose the SDK `Query` for advanced controls like `streamInput()`, plus a new mid-stream injection example
+- **Query type re-export** - Re-exported `Query` from the SDK for type-safe usage
+- **Test coverage** - Added tests to validate `onQueryCreated` in both generate and stream paths
+
 ## [3.3.1] - 2026-01-15
 
 ### Added
