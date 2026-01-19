@@ -61,7 +61,8 @@ describe('MessageInjector', () => {
         // Consume the async iterable to trigger onStreamStart
         void (async () => {
           if (prompt && typeof prompt[Symbol.asyncIterator] === 'function') {
-            for await (const _msg of prompt) {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            for await (const _ of prompt) {
               // Just iterate to trigger the callback
             }
           }
@@ -141,7 +142,8 @@ describe('MessageInjector', () => {
       vi.mocked(mockQuery).mockImplementation(({ prompt }: any) => {
         void (async () => {
           if (prompt && typeof prompt[Symbol.asyncIterator] === 'function') {
-            for await (const _msg of prompt) {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            for await (const _ of prompt) {
               // Iterate to trigger callback
             }
           }
@@ -327,7 +329,8 @@ describe('MessageInjector', () => {
       vi.mocked(mockQuery).mockImplementation(({ prompt }: any) => {
         void (async () => {
           if (prompt && typeof prompt[Symbol.asyncIterator] === 'function') {
-            for await (const _msg of prompt) {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            for await (const _ of prompt) {
               // Iterate to trigger delivery
             }
           }
@@ -427,7 +430,8 @@ describe('MessageInjector', () => {
         // Iterate prompt to trigger onStreamStart
         void (async () => {
           if (prompt && typeof prompt[Symbol.asyncIterator] === 'function') {
-            for await (const _msg of prompt) {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            for await (const _ of prompt) {
               // Iterate to trigger callback
             }
           }

@@ -279,10 +279,13 @@ type QueuedInjection = {
  * Creates a MessageInjector implementation that can queue messages for mid-session injection.
  * The injector uses a queue and signals to coordinate between the producer (user code)
  * and consumer (async generator).
+ *
+ * Note: getNextItem returns the full QueuedInjection so the consumer can call onResult
+ * AFTER successfully yielding, avoiding a race condition with outputStreamEnded.
  */
 function createMessageInjector(): {
   injector: MessageInjector;
-  getNextMessage: () => Promise<string | null>;
+  getNextItem: () => Promise<QueuedInjection | null>;
   notifySessionEnded: () => void;
 } {
   const queue: QueuedInjection[] = [];
@@ -319,12 +322,11 @@ function createMessageInjector(): {
     },
   };
 
-  const getNextMessage = (): Promise<string | null> => {
+  const getNextItem = (): Promise<QueuedInjection | null> => {
     if (queue.length > 0) {
       const item = queue.shift()!;
-      // Message is being delivered
-      item.onResult?.(true);
-      return Promise.resolve(item.content);
+      // Return the full item - caller is responsible for calling onResult after yielding
+      return Promise.resolve(item);
     }
     if (closed) {
       // Closed and queue is empty - no more messages
@@ -332,12 +334,8 @@ function createMessageInjector(): {
     }
     return new Promise((resolve) => {
       resolver = (item) => {
-        if (item) {
-          item.onResult?.(true);
-          resolve(item.content);
-        } else {
-          resolve(null);
-        }
+        // Return the full item (or null) - caller handles onResult
+        resolve(item);
       };
     });
   };
@@ -355,7 +353,7 @@ function createMessageInjector(): {
     }
   };
 
-  return { injector, getNextMessage, notifySessionEnded };
+  return { injector, getNextItem, notifySessionEnded };
 }
 
 function toAsyncIterablePrompt(
@@ -392,7 +390,7 @@ function toAsyncIterablePrompt(
   }
 
   // With injection support: create injector and yield messages as they arrive
-  const { injector, getNextMessage, notifySessionEnded } = createMessageInjector();
+  const { injector, getNextItem, notifySessionEnded } = createMessageInjector();
 
   return {
     async *[Symbol.asyncIterator]() {
@@ -412,12 +410,14 @@ function toAsyncIterablePrompt(
 
       // Keep yielding injected messages until stream ends or injector closes
       while (!streamEnded) {
-        const content = await Promise.race([
-          getNextMessage(),
+        // Race getNextItem against outputStreamEnded
+        // We get the full item so we can call onResult AFTER yielding
+        const item = await Promise.race([
+          getNextItem(),
           outputStreamEnded.then(() => null),
         ]);
 
-        if (content === null) {
+        if (item === null) {
           break;
         }
 
@@ -425,12 +425,15 @@ function toAsyncIterablePrompt(
           type: 'user',
           message: {
             role: 'user',
-            content: [{ type: 'text', text: content }],
+            content: [{ type: 'text', text: item.content }],
           },
           parent_tool_use_id: null,
           session_id: sessionId ?? '',
         };
         yield sdkMsg;
+
+        // Only report delivery AFTER successfully yielding
+        item.onResult?.(true);
       }
     },
   };
