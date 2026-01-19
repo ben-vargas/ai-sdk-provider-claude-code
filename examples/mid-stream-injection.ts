@@ -6,6 +6,7 @@
  */
 
 import { streamText } from 'ai';
+import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import { claudeCode, type Query } from '../dist/index.js';
 
 type SdkUserMessage = {
@@ -34,12 +35,18 @@ async function* singleMessage(text: string, sessionId = '') {
   yield toSdkUserMessage(text, sessionId);
 }
 
+const allowAllTools: CanUseTool = async (_toolName, input) => ({
+  behavior: 'allow',
+  updatedInput: input,
+});
+
 async function main() {
   let activeQuery: Query | undefined;
   let injected = false;
   let streamedChars = 0;
+  let sessionId: string | undefined;
 
-  const tryInject = async (sessionId = '') => {
+  const tryInject = async () => {
     if (injected || !activeQuery) return;
     injected = true;
     await sleep(400);
@@ -48,7 +55,7 @@ async function main() {
       await activeQuery.streamInput(
         singleMessage(
           'Mid-stream update: switch to nautical metaphors and add a short 3-bullet list of benefits.',
-          sessionId
+          sessionId ?? ''
         )
       );
       console.log('\n\n[Injected a mid-stream update]\n');
@@ -59,6 +66,10 @@ async function main() {
 
   const model = claudeCode('sonnet', {
     streamingInput: 'always',
+    canUseTool: allowAllTools,
+    permissionMode: 'bypassPermissions',
+    allowedTools: ['Bash'],
+    cwd: process.cwd(),
     onQueryCreated: (query) => {
       activeQuery = query;
       void tryInject();
@@ -68,7 +79,7 @@ async function main() {
   const result = streamText({
     model,
     prompt:
-      'Write a 2-paragraph product pitch for a coffee subscription. Be upbeat and detailed.',
+      'Write the first paragraph of a product pitch for a coffee subscription. Then run the Bash command `sleep 2` before continuing with the remaining paragraph. Be upbeat and detailed.',
   });
 
   console.log('--- Streaming response (watch for the tone shift) ---\n');
@@ -85,7 +96,12 @@ async function main() {
     };
 
     if (typed.type === 'response-metadata') {
-      void tryInject(typed.id ?? '');
+      sessionId = typed.id;
+      void tryInject();
+    }
+
+    if (typed.type === 'tool-call') {
+      void tryInject();
     }
 
     if (typed.type === 'text-delta') {
