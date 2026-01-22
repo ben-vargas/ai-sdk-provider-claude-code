@@ -999,6 +999,67 @@ describe('ClaudeCodeLanguageModel', () => {
         } as any)
       ).rejects.toThrow(/Unexpected end of JSON input/);
     });
+
+    it('should include modelUsage in providerMetadata when available', async () => {
+      const mockModelUsage = {
+        'claude-sonnet-4-20250514': {
+          inputTokens: 100,
+          outputTokens: 50,
+          cacheReadInputTokens: 20,
+          cacheCreationInputTokens: 10,
+          webSearchRequests: 0,
+          costUSD: 0.001,
+          contextWindow: 200000,
+          maxOutputTokens: 16384,
+        },
+      };
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'model-usage-session',
+            usage: { input_tokens: 100, output_tokens: 50 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+            modelUsage: mockModelUsage,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      expect(result.providerMetadata?.['claude-code']?.modelUsage).toEqual(mockModelUsage);
+    });
+
+    it('should not include modelUsage in providerMetadata when not available', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'no-model-usage-session',
+            usage: { input_tokens: 100, output_tokens: 50 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+            // No modelUsage field
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      expect(result.providerMetadata?.['claude-code']?.modelUsage).toBeUndefined();
+    });
   });
 
   describe('doStream', () => {
@@ -3511,6 +3572,85 @@ describe('ClaudeCodeLanguageModel', () => {
           : ''
       ).toMatch(/Unexpected token \}/);
       expect(events.some((event) => event.type === 'finish')).toBe(false);
+    });
+
+    it('should include modelUsage in providerMetadata when available', async () => {
+      const mockModelUsage = {
+        'claude-sonnet-4-20250514': {
+          inputTokens: 100,
+          outputTokens: 50,
+          cacheReadInputTokens: 20,
+          cacheCreationInputTokens: 10,
+          webSearchRequests: 0,
+          costUSD: 0.001,
+          contextWindow: 200000,
+          maxOutputTokens: 16384,
+        },
+      };
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'model-usage-session',
+            usage: { input_tokens: 100, output_tokens: 50 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+            modelUsage: mockModelUsage,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      expect(finishChunk.providerMetadata['claude-code'].modelUsage).toEqual(mockModelUsage);
+    });
+
+    it('should not include modelUsage in doStream providerMetadata when not available', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'no-model-usage-session',
+            usage: { input_tokens: 100, output_tokens: 50 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+            // No modelUsage field
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      expect(finishChunk.providerMetadata['claude-code'].modelUsage).toBeUndefined();
     });
   });
 });
