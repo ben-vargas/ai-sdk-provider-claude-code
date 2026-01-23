@@ -1058,6 +1058,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     let wasTruncated = false;
     let costUsd: number | undefined;
     let durationMs: number | undefined;
+    let modelUsage: Record<string, unknown> | undefined;
     const warnings: SharedV3Warning[] = this.generateAllWarnings(options, messagesPrompt);
 
     // Add warnings from message conversion
@@ -1129,6 +1130,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           this.setSessionId(message.session_id);
           costUsd = message.total_cost_usd;
           durationMs = message.duration_ms;
+          modelUsage = message.modelUsage;
 
           // Handle is_error flag in result message (e.g., auth failures)
           // The CLI returns successful JSON with is_error: true and error message in result field
@@ -1227,6 +1229,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           ...(this.sessionId !== undefined && { sessionId: this.sessionId }),
           ...(costUsd !== undefined && { costUsd }),
           ...(durationMs !== undefined && { durationMs }),
+          ...(modelUsage !== undefined && { modelUsage: modelUsage as unknown as JSONValue }),
           ...(wasTruncated && { truncated: true }),
         },
       },
@@ -2238,6 +2241,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       costUsd: message.total_cost_usd,
                     }),
                     ...(message.duration_ms !== undefined && { durationMs: message.duration_ms }),
+                    ...(message.modelUsage !== undefined && {
+                      modelUsage: message.modelUsage as unknown as JSONValue,
+                    }),
                     // JSON validation warnings are collected during streaming and included
                     // in providerMetadata since the AI SDK's finish event doesn't support
                     // a top-level warnings field (unlike stream-start which was already emitted)
