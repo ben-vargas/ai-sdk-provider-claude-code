@@ -412,12 +412,12 @@ function toAsyncIterablePrompt(
       while (!streamEnded) {
         // Race getNextItem against outputStreamEnded
         // We get the full item so we can call onResult AFTER yielding
-        const item = await Promise.race([
-          getNextItem(),
-          outputStreamEnded.then(() => null),
-        ]);
+        const item = await Promise.race([getNextItem(), outputStreamEnded.then(() => null)]);
 
         if (item === null) {
+          // Ensure we don't close the input stream prematurely.
+          // Wait for output to complete to avoid truncation issues.
+          await outputStreamEnded;
           break;
         }
 

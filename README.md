@@ -341,24 +341,28 @@ for await (const chunk of result.textStream) {
 ```
 
 **Requirements:**
+
 - `streamingInput: 'always'` or `'auto'` with `canUseTool` set
 - Messages injected via `inject(content)` are delivered to the agent mid-turn
 
 **Important:** Injection works between tool calls, not during continuous text generation. Use tasks that involve tool usage (file operations, bash commands, etc.) for effective mid-turn interruption.
 
 **Use Cases:**
+
 - Stop an agent mid-task
 - Redirect to a different goal
 - Provide real-time feedback
 - Implement human-in-the-loop approval workflows
 
 **API:**
+
 - `inject(content: string, onResult?: (delivered: boolean) => void)` - Inject a user message. Optional callback reports delivery status.
 - `close()` - Signal no more messages will be injected
 
 **Delivery Tracking:**
+
 ```typescript
-injector.inject("STOP!", (delivered) => {
+injector.inject('STOP!', (delivered) => {
   if (!delivered) {
     // Session ended before message was delivered
     // Handle retry via session resume, etc.

@@ -44,9 +44,14 @@ async function multipleToolCalls() {
 
         setTimeout(() => {
           console.log(`${timestamp()} ${YELLOW}>>> INJECT QUEUED: "STOP!"${RESET}`);
-          injector!.inject('STOP! Do not write more files. Say how many you created.', (delivered) => {
-            console.log(`${timestamp()} ${delivered ? GREEN + '✓ DELIVERED' : RED + '✗ NOT DELIVERED'}${RESET}`);
-          });
+          injector!.inject(
+            'STOP! Do not write more files. Say how many you created.',
+            (delivered) => {
+              console.log(
+                `${timestamp()} ${delivered ? GREEN + '✓ DELIVERED' : RED + '✗ NOT DELIVERED'}${RESET}`
+              );
+            }
+          );
         }, 3000);
       },
     },
@@ -66,19 +71,29 @@ async function multipleToolCalls() {
       }
       process.stdout.write(part.text);
     } else if (part.type === 'tool-call') {
-      if (inText) { console.log(''); inText = false; }
+      if (inText) {
+        console.log('');
+        inText = false;
+      }
       console.log(`${timestamp()} ${CYAN}TOOL-CALL: ${part.toolName}${RESET}`);
     } else if (part.type === 'tool-result') {
       console.log(`${timestamp()} ${CYAN}TOOL-RESULT${RESET}`);
     } else if (part.type === 'finish') {
-      if (inText) { console.log(''); inText = false; }
+      if (inText) {
+        console.log('');
+        inText = false;
+      }
       console.log(`${timestamp()} ${GREEN}FINISH${RESET}`);
     }
   }
 
   console.log('');
   const { execSync } = await import('child_process');
-  try { execSync('rm -rf /tmp/inj-demo'); } catch {}
+  try {
+    execSync('rm -rf /tmp/inj-demo');
+  } catch {
+    // Cleanup is best-effort, ignore errors
+  }
 }
 
 /**
@@ -120,19 +135,27 @@ async function tooLateWithRecovery() {
       }
       process.stdout.write(part.text);
     } else if (part.type === 'tool-call') {
-      if (inText) { console.log(''); inText = false; }
+      if (inText) {
+        console.log('');
+        inText = false;
+      }
       console.log(`${timestamp()} ${CYAN}TOOL-CALL: ${part.toolName}${RESET}`);
     } else if (part.type === 'tool-result') {
       console.log(`${timestamp()} ${CYAN}TOOL-RESULT${RESET}`);
     } else if (part.type === 'finish') {
-      if (inText) { console.log(''); inText = false; }
+      if (inText) {
+        console.log('');
+        inText = false;
+      }
       console.log(`${timestamp()} ${GREEN}FINISH${RESET}`);
       // Inject AFTER session ends - too late!
       const msg = 'What is the first line of /etc/hosts?';
       console.log(`${timestamp()} ${YELLOW}>>> INJECT QUEUED after finish (too late!)${RESET}`);
       injector!.inject(msg, (delivered) => {
         if (!delivered) {
-          console.log(`${timestamp()} ${GREEN}✓ NOT DELIVERED detected - saving for recovery${RESET}`);
+          console.log(
+            `${timestamp()} ${GREEN}✓ NOT DELIVERED detected - saving for recovery${RESET}`
+          );
           missedMessage = msg;
         }
       });
@@ -141,7 +164,9 @@ async function tooLateWithRecovery() {
 
   // Recovery: send missed message as a new turn
   if (missedMessage) {
-    console.log(`${timestamp()} ${YELLOW}>>> RECOVERING: sending missed message as new prompt${RESET}`);
+    console.log(
+      `${timestamp()} ${YELLOW}>>> RECOVERING: sending missed message as new prompt${RESET}`
+    );
     const recovery = streamText({
       model: provider('haiku'),
       prompt: missedMessage,
@@ -154,7 +179,10 @@ async function tooLateWithRecovery() {
         }
         process.stdout.write(part.text);
       } else if (part.type === 'finish') {
-        if (inText) { console.log(''); inText = false; }
+        if (inText) {
+          console.log('');
+          inText = false;
+        }
         console.log(`${timestamp()} ${GREEN}FINISH (recovery complete)${RESET}`);
       }
     }
