@@ -8,7 +8,8 @@
  */
 
 import { streamText } from 'ai';
-import { createClaudeCode, type MessageInjector } from '../dist/index.js';
+import { createClaudeCode } from '../dist/index.js';
+import type { ClaudeCodeSettings, MessageInjector } from '../src/types.js';
 
 const CYAN = '\x1b[36m';
 const GREEN = '\x1b[32m';
@@ -32,30 +33,30 @@ async function multipleToolCalls() {
 
   let injector: MessageInjector | null = null;
 
-  const provider = createClaudeCode({
-    defaultSettings: {
-      streamingInput: 'always',
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
-      allowedTools: ['Write'],
-      onStreamStart: (inj) => {
-        injector = inj;
-        console.log(`${timestamp()} ${GREEN}SESSION STARTED${RESET}`);
+  const defaultSettings: ClaudeCodeSettings = {
+    streamingInput: 'always',
+    permissionMode: 'bypassPermissions',
+    allowDangerouslySkipPermissions: true,
+    allowedTools: ['Write'],
+    onStreamStart: (inj: MessageInjector) => {
+      injector = inj;
+      console.log(`${timestamp()} ${GREEN}SESSION STARTED${RESET}`);
 
-        setTimeout(() => {
-          console.log(`${timestamp()} ${YELLOW}>>> INJECT QUEUED: "STOP!"${RESET}`);
-          injector!.inject(
-            'STOP! Do not write more files. Say how many you created.',
-            (delivered) => {
-              console.log(
-                `${timestamp()} ${delivered ? GREEN + '✓ DELIVERED' : RED + '✗ NOT DELIVERED'}${RESET}`
-              );
-            }
-          );
-        }, 3000);
-      },
+      setTimeout(() => {
+        console.log(`${timestamp()} ${YELLOW}>>> INJECT QUEUED: "STOP!"${RESET}`);
+        injector!.inject(
+          'STOP! Do not write more files. Say how many you created.',
+          (delivered) => {
+            console.log(
+              `${timestamp()} ${delivered ? GREEN + '✓ DELIVERED' : RED + '✗ NOT DELIVERED'}${RESET}`
+            );
+          }
+        );
+      }, 3000);
     },
-  });
+  };
+
+  const provider = createClaudeCode({ defaultSettings });
 
   const result = streamText({
     model: provider('haiku'),
@@ -108,18 +109,18 @@ async function tooLateWithRecovery() {
   let injector: MessageInjector | null = null;
   let missedMessage: string | null = null;
 
-  const provider = createClaudeCode({
-    defaultSettings: {
-      streamingInput: 'always',
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
-      allowedTools: ['Read'],
-      onStreamStart: (inj) => {
-        injector = inj;
-        console.log(`${timestamp()} ${GREEN}SESSION STARTED${RESET}`);
-      },
+  const defaultSettings: ClaudeCodeSettings = {
+    streamingInput: 'always',
+    permissionMode: 'bypassPermissions',
+    allowDangerouslySkipPermissions: true,
+    allowedTools: ['Read'],
+    onStreamStart: (inj: MessageInjector) => {
+      injector = inj;
+      console.log(`${timestamp()} ${GREEN}SESSION STARTED${RESET}`);
     },
-  });
+  };
+
+  const provider = createClaudeCode({ defaultSettings });
 
   const result = streamText({
     model: provider('haiku'),

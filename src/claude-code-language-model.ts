@@ -324,7 +324,10 @@ function createMessageInjector(): {
 
   const getNextItem = (): Promise<QueuedInjection | null> => {
     if (queue.length > 0) {
-      const item = queue.shift()!;
+      const item = queue.shift();
+      if (!item) {
+        return Promise.resolve(null);
+      }
       // Return the full item - caller is responsible for calling onResult after yielding
       return Promise.resolve(item);
     }
