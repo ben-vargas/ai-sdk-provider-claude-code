@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mid-session message injection** - Added `onStreamStart` and `MessageInjector` to enable injecting messages during active sessions, plus an example and tests covering delivery tracking and recovery.
+
 ### Security
 
 ### Fixed

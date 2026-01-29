@@ -368,4 +368,64 @@ export interface ClaudeCodeSettings {
    * ```
    */
   onQueryCreated?: (query: Query) => void;
+
+  /**
+   * Callback invoked when streaming input mode starts.
+   * Provides a MessageInjector that can be used to inject messages mid-session.
+   *
+   * This enables supervisor patterns where you can redirect or interrupt
+   * the agent during execution.
+   *
+   * @example
+   * ```typescript
+   * const model = claudeCode("haiku", {
+   *   streamingInput: "always",
+   *   onStreamStart: (injector) => {
+   *     // Store the injector for later use
+   *     supervisorInjector = injector;
+   *   }
+   * });
+   *
+   * // Later, inject a message mid-session:
+   * supervisorInjector.inject("STOP! Change of plans...");
+   * ```
+   */
+  onStreamStart?: (injector: MessageInjector) => void;
+}
+
+/**
+ * Controller for injecting messages into an active Claude Code session.
+ * Obtained via the onStreamStart callback.
+ */
+export interface MessageInjector {
+  /**
+   * Inject a user message into the current session.
+   * The message will be queued and sent to the agent mid-turn.
+   *
+   * @param content - The message content to inject
+   * @param onResult - Optional callback invoked when delivery status is known:
+   *   - `delivered: true` if the message was sent to the agent
+   *   - `delivered: false` if the session ended before the message could be delivered
+   *
+   * @example
+   * ```typescript
+   * // Fire-and-forget
+   * injector.inject("STOP! Cancel the current task.");
+   *
+   * // With delivery tracking
+   * injector.inject("Change of plans!", (delivered) => {
+   *   if (!delivered) {
+   *     console.log("Message not delivered - session ended first");
+   *     // Handle retry via session resume, etc.
+   *   }
+   * });
+   * ```
+   */
+  inject(content: string, onResult?: (delivered: boolean) => void): void;
+
+  /**
+   * Signal that no more messages will be injected.
+   * Call this when the session should be allowed to complete normally.
+   */
+  close(): void;
 }

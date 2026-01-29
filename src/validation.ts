@@ -203,6 +203,12 @@ export const claudeCodeSettingsSchema = z
         message: 'onQueryCreated must be a function',
       })
       .optional(),
+    onStreamStart: z
+      .any()
+      .refine((val) => val === undefined || typeof val === 'function', {
+        message: 'onStreamStart must be a function',
+      })
+      .optional(),
   })
   .strict();
 
