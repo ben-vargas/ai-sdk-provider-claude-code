@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [3.3.5] - 2026-01-31
+
+### Fixed
+
+- **Stream text lifecycle** - Prevents duplicate text-end events when a user message arrives mid text content block.
+
 ## [3.3.4] - 2026-01-28
 
 ### Added
