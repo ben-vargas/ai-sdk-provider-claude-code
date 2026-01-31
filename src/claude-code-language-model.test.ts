@@ -1458,6 +1458,50 @@ describe('ClaudeCodeLanguageModel', () => {
         expect(textDeltas[0].delta).toBe('Hi');
       });
 
+      it('does not emit duplicate text-end when user message arrives mid-block', async () => {
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'stream_event',
+              event: {
+                type: 'content_block_start',
+                index: 0,
+                content_block: { type: 'text', text: '' },
+              },
+            };
+            yield createTextDeltaEvent('Hello', 0);
+            yield {
+              type: 'user',
+              message: {
+                content: [],
+              },
+            };
+            yield {
+              type: 'stream_event',
+              event: { type: 'content_block_stop', index: 0 },
+            };
+            yield createResultMessage('mid-block-user');
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hi' }] }],
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        const textEnds = chunks.filter((c) => c.type === 'text-end');
+        expect(textEnds).toHaveLength(1);
+      });
+
       it('recovers from truncation when streaming via stream_events', async () => {
         // Generate enough text to exceed MIN_TRUNCATION_LENGTH (512 chars)
         const longText = 'A'.repeat(600);

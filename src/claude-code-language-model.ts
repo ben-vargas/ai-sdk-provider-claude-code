@@ -2100,6 +2100,28 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 continue;
               }
 
+              // A user message signals the end of the current assistant message.
+              // Reset text state to ensure the next assistant message starts with a new text part.
+              // This prevents text from different assistant messages from being merged together.
+              if (textPartId) {
+                const closedTextId = textPartId;
+                controller.enqueue({
+                  type: 'text-end',
+                  id: closedTextId,
+                });
+                textPartId = undefined;
+                // Prevent a later content_block_stop from closing the same text part twice.
+                for (const [blockIndex, blockTextId] of textBlocksByIndex) {
+                  if (blockTextId === closedTextId) {
+                    textBlocksByIndex.delete(blockIndex);
+                    break;
+                  }
+                }
+                accumulatedText = '';
+                streamedTextLength = 0;
+                this.logger.debug('[claude-code] Closed text part due to user message');
+              }
+
               // Extract parent_tool_use_id from SDK message for late-arriving tool results
               const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string })
                 .parent_tool_use_id;
