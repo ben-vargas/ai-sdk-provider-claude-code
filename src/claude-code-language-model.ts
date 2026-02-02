@@ -1850,7 +1850,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       id: toolId,
                     });
                     state.inputClosed = true;
-                    state.lastSerializedInput = accumulatedInput;
+                    const effectiveInput = accumulatedInput || state.lastSerializedInput || '';
+                    state.lastSerializedInput = effectiveInput;
 
                     // Emit tool-call immediately when input is complete (don't wait for result)
                     // This allows UI to show "running" state while tool executes
@@ -1859,12 +1860,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                         type: 'tool-call',
                         toolCallId: toolId,
                         toolName: state.name,
-                        input: accumulatedInput,
+                        input: effectiveInput,
                         providerExecuted: true,
                         dynamic: true,
                         providerMetadata: {
                           'claude-code': {
-                            rawInput: accumulatedInput,
+                            rawInput: effectiveInput,
                             parentToolCallId: state.parentToolCallId ?? null,
                           },
                         },

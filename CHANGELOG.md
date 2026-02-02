@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [3.3.6] - 2026-02-02
+
+### Fixed
+
+- **Tool input race** - Preserve tool input when a content block stop arrives after the assistant tool_use message, ensuring the final tool-call emits the correct payload.
+
 ## [3.3.5] - 2026-01-31
 
 ### Fixed
