@@ -1,6 +1,6 @@
 {
   "name": "ai-sdk-provider-claude-code",
-  "version": "3.3.5",
+  "version": "3.3.6",
   "description": "AI SDK v6 provider for Claude via Claude Agent SDK (use Pro/Max subscription)",
   "keywords": [
     "ai-sdk",
@@ -78,7 +78,7 @@
   "devDependencies": {
     "@edge-runtime/vm": "5.0.0",
     "@eslint/js": "9.28.0",
-    "@types/node": "20.17.24",
+    "@types/node": "^20.19.0",
     "@typescript-eslint/eslint-plugin": "8.34.0",
     "@typescript-eslint/parser": "8.34.0",
     "@vitest/coverage-v8": "^3.2.4",

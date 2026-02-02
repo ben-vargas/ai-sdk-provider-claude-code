@@ -1458,6 +1458,66 @@ describe('ClaudeCodeLanguageModel', () => {
         expect(textDeltas[0].delta).toBe('Hi');
       });
 
+      it('preserves tool input when tool block stop follows assistant tool_use', async () => {
+        const toolUseId = 'toolu_race';
+        const toolName = 'RaceTool';
+        const toolInput = { plan: 'do stuff', steps: ['a', 'b'] };
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'stream_event',
+              event: {
+                type: 'content_block_start',
+                index: 0,
+                content_block: { type: 'tool_use', id: toolUseId, name: toolName },
+              },
+            };
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: toolUseId,
+                    name: toolName,
+                    input: toolInput,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'stream_event',
+              event: { type: 'content_block_stop', index: 0 },
+            };
+            yield createResultMessage('tool-race-session');
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Run tool' }] }],
+        });
+
+        const events: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          events.push(value);
+        }
+
+        const toolInputDelta = events.find((event) => event.type === 'tool-input-delta') as any;
+        const toolCall = events.find((event) => event.type === 'tool-call') as any;
+
+        expect(toolInputDelta?.delta).toBe(JSON.stringify(toolInput));
+        expect(toolCall?.input).toBe(JSON.stringify(toolInput));
+        expect(toolCall?.providerMetadata?.['claude-code']?.rawInput).toBe(
+          JSON.stringify(toolInput)
+        );
+      });
+
       it('does not emit duplicate text-end when user message arrives mid-block', async () => {
         const mockResponse = {
           async *[Symbol.asyncIterator]() {
