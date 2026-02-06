@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ToolAnnotations` support** - `createCustomMcpServer` now accepts optional `annotations` per tool for MCP tool hints (`readOnlyHint`, `destructiveHint`, `openWorldHint`, `idempotentHint`).
 - **Re-exported types** - `ToolAnnotations`, `MinimalCallToolResult`, `TeammateIdleHookInput`, and `TaskCompletedHookInput` are now exported from the package entry point.
 
+### Fixed
+
+- **`generateObject` examples** - Replaced `.email()`, `.url()`, `.uuid()`, and complex regex with `.describe()` hints to avoid CLI silent fallback to prose. Consolidated 4 example files into 2.
+
 ## [3.3.6] - 2026-02-02
 
 ### Fixed
