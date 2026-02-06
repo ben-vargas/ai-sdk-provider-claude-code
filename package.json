@@ -61,14 +61,13 @@
     "example:streaming": "npm run build && npx tsx examples/streaming.ts",
     "example:conversation": "npm run build && npx tsx examples/conversation-history.ts",
     "example:config": "npm run build && npx tsx examples/custom-config.ts",
-    "example:object:basic": "npm run build && npx tsx examples/generate-object-basic.ts",
-    "example:object:nested": "npm run build && npx tsx examples/generate-object-nested.ts",
+    "example:object": "npm run build && npx tsx examples/generate-object.ts",
     "example:object:constraints": "npm run build && npx tsx examples/generate-object-constraints.ts",
     "example:tools": "npm run build && npx tsx examples/tool-management.ts",
     "example:timeout": "npm run build && npx tsx examples/long-running-tasks.ts",
     "example:zod4": "npm run build && npx tsx examples/zod4-compatibility-test.ts",
     "example:structured-repro": "npx tsx examples/structured-output-repro.ts",
-    "example:all": "npm run build && npm run example:basic && npm run example:streaming && npm run example:conversation && npm run example:config && npm run example:object:basic && npm run example:object:nested && npm run example:object:constraints && npm run example:tools && npm run example:timeout"
+    "example:all": "npm run build && npm run example:basic && npm run example:streaming && npm run example:conversation && npm run example:config && npm run example:object && npm run example:object:constraints && npm run example:tools && npm run example:timeout"
   },
   "dependencies": {
     "@ai-sdk/provider": "^3.0.0",
