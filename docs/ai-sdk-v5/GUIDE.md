@@ -148,6 +148,15 @@ const response = await generateText({
 
 `resume` continues a previous CLI session instead of starting a new one.
 
+You can also pass a deterministic `sessionId` for correlation and tracking:
+
+```typescript
+const result = await generateText({
+  model: claudeCode('sonnet', { sessionId: 'my-custom-session-id' }),
+  messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
+});
+```
+
 ---
 
 ## Key Changes in v5
@@ -247,8 +256,11 @@ const result = await generateText({
 | `mcpServers`                 | `object`                                  | `undefined` | MCP server configuration                                           |
 | `env`                        | `Record<string, string>`                  | `undefined` | Environment variables passed to CLI                                |
 | `resume`                     | `string`                                  | `undefined` | Resume an existing session                                         |
+| `sessionId`                  | `string`                                  | `undefined` | Use a specific session ID for tracking and correlation             |
 | `hooks`                      | `object`                                  | `undefined` | Lifecycle hooks (e.g., PreToolUse, PostToolUse)                    |
 | `canUseTool`                 | `(name, input, opts) => Promise`          | `undefined` | Runtime permission callback. Requires streaming input at SDK level |
+| `debug`                      | `boolean`                                 | `undefined` | Enable SDK-level debug logging                                     |
+| `debugFile`                  | `string`                                  | `undefined` | Path to a file for SDK debug log output                            |
 
 ### Custom Configuration
 
@@ -424,6 +436,17 @@ try {
 }
 ```
 
+#### SDK Debug Logging
+
+Separate from the provider-level verbose/logger system, you can enable the underlying Agent SDK's own debug logging. This captures lower-level SDK internals and can be written to a file:
+
+```typescript
+const model = claudeCode('sonnet', {
+  debug: true, // Enable SDK debug output
+  debugFile: '/tmp/sdk.log', // Write SDK debug logs to file
+});
+```
+
 ### Tool Management
 
 Control which tools Claude Code can use with either `allowedTools` (allowlist) or `disallowedTools` (denylist). These flags work for **both built-in Claude tools and MCP tools**, providing session-only permission overrides.
@@ -578,6 +601,38 @@ Notes:
 
 - Tool naming for allow/deny: `mcp__<serverName>__<toolName>`; to allow an entire server: `mcp__<serverName>`.
 - Security: only allow the tools you intend; prefer allowlists in sensitive environments.
+
+#### Tool Annotations
+
+You can add MCP tool annotations to hint tool behavior. The `createCustomMcpServer` convenience helper accepts an optional `annotations` field per tool:
+
+```typescript
+import { z } from 'zod';
+import { createClaudeCode, createCustomMcpServer } from 'ai-sdk-provider-claude-code';
+
+const server = createCustomMcpServer({
+  name: 'my-tools',
+  tools: {
+    lookup: {
+      description: 'Look up a value by key',
+      inputSchema: z.object({ key: z.string() }),
+      handler: async ({ key }) => ({
+        content: [{ type: 'text', text: `value for ${key}` }],
+      }),
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+  },
+});
+
+const claude = createClaudeCode({
+  defaultSettings: { mcpServers: { 'my-tools': server } },
+});
+```
+
+Supported annotation hints: `readOnlyHint`, `destructiveHint`, `openWorldHint`, `idempotentHint`.
 
 ### Hooks and Runtime Permissions
 

@@ -65,6 +65,7 @@ export const claudeCodeSettingsSchema = z
     permissionPromptToolName: z.string().optional(),
     continue: z.boolean().optional(),
     resume: z.string().optional(),
+    sessionId: z.string().optional(),
     allowedTools: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional(),
     betas: z.array(z.string()).optional(),
@@ -150,6 +151,8 @@ export const claudeCodeSettingsSchema = z
       )
       .optional(),
     verbose: z.boolean().optional(),
+    debug: z.boolean().optional(),
+    debugFile: z.string().optional(),
     logger: z.union([z.literal(false), loggerFunctionSchema]).optional(),
     env: z.record(z.string(), z.string().optional()).optional(),
     additionalDirectories: z.array(z.string()).optional(),

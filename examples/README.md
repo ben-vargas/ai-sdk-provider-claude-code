@@ -227,28 +227,29 @@ npx tsx examples/message-injection.ts
 
 ## Object Generation (Structured Output)
 
-> **Native Support**: Object generation uses the SDK's native `outputFormat` option with constrained decoding, providing schema-compliant JSON for **supported** features.
-> **Limitation**: Some JSON Schema features (e.g., `format` constraints like `email`/`uri`, or complex regex patterns) can cause the Claude Code CLI to silently fall back to prose. Use a simplified generation schema and validate client-side if you need those constraints.
+> **Native Support**: Object generation uses the SDK's native `outputFormat` option with constrained decoding, providing schema-compliant JSON for **supported** JSON Schema features.
+>
+> **Important**: Avoid `.email()`, `.url()`, `.uuid()`, `.datetime()` and complex regex with lookaheads — these produce JSON Schema `format` and `pattern` annotations that cause the Claude Code CLI to silently fall back to prose. Use `.describe()` with format hints instead (e.g. `z.string().describe('Email address (e.g. user@example.com)')`) and validate client-side if strict compliance is needed.
 
-### 17. Object Generation Overview (`generate-object.ts`)
+### 17. Object Generation (`generate-object.ts`)
 
-**Purpose**: Advanced real-world examples of object generation.
+**Purpose**: Core object generation patterns from simple to complex — primitives, arrays, optional fields, enums, nested objects, and deep nesting.
 
 ```bash
 npx tsx examples/generate-object.ts
 ```
 
-**Key concepts**: Complex schemas, product analysis, free-form JSON, practical applications
+**Key concepts**: Schema basics, progressive complexity, nested structures, best practices
 
-### 18. Object Generation Tutorial (`generate-object-basic.ts`)
+### 18. Validation Constraints (`generate-object-constraints.ts`)
 
-**Purpose**: Learn object generation step-by-step with progressively complex examples.
+**Purpose**: Enforce data quality with number ranges, simple regex patterns, array length limits, enums, and multipleOf.
 
 ```bash
-npx tsx examples/generate-object-basic.ts
+npx tsx examples/generate-object-constraints.ts
 ```
 
-**Key concepts**: Schema basics, progressive complexity, best practices, clear explanations
+**Key concepts**: Number min/max/int, regex patterns (without lookaheads), array constraints, complex combined validations
 
 ### 19. Stream Object (`stream-object.ts`)
 
@@ -260,27 +261,7 @@ npx tsx examples/stream-object.ts
 
 **Key concepts**: Partial object streaming, real-time updates, field-by-field progress, `streamObject()` API
 
-### 20. Nested Structures (`generate-object-nested.ts`)
-
-**Purpose**: Generate complex, real-world data structures.
-
-```bash
-npx tsx examples/generate-object-nested.ts
-```
-
-**Key concepts**: Hierarchical data, recursive schemas, complex relationships
-
-### 21. Validation Constraints (`generate-object-constraints.ts`)
-
-**Purpose**: Enforce data quality with advanced validation rules.
-
-```bash
-npx tsx examples/generate-object-constraints.ts
-```
-
-**Key concepts**: Enums, number ranges, string patterns, business rules
-
-### 22. Structured Output Repro (`structured-output-repro.ts`)
+### 20. Structured Output Repro (`structured-output-repro.ts`)
 
 **Purpose**: Reproduce CLI structured output fallbacks for certain JSON Schema features.
 
@@ -292,7 +273,7 @@ npx tsx examples/structured-output-repro.ts
 
 ## Testing & Troubleshooting
 
-### 23. Integration Test (`integration-test.ts`)
+### 21. Integration Test (`integration-test.ts`)
 
 **Purpose**: Comprehensive test suite to verify your setup and all features.
 
@@ -302,7 +283,7 @@ npx tsx examples/integration-test.ts
 
 **Key concepts**: Feature verification, error handling, test patterns
 
-### 24. Check CLI (`check-cli.ts`)
+### 22. Check CLI (`check-cli.ts`)
 
 **Purpose**: Troubleshooting tool to verify CLI installation and authentication.
 
@@ -312,7 +293,7 @@ npx tsx examples/check-cli.ts
 
 **Key concepts**: Setup verification, error diagnosis, troubleshooting steps
 
-### 25. Limitations (`limitations.ts`)
+### 23. Limitations (`limitations.ts`)
 
 **Purpose**: Understand what AI SDK features are not supported by the CLI.
 
@@ -335,7 +316,8 @@ const { object } = await generateObject({
   schema: z.object({
     name: z.string(),
     age: z.number(),
-    email: z.string(), // validate client-side if you need format constraints
+    // Use .describe() instead of .email() — format constraints cause CLI fallback
+    email: z.string().describe('Email address (e.g. user@example.com)'),
   }),
   prompt: 'Generate a random user profile',
 });
@@ -448,35 +430,35 @@ const result4 = streamText({
 
 ## Quick Reference
 
-| Example                 | Primary Use Case      | Key Feature            |
-| ----------------------- | --------------------- | ---------------------- |
-| basic-usage             | Getting started       | Simple text generation |
-| streaming               | Responsive UIs        | Real-time output       |
-| tool-streaming          | Tool observability    | Tool event inspection  |
-| images                  | Multimodal prompts    | Image input support    |
-| conversation-history    | Chatbots              | Context preservation   |
-| logging-default         | Default behavior      | Warn/error only        |
-| logging-verbose         | Development/debugging | All log levels         |
-| logging-custom-logger   | External integration  | Custom logger impl     |
-| logging-disabled        | Silent operation      | No logs at all         |
-| custom-config           | Enterprise setup      | Configuration options  |
-| tool-management         | Security              | Access control         |
-| hooks-callbacks         | Event handling        | Lifecycle hooks        |
-| sdk-tools-callbacks     | Custom tools          | In-process MCP tools   |
-| skills-management       | Skills configuration  | settingSources setup   |
-| long-running-tasks      | Complex reasoning     | Timeout handling       |
-| generate-object         | Advanced patterns     | Real-world schemas     |
-| generate-object-basic   | Learning              | Step-by-step tutorial  |
-| stream-object           | Real-time UI          | Partial object updates |
-| structured-output-repro | Troubleshooting       | Schema fallback repro  |
-| limitations             | Constraints overview  | Unsupported features   |
+| Example                     | Primary Use Case      | Key Feature             |
+| --------------------------- | --------------------- | ----------------------- |
+| basic-usage                 | Getting started       | Simple text generation  |
+| streaming                   | Responsive UIs        | Real-time output        |
+| tool-streaming              | Tool observability    | Tool event inspection   |
+| images                      | Multimodal prompts    | Image input support     |
+| conversation-history        | Chatbots              | Context preservation    |
+| logging-default             | Default behavior      | Warn/error only         |
+| logging-verbose             | Development/debugging | All log levels          |
+| logging-custom-logger       | External integration  | Custom logger impl      |
+| logging-disabled            | Silent operation      | No logs at all          |
+| custom-config               | Enterprise setup      | Configuration options   |
+| tool-management             | Security              | Access control          |
+| hooks-callbacks             | Event handling        | Lifecycle hooks         |
+| sdk-tools-callbacks         | Custom tools          | In-process MCP tools    |
+| skills-management           | Skills configuration  | settingSources setup    |
+| long-running-tasks          | Complex reasoning     | Timeout handling        |
+| generate-object             | Object generation     | Core patterns & nesting |
+| generate-object-constraints | Validation            | Regex, ranges, enums    |
+| stream-object               | Real-time UI          | Partial object updates  |
+| structured-output-repro     | Troubleshooting       | Schema fallback repro   |
+| limitations                 | Constraints overview  | Unsupported features    |
 
 ## Learning Path
 
 1. **Beginners**: Start with `basic-usage.ts` → `streaming.ts` → `conversation-history.ts`
 2. **Images & Tools**: `images.ts` → `tool-streaming.ts` to understand multimodal inputs and tool events
 3. **Logging**: `logging-default.ts` → `logging-verbose.ts` → `logging-custom-logger.ts` → `logging-disabled.ts`
-4. **Object Generation**: `generate-object-basic.ts` → `stream-object.ts` → `generate-object-nested.ts` → `generate-object-constraints.ts` → `generate-object.ts`
+4. **Object Generation**: `generate-object.ts` → `generate-object-constraints.ts` → `stream-object.ts`
 5. **Advanced**: `custom-config.ts` → `tool-management.ts` → `skills-management.ts` → `hooks-callbacks.ts` → `sdk-tools-callbacks.ts` → `long-running-tasks.ts`
 6. **Testing/Troubleshooting**: Run `integration-test.ts`, then `structured-output-repro.ts` and `limitations.ts` if behavior seems off
 

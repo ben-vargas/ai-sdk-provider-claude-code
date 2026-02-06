@@ -284,6 +284,9 @@ This provider exposes Agent SDK options directly. Key options include:
 | `persistSession`                  | When `false`, disables session persistence to disk (v3.2.0+)                                              |
 | `spawnClaudeCodeProcess`          | Custom process spawner for VMs/containers (v3.2.0+)                                                       |
 | `permissionMode`                  | Permission mode: `'default'`, `'acceptEdits'`, `'bypassPermissions'`, `'plan'`, `'delegate'`, `'dontAsk'` |
+| `sessionId`                       | Use a specific session ID for deterministic tracking and correlation (v3.4.0+)                            |
+| `debug`                           | Enable programmatic debug logging from the SDK (v3.4.0+)                                                  |
+| `debugFile`                       | Path to a file for SDK debug log output (v3.4.0+)                                                         |
 
 **Agent definitions** (`agents`) now support additional fields (v3.2.0+):
 

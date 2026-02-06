@@ -1,178 +1,211 @@
 #!/usr/bin/env tsx
 
+/**
+ * Object Generation Examples
+ *
+ * Demonstrates core generateObject patterns with the Claude Code provider,
+ * progressing from simple to complex.
+ *
+ * Topics covered:
+ * - Simple objects with primitives
+ * - Arrays and optional fields
+ * - Enums and nested objects
+ * - Arrays of objects
+ * - Deep nesting (3+ levels)
+ *
+ * NOTE: Avoid Zod methods that produce unsupported JSON Schema annotations:
+ * .email(), .url(), .uuid(), .datetime() all emit `format` constraints that
+ * cause the Claude Code CLI to silently fall back to prose. Use .describe()
+ * with format hints instead, then validate client-side if strict format
+ * compliance is needed. See JSON_FIX.md for details.
+ */
+
 import { createClaudeCode } from '../dist/index.js';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 
-// Create the provider
 const claudeCode = createClaudeCode();
 
-console.log('=== Claude Code Generate Object Example ===\n');
+console.log('=== Claude Code: Object Generation Examples ===\n');
 
-// Example 1: Generate a simple object with schema
-async function generateRecipe() {
-  console.log('1. Generating a recipe object with schema validation...\n');
+// ---------------------------------------------------------------------------
+// Example 1: Simple object with primitives
+// ---------------------------------------------------------------------------
+async function example1_simpleObject() {
+  console.log('1. Simple Object with Primitives\n');
 
-  const recipeSchema = z.object({
-    name: z.string().describe('Name of the recipe'),
-    ingredients: z
-      .array(
-        z.object({
-          item: z.string(),
-          amount: z.string(),
-        })
-      )
-      .describe('List of ingredients with amounts'),
-    instructions: z.array(z.string()).describe('Step-by-step cooking instructions'),
-    prepTime: z.number().describe('Preparation time in minutes'),
-    cookTime: z.number().describe('Cooking time in minutes'),
-    servings: z.number().describe('Number of servings'),
+  const { object } = await generateObject({
+    model: claudeCode('opus'),
+    schema: z.object({
+      name: z.string().describe('Full name of the person'),
+      age: z.number().describe('Age in years'),
+      email: z.string().describe('Email address (e.g. user@example.com)'),
+      isActive: z.boolean().describe('Whether the account is active'),
+    }),
+    prompt: 'Generate a profile for a software developer named Sarah.',
   });
 
-  try {
-    const { object: recipe } = await generateObject({
-      model: claudeCode('opus'),
-      prompt: 'Generate a detailed recipe for chocolate chip cookies',
-      schema: recipeSchema,
-    });
-
-    console.log('Generated Recipe:');
-    console.log(JSON.stringify(recipe, null, 2));
-    console.log('\n');
-  } catch (error) {
-    console.error('Error generating recipe:', error);
-  }
+  console.log('Generated profile:');
+  console.log(JSON.stringify(object, null, 2));
+  console.log();
 }
 
-// Example 2: Generate a complex nested object
-async function generateUserProfile() {
-  console.log('2. Generating a user profile with nested data...\n');
+// ---------------------------------------------------------------------------
+// Example 2: Arrays and optional fields
+// ---------------------------------------------------------------------------
+async function example2_arraysAndOptional() {
+  console.log('2. Arrays and Optional Fields\n');
 
-  const userSchema = z.object({
-    id: z.string().describe('Unique user ID'),
-    username: z.string().describe('Username'),
-    profile: z.object({
-      firstName: z.string(),
-      lastName: z.string(),
-      age: z.number().min(0).max(150),
-      email: z.string().email(),
-      bio: z.string().describe('Short biography'),
-      interests: z.array(z.string()).describe('List of interests'),
-      location: z.object({
-        city: z.string(),
-        country: z.string(),
-        timezone: z.string(),
+  const { object } = await generateObject({
+    model: claudeCode('opus'),
+    schema: z.object({
+      productName: z.string().describe('Name of the product'),
+      price: z.number().describe('Price in USD'),
+      description: z.string().describe('Product description'),
+      discount: z.number().optional().describe('Discount percentage if applicable'),
+      tags: z.array(z.string()).optional().describe('Product tags for categorization'),
+      features: z.array(z.string()).describe('Key product features'),
+      inStock: z.boolean().describe('Whether the product is in stock'),
+    }),
+    prompt: 'Generate a product listing for a wireless mechanical keyboard.',
+  });
+
+  console.log('Generated product:');
+  console.log(JSON.stringify(object, null, 2));
+  console.log();
+}
+
+// ---------------------------------------------------------------------------
+// Example 3: Enums and nested objects
+// ---------------------------------------------------------------------------
+async function example3_enumsAndNested() {
+  console.log('3. Enums and Nested Objects\n');
+
+  const { object } = await generateObject({
+    model: claudeCode('opus'),
+    schema: z.object({
+      id: z.string().describe('Unique user ID'),
+      username: z.string(),
+      profile: z.object({
+        firstName: z.string(),
+        lastName: z.string(),
+        age: z.number().min(0).max(150),
+        email: z.string().describe('Email address (e.g. alex@example.com)'),
+        bio: z.string().describe('Short biography'),
+        interests: z.array(z.string()).describe('List of interests'),
+        location: z.object({
+          city: z.string(),
+          country: z.string(),
+          timezone: z.string(),
+        }),
+      }),
+      settings: z.object({
+        theme: z.enum(['light', 'dark', 'auto']),
+        notifications: z.boolean(),
+        language: z.string(),
       }),
     }),
-    settings: z.object({
-      theme: z.enum(['light', 'dark', 'auto']),
-      notifications: z.boolean(),
-      language: z.string(),
+    prompt:
+      'Generate a complete user profile for a software developer named Alex who loves open source.',
+  });
+
+  console.log('Generated user profile:');
+  console.log(JSON.stringify(object, null, 2));
+  console.log();
+}
+
+// ---------------------------------------------------------------------------
+// Example 4: Arrays of objects
+// ---------------------------------------------------------------------------
+async function example4_arraysOfObjects() {
+  console.log('4. Arrays of Objects\n');
+
+  const { object } = await generateObject({
+    model: claudeCode('opus'),
+    schema: z.object({
+      name: z.string().describe('Name of the recipe'),
+      ingredients: z
+        .array(
+          z.object({
+            item: z.string(),
+            amount: z.string(),
+          })
+        )
+        .describe('List of ingredients with amounts'),
+      instructions: z.array(z.string()).describe('Step-by-step cooking instructions'),
+      prepTime: z.number().describe('Preparation time in minutes'),
+      cookTime: z.number().describe('Cooking time in minutes'),
+      servings: z.number().describe('Number of servings'),
     }),
+    prompt: 'Generate a detailed recipe for chocolate chip cookies.',
   });
 
-  try {
-    const { object: userProfile } = await generateObject({
-      model: claudeCode('opus'),
-      prompt:
-        'Generate a complete user profile for a software developer named Alex who loves open source',
-      schema: userSchema,
-    });
-
-    console.log('Generated User Profile:');
-    console.log(JSON.stringify(userProfile, null, 2));
-    console.log('\n');
-  } catch (error) {
-    console.error('Error generating user profile:', error);
-  }
+  console.log('Generated recipe:');
+  console.log(JSON.stringify(object, null, 2));
+  console.log();
 }
 
-// Example 3: Product review analysis
-async function streamAnalysis() {
-  console.log('3. Analyzing product review...\n');
+// ---------------------------------------------------------------------------
+// Example 5: Deep nesting (3+ levels)
+// ---------------------------------------------------------------------------
+async function example5_deepNesting() {
+  console.log('5. Deep Nesting (3+ Levels)\n');
 
-  const analysisSchema = z.object({
-    summary: z.string().describe('Brief summary of the analysis'),
-    sentiment: z.enum(['positive', 'negative', 'neutral', 'mixed']),
-    keyPoints: z.array(z.string()).describe('Main points identified'),
-    confidence: z.number().min(0).max(1).describe('Confidence score'),
-    recommendations: z.array(z.string()).describe('Actionable recommendations'),
-  });
-
-  try {
-    // Note: Both generateObject and streamObject are supported.
-    // Native SDK constrained decoding ensures guaranteed schema compliance.
-    const { object } = await generateObject({
-      model: claudeCode('opus'),
-      prompt:
-        'Analyze this product review: "This laptop is amazing! The battery life is incredible, lasting all day. The keyboard feels great to type on, though the trackpad could be more responsive. Overall, excellent value for money."',
-      schema: analysisSchema,
-    });
-
-    console.log('Analysis result:');
-    console.log(JSON.stringify(object, null, 2));
-    console.log('\n');
-  } catch (error) {
-    console.error('Error analyzing review:', error);
-  }
-}
-
-// Example 4: Generate a space mission with explicit schema
-// Note: Claude Code requires a schema for JSON output (no "free-form JSON" mode).
-// Using z.any() or omitting a schema is not supported.
-async function generateSpaceMission() {
-  console.log('4. Generating space mission with explicit schema...\n');
-
-  const spaceMissionSchema = z.object({
-    missionName: z.string().describe('Name of the space mission'),
-    launchDate: z.string().describe('Launch date in ISO format'),
-    spacecraft: z.object({
-      name: z.string(),
-      type: z.string(),
-      capacity: z.number().describe('Crew capacity'),
+  const { object } = await generateObject({
+    model: claudeCode('opus'),
+    schema: z.object({
+      company: z.object({
+        name: z.string().describe('Company name'),
+        founded: z.number().describe('Year founded'),
+        headquarters: z.object({
+          city: z.string(),
+          country: z.string(),
+          timezone: z.string(),
+        }),
+        departments: z
+          .array(
+            z.object({
+              name: z.string().describe('Department name'),
+              budget: z.number().describe('Annual budget in USD'),
+              headCount: z.number().describe('Number of employees'),
+              teams: z.array(
+                z.object({
+                  name: z.string(),
+                  lead: z.string().describe('Team lead name'),
+                  members: z.number().describe('Team size'),
+                  projects: z.array(z.string()).describe('Active project names'),
+                })
+              ),
+            })
+          )
+          .describe('Company departments'),
+      }),
     }),
-    crew: z
-      .array(
-        z.object({
-          name: z.string(),
-          role: z.string(),
-          nationality: z.string(),
-        })
-      )
-      .describe('Crew members'),
-    objectives: z.array(z.string()).describe('Mission objectives'),
-    duration: z.number().describe('Mission duration in days'),
+    prompt:
+      'Generate a structure for a mid-sized software company with 3 departments: Engineering, Product, and Marketing. Each should have 2-3 teams.',
   });
 
-  try {
-    const { object } = await generateObject({
-      model: claudeCode('opus'),
-      prompt: 'Create a fictional space mission to explore Mars',
-      schema: spaceMissionSchema,
-    });
-
-    console.log('Generated Space Mission:');
-    console.log(JSON.stringify(object, null, 2));
-    console.log('\n');
-  } catch (error) {
-    console.error('Error generating space mission:', error);
-  }
+  console.log('Generated company structure:');
+  console.log(JSON.stringify(object, null, 2));
+  console.log();
 }
 
-// Run all examples
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 async function main() {
-  await generateRecipe();
-  await generateUserProfile();
-  await streamAnalysis();
-  await generateSpaceMission();
+  try {
+    await example1_simpleObject();
+    await example2_arraysAndOptional();
+    await example3_enumsAndNested();
+    await example4_arraysOfObjects();
+    await example5_deepNesting();
 
-  console.log('✅ All examples completed!');
+    console.log('All examples completed!');
+  } catch (error) {
+    console.error('Error:', error);
+    console.log('\nTip: Make sure the Claude Code SDK is authenticated with: claude login');
+  }
 }
 
 main().catch(console.error);
-// NOTE: Migrating to Claude Agent SDK:
-// - System prompt is not applied by default
-// - Filesystem settings (CLAUDE.md, settings.json) are not loaded by default
-// To restore old behavior, set when creating model instances, e.g.:
-//   systemPrompt: { type: 'preset', preset: 'claude_code' }
-//   settingSources: ['user', 'project', 'local']
