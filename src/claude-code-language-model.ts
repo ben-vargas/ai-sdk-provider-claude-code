@@ -1016,6 +1016,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     if (this.settings.hooks) {
       opts.hooks = this.settings.hooks;
     }
+    if (this.settings.sessionId !== undefined) {
+      opts.sessionId = this.settings.sessionId;
+    }
+    if (this.settings.debug !== undefined) {
+      opts.debug = this.settings.debug;
+    }
+    if (this.settings.debugFile !== undefined) {
+      opts.debugFile = this.settings.debugFile;
+    }
 
     const sdkOverrides = sdkOptions
       ? (sdkOptions as Partial<Options> & Record<string, unknown>)
@@ -1315,7 +1324,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             );
           }
 
-          finishReason = mapClaudeCodeFinishReason(message.subtype);
+          const stopReason =
+            'stop_reason' in message
+              ? ((message as Record<string, unknown>).stop_reason as string | null | undefined)
+              : undefined;
+          finishReason = mapClaudeCodeFinishReason(message.subtype, stopReason);
           this.logger.debug(`[claude-code] Finish reason: ${finishReason.unified}`);
         } else if (message.type === 'system' && message.subtype === 'init') {
           this.setSessionId(message.session_id);
@@ -2326,8 +2339,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 );
               }
 
+              const stopReason =
+                'stop_reason' in message
+                  ? ((message as Record<string, unknown>).stop_reason as string | null | undefined)
+                  : undefined;
               const finishReason: LanguageModelV3FinishReason = mapClaudeCodeFinishReason(
-                message.subtype
+                message.subtype,
+                stopReason
               );
 
               this.logger.debug(`[claude-code] Stream finish reason: ${finishReason.unified}`);

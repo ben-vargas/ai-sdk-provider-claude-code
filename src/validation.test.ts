@@ -89,6 +89,40 @@ describe('claudeCodeSettingsSchema', () => {
     const result = claudeCodeSettingsSchema.safeParse(settings);
     expect(result.success).toBe(false);
   });
+
+  it('should accept sessionId as a string', () => {
+    const settings = { sessionId: 'my-custom-session-id' };
+    const result = claudeCodeSettingsSchema.safeParse(settings);
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject sessionId when not a string', () => {
+    const settings = { sessionId: 123 as any };
+    const result = claudeCodeSettingsSchema.safeParse(settings);
+    expect(result.success).toBe(false);
+  });
+
+  it('should accept debug as a boolean', () => {
+    const result = claudeCodeSettingsSchema.safeParse({ debug: true });
+    expect(result.success).toBe(true);
+    const result2 = claudeCodeSettingsSchema.safeParse({ debug: false });
+    expect(result2.success).toBe(true);
+  });
+
+  it('should reject debug when not a boolean', () => {
+    const result = claudeCodeSettingsSchema.safeParse({ debug: 'yes' as any });
+    expect(result.success).toBe(false);
+  });
+
+  it('should accept debugFile as a string', () => {
+    const result = claudeCodeSettingsSchema.safeParse({ debugFile: '/tmp/debug.log' });
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject debugFile when not a string', () => {
+    const result = claudeCodeSettingsSchema.safeParse({ debugFile: 42 as any });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('validateModelId', () => {

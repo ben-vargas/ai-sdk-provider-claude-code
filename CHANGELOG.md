@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [3.4.0] - 2026-02-05
+
+### Added
+
+- **Claude Agent SDK v0.2.33+ compatibility** - Bumped minimum dependency to `@anthropic-ai/claude-agent-sdk@^0.2.33`.
+- **`sessionId` setting** - Pass a custom session ID to the SDK for deterministic session tracking.
+- **`debug` / `debugFile` settings** - Enable programmatic debug logging and file output from the SDK (v0.2.30+).
+- **`stop_reason` finish reason mapping** - When the SDK provides a `stop_reason` field (v0.2.31+), it is used for more precise AI SDK finish reason mapping (`end_turn`, `max_tokens`, `stop_sequence`, `tool_use`).
+- **`ToolAnnotations` support** - `createCustomMcpServer` now accepts optional `annotations` per tool for MCP tool hints (`readOnlyHint`, `destructiveHint`, `openWorldHint`, `idempotentHint`).
+- **Re-exported types** - `ToolAnnotations`, `MinimalCallToolResult`, `TeammateIdleHookInput`, and `TaskCompletedHookInput` are now exported from the package entry point.
+
 ## [3.3.6] - 2026-02-02
 
 ### Fixed

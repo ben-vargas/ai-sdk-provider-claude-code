@@ -417,6 +417,85 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.persistSession).toBe(false);
     });
 
+    it('should pass through sessionId option', async () => {
+      const modelWithSessionId = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sessionId: 'custom-session-123',
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'custom-session-123',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithSessionId.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.sessionId).toBe('custom-session-123');
+    });
+
+    it('should pass through debug and debugFile options', async () => {
+      const modelWithDebug = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          debug: true,
+          debugFile: '/tmp/debug.log',
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-debug',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithDebug.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.debug).toBe(true);
+      expect(call?.options?.debugFile).toBe('/tmp/debug.log');
+    });
+
+    it('should use stop_reason from result message for finish reason', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-stop-reason',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            stop_reason: 'end_turn',
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      expect(result.finishReason).toEqual({ unified: 'stop', raw: 'end_turn' });
+    });
+
     it('should pass through spawnClaudeCodeProcess option', async () => {
       const customSpawner = vi.fn();
       const modelWithSpawner = new ClaudeCodeLanguageModel({
@@ -1218,6 +1297,50 @@ describe('ClaudeCodeLanguageModel', () => {
       expect((chunks[1] as any).error.message).toContain('Invalid API key');
       // The error should be converted to an auth error (contains /login pattern)
       expect(isAuthenticationError((chunks[1] as any).error)).toBe(true);
+    });
+
+    it('should use stop_reason from result message for stream finish reason', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Hello' }],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-stream-stop',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+            stop_reason: 'max_tokens',
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      });
+
+      const chunks: ExtendedStreamPart[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishEvent = chunks.find((c) => c.type === 'finish');
+      expect(finishEvent).toBeDefined();
+      expect((finishEvent as any).finishReason).toEqual({
+        unified: 'length',
+        raw: 'max_tokens',
+      });
     });
 
     describe('stream_event handling (includePartialMessages)', () => {

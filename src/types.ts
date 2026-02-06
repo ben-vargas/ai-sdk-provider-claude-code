@@ -142,6 +142,12 @@ export interface ClaudeCodeSettings {
   resume?: string;
 
   /**
+   * Use a specific session ID for this query.
+   * Allows deterministic session identifiers for tracking and correlation.
+   */
+  sessionId?: string;
+
+  /**
    * Tools to explicitly allow during execution
    * Examples: ['Read', 'LS', 'Bash(git log:*)']
    */
@@ -236,6 +242,16 @@ export interface ClaudeCodeSettings {
    * Enable verbose logging for debugging
    */
   verbose?: boolean;
+
+  /**
+   * Enable programmatic debug logging from the SDK.
+   */
+  debug?: boolean;
+
+  /**
+   * Path to a file for SDK debug log output.
+   */
+  debugFile?: string;
 
   /**
    * Custom logger for handling warnings and errors.

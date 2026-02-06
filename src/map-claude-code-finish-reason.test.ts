@@ -66,4 +66,55 @@ describe('mapClaudeCodeFinishReason', () => {
       raw: 'Error_During_Execution',
     });
   });
+
+  describe('stop_reason support', () => {
+    it('should map end_turn stop_reason to stop', () => {
+      expect(mapClaudeCodeFinishReason('success', 'end_turn')).toEqual({
+        unified: 'stop',
+        raw: 'end_turn',
+      });
+    });
+
+    it('should map max_tokens stop_reason to length', () => {
+      expect(mapClaudeCodeFinishReason('success', 'max_tokens')).toEqual({
+        unified: 'length',
+        raw: 'max_tokens',
+      });
+    });
+
+    it('should map tool_use stop_reason to tool-calls', () => {
+      expect(mapClaudeCodeFinishReason('success', 'tool_use')).toEqual({
+        unified: 'tool-calls',
+        raw: 'tool_use',
+      });
+    });
+
+    it('should map stop_sequence stop_reason to stop', () => {
+      expect(mapClaudeCodeFinishReason('success', 'stop_sequence')).toEqual({
+        unified: 'stop',
+        raw: 'stop_sequence',
+      });
+    });
+
+    it('should fall back to subtype mapping when stop_reason is null', () => {
+      expect(mapClaudeCodeFinishReason('success', null)).toEqual({
+        unified: 'stop',
+        raw: 'success',
+      });
+    });
+
+    it('should fall back to subtype mapping when stop_reason is undefined (backward compat)', () => {
+      expect(mapClaudeCodeFinishReason('error_max_turns', undefined)).toEqual({
+        unified: 'length',
+        raw: 'error_max_turns',
+      });
+    });
+
+    it('should use unknown stop_reason as raw when falling back to subtype mapping', () => {
+      expect(mapClaudeCodeFinishReason('success', 'unknown_reason')).toEqual({
+        unified: 'stop',
+        raw: 'unknown_reason',
+      });
+    });
+  });
 });

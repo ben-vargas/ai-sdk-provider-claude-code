@@ -1,5 +1,8 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  McpSdkServerConfigWithInstance,
+  SdkMcpToolDefinition,
+} from '@anthropic-ai/claude-agent-sdk';
 import { type ZodRawShape, type ZodObject } from 'zod';
 
 /**
@@ -14,6 +17,13 @@ type ContentAnnotations = {
   /** ISO 8601 timestamp of last modification */
   lastModified?: string;
 };
+
+/**
+ * MCP tool annotations for hinting tool behavior to the model.
+ * Derived from the SDK's SdkMcpToolDefinition type to stay in sync
+ * with the upstream MCP ToolAnnotations definition.
+ */
+export type ToolAnnotations = NonNullable<SdkMcpToolDefinition['annotations']>;
 
 /**
  * Convenience helper to create an SDK MCP server from a simple tool map.
@@ -96,6 +106,7 @@ export function createCustomMcpServer<
       description: string;
       inputSchema: ZodObject<ZodRawShape>;
       handler: (args: Record<string, unknown>, extra: unknown) => Promise<MinimalCallToolResult>;
+      annotations?: ToolAnnotations;
     }
   >,
 >(config: { name: string; version?: string; tools: Tools }): McpSdkServerConfigWithInstance {
@@ -104,7 +115,8 @@ export function createCustomMcpServer<
       name,
       def.description,
       def.inputSchema.shape as ZodRawShape,
-      (args: Record<string, unknown>, extra: unknown) => def.handler(args, extra)
+      (args: Record<string, unknown>, extra: unknown) => def.handler(args, extra),
+      def.annotations ? { annotations: def.annotations } : undefined
     )
   );
   return createSdkMcpServer({ name: config.name, version: config.version, tools: defs });
