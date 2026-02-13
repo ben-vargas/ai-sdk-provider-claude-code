@@ -55,13 +55,12 @@ jobs:
           # label_trigger: "claude"
 
           # Configure Claude's behavior with CLI arguments
+          # Note: --allowedTools is intentionally omitted to preserve access to all
+          # default tools (Read, Edit, Write, Glob, Grep, etc.). Specifying it acts
+          # as a full allowlist and would block core file tools.
           claude_args: |
             --model claude-opus-4-6
             --max-turns 25
-            --allowedTools "Bash(npm run build),Bash(npm run test),Bash(npm run test:*),Bash(npm run lint:*),Bash(npm run format:*),Bash(npm run typecheck),Bash(npm ci:*),Bash(git diff:*),Bash(git log:*)"
-
-          # Example: Additional claude_args flags you can add above:
-          #   --system-prompt "Follow our coding standards. Ensure all new code has tests. Use TypeScript for new files."
 
           # Optional: Advanced settings configuration
           # settings: |
