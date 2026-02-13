@@ -26,7 +26,7 @@ jobs:
       actions: read # Required for Claude to read CI results on PRs
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
@@ -54,11 +54,13 @@ jobs:
           # Optional: Trigger when a specific label is added
           # label_trigger: "claude"
 
-          # Optional: Configure Claude's behavior with CLI arguments
-          # claude_args: |
-          #   --model claude-opus-4-1-20250805
-          #   --max-turns 10
-          #   --allowedTools "Bash(npm install),Bash(npm run build),Bash(npm run test:*),Bash(npm run lint:*)"
+          # Configure Claude's behavior with CLI arguments
+          claude_args: |
+            --model claude-opus-4-6
+            --max-turns 25
+            --allowedTools "Bash(npm run build),Bash(npm run test),Bash(npm run test:*),Bash(npm run lint:*),Bash(npm run format:*),Bash(npm run typecheck),Bash(npm ci:*),Bash(git diff:*),Bash(git log:*)"
+
+          # Example: Additional claude_args flags you can add above:
           #   --system-prompt "Follow our coding standards. Ensure all new code has tests. Use TypeScript for new files."
 
           # Optional: Advanced settings configuration
