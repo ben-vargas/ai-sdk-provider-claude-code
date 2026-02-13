@@ -1331,6 +1331,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           finishReason = mapClaudeCodeFinishReason(message.subtype, stopReason);
           this.logger.debug(`[claude-code] Finish reason: ${finishReason.unified}`);
         } else if (message.type === 'system' && message.subtype === 'init') {
+          const failedServers = message.mcp_servers.filter(
+            s => s.status !== "connected"
+          );
+
+          if (failedServers.length > 0) {
+            console.warn("Failed to connect:", failedServers);
+          }
           this.setSessionId(message.session_id);
           this.logger.info(`[claude-code] Session initialized: ${message.session_id}`);
         }
