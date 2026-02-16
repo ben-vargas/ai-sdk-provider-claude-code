@@ -1337,7 +1337,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             );
 
             if (failedServers.length > 0) {
-              console.warn("Failed to connect:", failedServers);
+              this.logger.warn(`Failed to connect: ${failedServers}`);
             }
           }
           this.setSessionId(message.session_id);
