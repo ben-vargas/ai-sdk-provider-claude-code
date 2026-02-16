@@ -14,9 +14,10 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
+      actions: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
@@ -75,6 +76,12 @@ jobs:
             Provide detailed feedback using inline comments for specific issues.
             Use top-level comments for general observations or praise.
 
-          # Tools for comprehensive PR review
+          additional_permissions: |
+            actions: read
+
+          # Note: --allowedTools is intentionally omitted to preserve access to all
+          # default tools (Read, Edit, Write, Glob, Grep, etc.). Specifying it acts
+          # as a full allowlist and would block core file tools.
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --model claude-opus-4-6
+            --max-turns 12
