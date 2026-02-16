@@ -1685,6 +1685,172 @@ describe('ClaudeCodeLanguageModel', () => {
         expect(textEnds).toHaveLength(1);
       });
 
+      it('does not emit duplicate text-end when tool content_block_start arrives mid-text-block', async () => {
+        const toolUseId = 'toolu_mid_text';
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // Start a text content block
+            yield {
+              type: 'stream_event',
+              event: {
+                type: 'content_block_start',
+                index: 0,
+                content_block: { type: 'text', text: '' },
+              },
+            };
+            yield createTextDeltaEvent('Hello', 0);
+            // Tool content block starts before text block stops
+            yield {
+              type: 'stream_event',
+              event: {
+                type: 'content_block_start',
+                index: 1,
+                content_block: { type: 'tool_use', id: toolUseId, name: 'TestTool' },
+              },
+            };
+            // Text block stops (should not emit a second text-end)
+            yield {
+              type: 'stream_event',
+              event: { type: 'content_block_stop', index: 0 },
+            };
+            yield {
+              type: 'stream_event',
+              event: { type: 'content_block_stop', index: 1 },
+            };
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  { type: 'tool_use', id: toolUseId, name: 'TestTool', input: {} },
+                ],
+              },
+            };
+            yield createResultMessage('tool-mid-text');
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hi' }] }],
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        const textEnds = chunks.filter((c) => c.type === 'text-end');
+        expect(textEnds).toHaveLength(1);
+      });
+
+      it('does not emit duplicate text-end when assistant message with tools arrives mid-text-block', async () => {
+        const toolUseId = 'toolu_asst_mid';
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // Start a text content block
+            yield {
+              type: 'stream_event',
+              event: {
+                type: 'content_block_start',
+                index: 0,
+                content_block: { type: 'text', text: '' },
+              },
+            };
+            yield createTextDeltaEvent('Hello', 0);
+            // Assistant message with tool arrives before text block stops
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  { type: 'text', text: 'Hello' },
+                  { type: 'tool_use', id: toolUseId, name: 'TestTool', input: {} },
+                ],
+              },
+            };
+            // Text block stops (should not emit a second text-end)
+            yield {
+              type: 'stream_event',
+              event: { type: 'content_block_stop', index: 0 },
+            };
+            yield createResultMessage('asst-mid-text');
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hi' }] }],
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        const textEnds = chunks.filter((c) => c.type === 'text-end');
+        expect(textEnds).toHaveLength(1);
+      });
+
+      it('does not emit duplicate text-end when reasoning content_block_start arrives mid-text-block', async () => {
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // Start a text content block
+            yield {
+              type: 'stream_event',
+              event: {
+                type: 'content_block_start',
+                index: 0,
+                content_block: { type: 'text', text: '' },
+              },
+            };
+            yield createTextDeltaEvent('Hello', 0);
+            // Reasoning block starts before text block stops
+            yield {
+              type: 'stream_event',
+              event: {
+                type: 'content_block_start',
+                index: 1,
+                content_block: { type: 'thinking', thinking: '' },
+              },
+            };
+            // Text block stops (should not emit a second text-end)
+            yield {
+              type: 'stream_event',
+              event: { type: 'content_block_stop', index: 0 },
+            };
+            yield {
+              type: 'stream_event',
+              event: { type: 'content_block_stop', index: 1 },
+            };
+            yield createResultMessage('reasoning-mid-text');
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hi' }] }],
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        const textEnds = chunks.filter((c) => c.type === 'text-end');
+        expect(textEnds).toHaveLength(1);
+      });
+
       it('recovers from truncation when streaming via stream_events', async () => {
         // Generate enough text to exceed MIN_TRUNCATION_LENGTH (512 chars)
         const longText = 'A'.repeat(600);
