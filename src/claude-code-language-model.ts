@@ -1720,11 +1720,19 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
                 // Close any active text part before tool starts
                 if (textPartId) {
+                  const closedTextId = textPartId;
                   controller.enqueue({
                     type: 'text-end',
-                    id: textPartId,
+                    id: closedTextId,
                   });
                   textPartId = undefined;
+                  // Prevent a later content_block_stop from closing the same text part twice.
+                  for (const [idx, blockTextId] of textBlocksByIndex) {
+                    if (blockTextId === closedTextId) {
+                      textBlocksByIndex.delete(idx);
+                      break;
+                    }
+                  }
                 }
 
                 // Track this block for later delta/stop events
@@ -1810,11 +1818,19 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
                 // Close any active text part before reasoning starts
                 if (textPartId) {
+                  const closedTextId = textPartId;
                   controller.enqueue({
                     type: 'text-end',
-                    id: textPartId,
+                    id: closedTextId,
                   });
                   textPartId = undefined;
+                  // Prevent a later content_block_stop from closing the same text part twice.
+                  for (const [idx, blockTextId] of textBlocksByIndex) {
+                    if (blockTextId === closedTextId) {
+                      textBlocksByIndex.delete(idx);
+                      break;
+                    }
+                  }
                 }
 
                 const reasoningPartId = generateId();
@@ -1959,11 +1975,19 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               // This ensures tool calls split text into separate parts.
               // We only do this if there are actual tools to avoid unnecessary text-end events.
               if (textPartId && tools.length > 0) {
+                const closedTextId = textPartId;
                 controller.enqueue({
                   type: 'text-end',
-                  id: textPartId,
+                  id: closedTextId,
                 });
                 textPartId = undefined; // Reset so next text gets a new ID
+                // Prevent a later content_block_stop from closing the same text part twice.
+                for (const [idx, blockTextId] of textBlocksByIndex) {
+                  if (blockTextId === closedTextId) {
+                    textBlocksByIndex.delete(idx);
+                    break;
+                  }
+                }
               }
 
               for (const tool of tools) {
