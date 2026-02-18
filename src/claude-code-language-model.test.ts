@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
 import { getErrorMetadata, isAuthenticationError } from './errors.js';
+import type { Logger } from './types.js';
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 
 // Extend stream part union locally to include provider-specific 'tool-error'
@@ -740,6 +741,108 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(result.finishReason.unified).toBe('stop');
     });
 
+    it('should log actionable MCP warnings for failed and needs-auth servers on init', async () => {
+      const warn = vi.fn();
+      const logger: Logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn,
+        error: vi.fn(),
+      };
+      const modelWithLogger = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { logger },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'init',
+            session_id: 'test-session-123',
+            mcp_servers: [
+              { name: 'filesystem', status: 'failed', error: 'connection refused' },
+              { name: 'exa', status: 'needs-auth' },
+              { name: 'ok', status: 'connected' },
+            ],
+          };
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: 'hello' }],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'test-session-123',
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+            },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithLogger.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const warning = warn.mock.calls[0]?.[0] as string;
+      expect(warning).toContain('filesystem:failed (connection refused)');
+      expect(warning).toContain('exa:needs-auth');
+      expect(warning).not.toContain('[object Object]');
+    });
+
+    it('should not warn for pending or disabled MCP servers on init', async () => {
+      const warn = vi.fn();
+      const logger: Logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn,
+        error: vi.fn(),
+      };
+      const modelWithLogger = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { logger },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'init',
+            session_id: 'test-session-123',
+            mcp_servers: [
+              { name: 'filesystem', status: 'pending' },
+              { name: 'exa', status: 'disabled' },
+              { name: 'ok', status: 'connected' },
+            ],
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'test-session-123',
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+            },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithLogger.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+
     it('should handle error_max_turns as length finish reason', async () => {
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
@@ -1180,6 +1283,52 @@ describe('ClaudeCodeLanguageModel', () => {
 
       expect(onQueryCreated).toHaveBeenCalledTimes(1);
       expect(onQueryCreated).toHaveBeenCalledWith(mockResponse);
+    });
+
+    it('should log actionable MCP warnings on stream init for failed servers', async () => {
+      const warn = vi.fn();
+      const logger: Logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn,
+        error: vi.fn(),
+      };
+      const modelWithLogger = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { logger },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'init',
+            session_id: 'stream-session-1',
+            mcp_servers: [{ name: 'filesystem', status: 'failed', error: 'spawn failed' }],
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'stream-session-1',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const { stream } = await modelWithLogger.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      });
+
+      const reader = stream.getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toContain('filesystem:failed (spawn failed)');
     });
 
     it('should stream text chunks from SDK response', async () => {
