@@ -473,7 +473,7 @@ const gitOnlyClaude = createClaudeCode({
 
 // Mix built-in and MCP tools
 const mixedClaude = createClaudeCode({
-  allowedTools: ['Read', 'Bash(npm test:*)', 'mcp__filesystem__read_file', 'mcp__git__status'],
+  allowedTools: ['Read', 'Bash(npm test:*)', 'mcp__filesystem__read_text_file', 'mcp__git__status'],
 });
 ```
 

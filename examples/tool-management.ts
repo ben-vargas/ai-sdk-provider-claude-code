@@ -102,7 +102,7 @@ async function testToolManagement() {
         'LS',
         'Bash(git log:*)',
         'Bash(git status)',
-        'mcp__filesystem__read_file',
+        'mcp__filesystem__read_text_file',
         'mcp__git__status',
       ],
     },
