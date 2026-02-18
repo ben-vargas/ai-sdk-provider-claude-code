@@ -1163,6 +1163,43 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     }
   }
 
+  private logMcpConnectionIssues(
+    mcpServers: Array<{ name?: string; status?: string; error?: string }> | undefined
+  ): void {
+    if (!Array.isArray(mcpServers) || mcpServers.length === 0) {
+      return;
+    }
+
+    const serversNeedingAttention = mcpServers.filter((server) => {
+      const status = typeof server.status === 'string' ? server.status.toLowerCase() : '';
+      return status === 'failed' || status === 'needs-auth';
+    });
+
+    if (serversNeedingAttention.length === 0) {
+      return;
+    }
+
+    const details = serversNeedingAttention
+      .map((server) => {
+        const name =
+          typeof server.name === 'string' && server.name.trim().length > 0
+            ? server.name
+            : '<unknown>';
+        const status =
+          typeof server.status === 'string' && server.status.trim().length > 0
+            ? server.status
+            : 'unknown';
+        const error =
+          typeof server.error === 'string' && server.error.trim().length > 0
+            ? ` (${server.error})`
+            : '';
+        return `${name}:${status}${error}`;
+      })
+      .join(', ');
+
+    this.logger.warn(`[claude-code] MCP servers not connected: ${details}`);
+  }
+
   async doGenerate(
     options: Parameters<LanguageModelV3['doGenerate']>[0]
   ): Promise<Awaited<ReturnType<LanguageModelV3['doGenerate']>>> {
@@ -1331,6 +1368,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           finishReason = mapClaudeCodeFinishReason(message.subtype, stopReason);
           this.logger.debug(`[claude-code] Finish reason: ${finishReason.unified}`);
         } else if (message.type === 'system' && message.subtype === 'init') {
+          this.logMcpConnectionIssues(message.mcp_servers);
           this.setSessionId(message.session_id);
           this.logger.info(`[claude-code] Session initialized: ${message.session_id}`);
         }
@@ -2445,6 +2483,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               controller.close();
               return;
             } else if (message.type === 'system' && message.subtype === 'init') {
+              this.logMcpConnectionIssues(message.mcp_servers);
+
               // Store session ID for future use
               this.setSessionId(message.session_id);
 

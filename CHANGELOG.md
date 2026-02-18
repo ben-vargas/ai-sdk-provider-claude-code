@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [3.4.2] - 2026-02-17
+
+### Fixed
+
+- **MCP server connection warnings** - When MCP servers report `failed` or `needs-auth` status during session init, a structured warning is now emitted via `logger.warn` (e.g. `[claude-code] MCP servers not connected: filesystem:failed (connection refused), exa:needs-auth`). Applies to both `doGenerate` and `doStream` paths.
+
 ## [3.4.1] - 2026-02-18
 
 ### Added
