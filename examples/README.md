@@ -191,7 +191,35 @@ npx tsx examples/sdk-tools-callbacks.ts
 
 **Key concepts**: In-process tools, createSdkMcpServer, tool definitions, MCP integration
 
-### 16. Skills Management (`skills-management.ts`)
+### 16. External MCP Server (`mcp-filesystem.ts`)
+
+**Purpose**: Run an external MCP server over stdio using the official `@modelcontextprotocol/server-filesystem` package.
+
+```bash
+npx tsx examples/mcp-filesystem.ts
+```
+
+Optional: pass a specific directory to scope filesystem access:
+
+```bash
+npx tsx examples/mcp-filesystem.ts /absolute/path/to/inspect
+```
+
+**Key concepts**: `mcpServers` stdio config, external MCP transport, MCP tool allowlists, read-only MCP permissions
+
+Tip: examples run with concise logs by default. Set `CLAUDE_EXAMPLE_VERBOSE=1` to see low-level provider debug traces.
+
+### 17. External MCP Server (Exa HTTP) (`mcp-exa.ts`)
+
+**Purpose**: Run Exa's hosted MCP endpoint over HTTP with optional API key support.
+
+```bash
+npx tsx examples/mcp-exa.ts
+```
+
+**Key concepts**: `mcpServers` HTTP config, hosted MCP endpoints, Exa tools (`web_search_exa`, `get_code_context_exa`), optional API key via env vars
+
+### 18. Skills Management (`skills-management.ts`)
 
 **Purpose**: Configure Skills support - custom tools defined in user or project settings.
 
@@ -199,7 +227,11 @@ npx tsx examples/sdk-tools-callbacks.ts
 npx tsx examples/skills-management.ts
 ```
 
-### 17. Mid-Stream Injection (`mid-stream-injection.ts`)
+**Key concepts**: settingSources configuration, Skill tool permission, user/project skills, validation warnings
+
+**What you'll see**: Configuration examples showing how to enable Skills, with a demonstration of the validation warning when 'Skill' is in allowedTools but settingSources is not set.
+
+### 19. Mid-Stream Injection (`mid-stream-injection.ts`)
 
 **Purpose**: Re-steer a running query by injecting a new user message mid-stream.
 
@@ -209,11 +241,7 @@ npx tsx examples/mid-stream-injection.ts
 
 **Key concepts**: streaming input, `onQueryCreated`, `query.streamInput()`, live prompt updates
 
-**Key concepts**: settingSources configuration, Skill tool permission, user/project skills, validation warnings
-
-**What you'll see**: Configuration examples showing how to enable Skills, with a demonstration of the validation warning when 'Skill' is in allowedTools but settingSources is not set.
-
-### 17. Message Injection (`message-injection.ts`)
+### 20. Message Injection (`message-injection.ts`)
 
 **Purpose**: Inject messages mid-session to interrupt, redirect, or provide feedback to the agent.
 
@@ -231,7 +259,7 @@ npx tsx examples/message-injection.ts
 >
 > **Important**: Avoid `.email()`, `.url()`, `.uuid()`, `.datetime()` and complex regex with lookaheads — these produce JSON Schema `format` and `pattern` annotations that cause the Claude Code CLI to silently fall back to prose. Use `.describe()` with format hints instead (e.g. `z.string().describe('Email address (e.g. user@example.com)')`) and validate client-side if strict compliance is needed.
 
-### 17. Object Generation (`generate-object.ts`)
+### 21. Object Generation (`generate-object.ts`)
 
 **Purpose**: Core object generation patterns from simple to complex — primitives, arrays, optional fields, enums, nested objects, and deep nesting.
 
@@ -241,7 +269,7 @@ npx tsx examples/generate-object.ts
 
 **Key concepts**: Schema basics, progressive complexity, nested structures, best practices
 
-### 18. Validation Constraints (`generate-object-constraints.ts`)
+### 22. Validation Constraints (`generate-object-constraints.ts`)
 
 **Purpose**: Enforce data quality with number ranges, simple regex patterns, array length limits, enums, and multipleOf.
 
@@ -251,7 +279,7 @@ npx tsx examples/generate-object-constraints.ts
 
 **Key concepts**: Number min/max/int, regex patterns (without lookaheads), array constraints, complex combined validations
 
-### 19. Stream Object (`stream-object.ts`)
+### 23. Stream Object (`stream-object.ts`)
 
 **Purpose**: Receive incremental partial objects as the AI generates structured data, enabling real-time UI updates.
 
@@ -261,7 +289,7 @@ npx tsx examples/stream-object.ts
 
 **Key concepts**: Partial object streaming, real-time updates, field-by-field progress, `streamObject()` API
 
-### 20. Structured Output Repro (`structured-output-repro.ts`)
+### 24. Structured Output Repro (`structured-output-repro.ts`)
 
 **Purpose**: Reproduce CLI structured output fallbacks for certain JSON Schema features.
 
@@ -273,7 +301,7 @@ npx tsx examples/structured-output-repro.ts
 
 ## Testing & Troubleshooting
 
-### 21. Integration Test (`integration-test.ts`)
+### 25. Integration Test (`integration-test.ts`)
 
 **Purpose**: Comprehensive test suite to verify your setup and all features.
 
@@ -283,7 +311,7 @@ npx tsx examples/integration-test.ts
 
 **Key concepts**: Feature verification, error handling, test patterns
 
-### 22. Check CLI (`check-cli.ts`)
+### 26. Check CLI (`check-cli.ts`)
 
 **Purpose**: Troubleshooting tool to verify CLI installation and authentication.
 
@@ -293,7 +321,7 @@ npx tsx examples/check-cli.ts
 
 **Key concepts**: Setup verification, error diagnosis, troubleshooting steps
 
-### 23. Limitations (`limitations.ts`)
+### 27. Limitations (`limitations.ts`)
 
 **Purpose**: Understand what AI SDK features are not supported by the CLI.
 
