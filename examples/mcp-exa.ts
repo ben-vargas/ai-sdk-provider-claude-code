@@ -62,7 +62,9 @@ async function main() {
   });
 
   console.log(`Using Exa MCP endpoint: ${redactEndpoint(exaEndpoint)}`);
-  console.log(`Verbose provider logs: ${verboseLogs ? 'enabled' : 'disabled'} (set CLAUDE_EXAMPLE_VERBOSE=1 to enable)`);
+  console.log(
+    `Verbose provider logs: ${verboseLogs ? 'enabled' : 'disabled'} (set CLAUDE_EXAMPLE_VERBOSE=1 to enable)`
+  );
   console.log('Streaming output (with Exa MCP tool events):\n');
 
   const result = streamText({

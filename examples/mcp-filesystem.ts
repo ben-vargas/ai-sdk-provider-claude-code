@@ -65,7 +65,9 @@ Do not call list_directory on "/" and do not access any path outside ${pathInstr
   });
 
   console.log(`Target directory: ${targetDir}`);
-  console.log(`Verbose provider logs: ${verboseLogs ? 'enabled' : 'disabled'} (set CLAUDE_EXAMPLE_VERBOSE=1 to enable)`);
+  console.log(
+    `Verbose provider logs: ${verboseLogs ? 'enabled' : 'disabled'} (set CLAUDE_EXAMPLE_VERBOSE=1 to enable)`
+  );
   if (targetFile) {
     console.log(`Preferred file to read: ${targetFile}`);
   } else {
