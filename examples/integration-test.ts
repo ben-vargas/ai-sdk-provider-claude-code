@@ -205,7 +205,7 @@ async function runAllTests() {
     } catch (error) {
       console.error(`\n❌ ${test.name} test failed`);
       if (isAuthenticationError(error)) {
-        console.log('\n⚠️  Authentication required. Please run: claude login');
+        console.log('\n⚠️  Authentication required. Please run: claude auth login');
         process.exit(1);
       }
     }

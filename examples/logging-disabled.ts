@@ -64,8 +64,8 @@ async function main() {
     // Even with logging disabled, you can still catch and handle errors
     console.error('Error:', error);
     console.log('\n💡 Troubleshooting:');
-    console.log('1. Install Claude Code SDK: npm install -g @anthropic-ai/claude-code');
-    console.log('2. Authenticate: claude login');
+    console.log('1. Install Claude Code: https://docs.anthropic.com/en/docs/claude-code/overview');
+    console.log('2. Authenticate: claude auth login');
     console.log('3. Run check-cli.ts to verify setup');
     console.log('4. Try running without logger: false to see diagnostic logs');
   }

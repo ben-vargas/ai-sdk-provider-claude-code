@@ -89,7 +89,7 @@ export function createAPICallError({
  * @example
  * ```typescript
  * throw createAuthenticationError({
- *   message: 'Please run "claude login" to authenticate'
+ *   message: 'Please run "claude auth login" to authenticate'
  * });
  * ```
  */

@@ -33,11 +33,11 @@ async function checkSetup() {
       console.log('   https://docs.anthropic.com/en/docs/claude-code/overview');
     } else if (error.message?.includes('authentication') || error.message?.includes('401')) {
       console.log('\n🔐 Authentication required. Please run:');
-      console.log('   claude login');
+      console.log('   claude auth login');
     } else {
       console.log('\n🔧 Troubleshooting tips:');
       console.log('1. Install Claude Code: https://docs.anthropic.com/en/docs/claude-code/overview');
-      console.log('2. Authenticate: claude login');
+      console.log('2. Authenticate: claude auth login');
       console.log('3. Verify installation: claude --version');
     }
 

@@ -34,4 +34,4 @@
 
 ## Security & Configuration Tips
 
-- Authenticate locally via `claude login` before running examples and never commit CLI state; expose new options through `src/types.ts` with well-documented defaults.
+- Authenticate locally via `claude auth login` before running examples and never commit CLI state; expose new options through `src/types.ts` with well-documented defaults.
