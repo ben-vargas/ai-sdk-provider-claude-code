@@ -36,7 +36,9 @@ async function checkSetup() {
       console.log('   claude auth login');
     } else {
       console.log('\n🔧 Troubleshooting tips:');
-      console.log('1. Install Claude Code: https://docs.anthropic.com/en/docs/claude-code/overview');
+      console.log(
+        '1. Install Claude Code: https://docs.anthropic.com/en/docs/claude-code/overview'
+      );
       console.log('2. Authenticate: claude auth login');
       console.log('3. Verify installation: claude --version');
     }
