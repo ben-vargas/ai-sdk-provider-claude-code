@@ -6,7 +6,7 @@
  *
  * Requirements:
  *   - `npm run build` (so ../dist is up to date)
- *   - `claude login` and the CLI tools available on your PATH
+ *   - `claude auth login` and the CLI tools available on your PATH
  *   - Node.js ≥ 18
  */
 

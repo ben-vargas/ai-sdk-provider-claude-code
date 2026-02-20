@@ -1099,6 +1099,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       'auth failed',
       'please login',
       'claude login',
+      'claude auth login',
       '/login', // CLI returns "Please run /login"
       'invalid api key',
     ];

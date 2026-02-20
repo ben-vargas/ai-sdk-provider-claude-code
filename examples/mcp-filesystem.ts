@@ -6,7 +6,7 @@
  *
  * Requirements:
  *   - npm run build
- *   - claude login
+ *   - claude auth login
  *   - Node.js >= 18
  *
  * Run:

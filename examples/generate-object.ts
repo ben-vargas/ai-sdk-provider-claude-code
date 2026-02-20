@@ -204,7 +204,7 @@ async function main() {
     console.log('All examples completed!');
   } catch (error) {
     console.error('Error:', error);
-    console.log('\nTip: Make sure the Claude Code SDK is authenticated with: claude login');
+    console.log('\nTip: Make sure Claude Code is authenticated with: claude auth login');
   }
 }
 

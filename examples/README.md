@@ -6,11 +6,11 @@ This directory contains curated examples demonstrating the most important featur
 
 ## Prerequisites
 
-1. Install and authenticate Claude CLI:
+1. Install and authenticate Claude CLI (see [official docs](https://docs.anthropic.com/en/docs/claude-code/overview)):
 
 ```bash
-npm install -g @anthropic-ai/claude-code
-claude login
+curl -fsSL https://claude.ai/install.sh | bash
+claude auth login
 ```
 
 2. Build the provider:
@@ -360,7 +360,7 @@ try {
   // Your code here
 } catch (error) {
   if (isAuthenticationError(error)) {
-    console.error('Please run: claude login');
+    console.error('Please run: claude auth login');
   }
 }
 ```

@@ -58,9 +58,11 @@ npm install ai-sdk-provider-claude-code ai zod@^4.0.0
 
 ### 1. Install and authenticate the CLI
 
+See the [official docs](https://docs.anthropic.com/en/docs/claude-code/overview) for platform-specific options.
+
 ```bash
-npm install -g @anthropic-ai/claude-code
-claude login
+curl -fsSL https://claude.ai/install.sh | bash
+claude auth login
 ```
 
 ### 2. Add the provider
@@ -198,8 +200,8 @@ const model = claudeCode('sonnet', {
 CLI install and auth are unchanged:
 
 ```bash
-npm install -g @anthropic-ai/claude-code
-claude login
+curl -fsSL https://claude.ai/install.sh | bash
+claude auth login
 ```
 
 ### Migrating from v1.x to v2.0.0
