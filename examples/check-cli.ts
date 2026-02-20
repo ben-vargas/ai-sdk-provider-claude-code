@@ -29,14 +29,14 @@ async function checkSetup() {
     console.error('Error:', error.message);
 
     if (error.message?.includes('not found') || error.message?.includes('ENOENT')) {
-      console.log('\n💡 Make sure Claude Code SDK is installed:');
-      console.log('   npm install -g @anthropic-ai/claude-code');
+      console.log('\n💡 Make sure Claude Code is installed:');
+      console.log('   https://docs.anthropic.com/en/docs/claude-code/overview');
     } else if (error.message?.includes('authentication') || error.message?.includes('401')) {
       console.log('\n🔐 Authentication required. Please run:');
       console.log('   claude login');
     } else {
       console.log('\n🔧 Troubleshooting tips:');
-      console.log('1. Install Claude Code SDK: npm install -g @anthropic-ai/claude-code');
+      console.log('1. Install Claude Code: https://docs.anthropic.com/en/docs/claude-code/overview');
       console.log('2. Authenticate: claude login');
       console.log('3. Verify installation: claude --version');
     }
