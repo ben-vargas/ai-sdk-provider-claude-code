@@ -174,6 +174,26 @@ type ToolErrorPart = {
 // Local extension of the AI SDK stream part union to include tool-error.
 type ExtendedStreamPart = LanguageModelV3StreamPart | ToolErrorPart;
 
+type ContentBlock = { type: string; [key: string]: unknown };
+
+function isContentBlock(item: unknown): item is ContentBlock {
+  return typeof item === 'object' && item !== null && 'type' in item;
+}
+
+function filterContentBlocks(content: unknown, type: string): ContentBlock[] {
+  if (!Array.isArray(content)) return [];
+  const blocks = content.filter(
+    (item): item is ContentBlock => isContentBlock(item) && item.type === type
+  );
+  const mismatch = blocks.find((b) => b.type !== type);
+  if (mismatch) {
+    throw new Error(
+      `filterContentBlocks: block type '${mismatch.type}' passed filter for '${type}'`
+    );
+  }
+  return blocks;
+}
+
 /**
  * Usage data from Claude Code SDK.
  */
@@ -676,69 +696,66 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     return sdkOptions?.resume ?? this.settings.resume ?? this.sessionId;
   }
 
-  private extractToolUses(content: unknown): ClaudeToolUse[] {
-    if (!Array.isArray(content)) {
-      return [];
+  private extractTextAndThinking(content: unknown): { text: string; thinking: string[] } {
+    if (!Array.isArray(content)) return { text: '', thinking: [] };
+
+    let text = '';
+    const thinking: string[] = [];
+
+    for (const part of content) {
+      if (!isContentBlock(part)) continue;
+      if (part.type === 'text' && typeof part.text === 'string') {
+        text += part.text;
+      } else if (part.type === 'thinking' && typeof part.thinking === 'string') {
+        thinking.push(part.thinking as string);
+      }
     }
 
-    return content
-      .filter(
-        (item): item is { type: string; id?: unknown; name?: unknown; input?: unknown } =>
-          typeof item === 'object' &&
-          item !== null &&
-          'type' in item &&
-          (item as { type: unknown }).type === 'tool_use'
-      )
-      .map((item) => {
-        const { id, name, input, parent_tool_use_id } = item as {
-          id?: unknown;
-          name?: unknown;
-          input?: unknown;
-          parent_tool_use_id?: unknown;
-        };
-        return {
-          id: typeof id === 'string' && id.length > 0 ? id : generateId(),
-          name:
-            typeof name === 'string' && name.length > 0
-              ? name
-              : ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME,
-          input,
-          parentToolUseId: typeof parent_tool_use_id === 'string' ? parent_tool_use_id : null,
-        } satisfies ClaudeToolUse;
-      });
+    if (text.length > 0 && typeof text !== 'string') {
+      throw new Error('extractTextAndThinking: accumulated text must be a string');
+    }
+    if (thinking.some((t) => typeof t !== 'string')) {
+      throw new Error('extractTextAndThinking: all thinking entries must be strings');
+    }
+
+    return { text, thinking };
+  }
+
+  private extractToolUses(content: unknown): ClaudeToolUse[] {
+    return filterContentBlocks(content, 'tool_use').map((block) => {
+      const { id, name, input, parent_tool_use_id } = block as {
+        id?: unknown;
+        name?: unknown;
+        input?: unknown;
+        parent_tool_use_id?: unknown;
+      };
+      return {
+        id: typeof id === 'string' && id.length > 0 ? id : generateId(),
+        name:
+          typeof name === 'string' && name.length > 0
+            ? name
+            : ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME,
+        input,
+        parentToolUseId: typeof parent_tool_use_id === 'string' ? parent_tool_use_id : null,
+      } satisfies ClaudeToolUse;
+    });
   }
 
   private extractToolResults(content: unknown): ClaudeToolResult[] {
-    if (!Array.isArray(content)) {
-      return [];
-    }
-
-    return content
-      .filter(
-        (
-          item
-        ): item is {
-          type: string;
-          tool_use_id?: unknown;
-          content?: unknown;
-          is_error?: unknown;
-          name?: unknown;
-        } =>
-          typeof item === 'object' &&
-          item !== null &&
-          'type' in item &&
-          (item as { type: unknown }).type === 'tool_result'
-      )
-      .map((item) => {
-        const { tool_use_id, content, is_error, name } = item;
-        return {
-          id:
-            typeof tool_use_id === 'string' && tool_use_id.length > 0 ? tool_use_id : generateId(),
-          name: typeof name === 'string' && name.length > 0 ? name : undefined,
-          result: content,
-          isError: Boolean(is_error),
-        } satisfies ClaudeToolResult;
-      });
+    return filterContentBlocks(content, 'tool_result').map((block) => {
+      const { tool_use_id, content, is_error, name } = block as {
+        tool_use_id?: unknown;
+        content?: unknown;
+        is_error?: unknown;
+        name?: unknown;
+      };
+      return {
+        id: typeof tool_use_id === 'string' && tool_use_id.length > 0 ? tool_use_id : generateId(),
+        name: typeof name === 'string' && name.length > 0 ? name : undefined,
+        result: content,
+        isError: Boolean(is_error),
+      } satisfies ClaudeToolResult;
+    });
   }
 
   private extractToolErrors(content: unknown): Array<{
@@ -746,38 +763,18 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     name?: string;
     error: unknown;
   }> {
-    if (!Array.isArray(content)) {
-      return [];
-    }
-
-    return content
-      .filter(
-        (
-          item
-        ): item is {
-          type: string;
-          tool_use_id?: unknown;
-          error?: unknown;
-          name?: unknown;
-        } =>
-          typeof item === 'object' &&
-          item !== null &&
-          'type' in item &&
-          (item as { type: unknown }).type === 'tool_error'
-      )
-      .map((item) => {
-        const { tool_use_id, error, name } = item as {
-          tool_use_id?: unknown;
-          error?: unknown;
-          name?: unknown;
-        };
-        return {
-          id:
-            typeof tool_use_id === 'string' && tool_use_id.length > 0 ? tool_use_id : generateId(),
-          name: typeof name === 'string' && name.length > 0 ? name : undefined,
-          error,
-        };
-      });
+    return filterContentBlocks(content, 'tool_error').map((block) => {
+      const { tool_use_id, error, name } = block as {
+        tool_use_id?: unknown;
+        error?: unknown;
+        name?: unknown;
+      };
+      return {
+        id: typeof tool_use_id === 'string' && tool_use_id.length > 0 ? tool_use_id : generateId(),
+        name: typeof name === 'string' && name.length > 0 ? name : undefined,
+        error,
+      };
+    });
   }
 
   private serializeToolInput(input: unknown): string {
@@ -943,6 +940,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       pathToClaudeCodeExecutable: this.settings.pathToClaudeCodeExecutable,
       maxTurns: this.settings.maxTurns,
       maxThinkingTokens: this.settings.maxThinkingTokens,
+      thinking: this.settings.thinking,
+      effort: this.settings.effort,
+      promptSuggestions: this.settings.promptSuggestions,
       cwd: this.settings.cwd,
       executable: this.settings.executable,
       executableArgs: this.settings.executableArgs,
@@ -1245,6 +1245,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     );
 
     let text = '';
+    const thinkingTraces: string[] = [];
     let structuredOutput: unknown | undefined;
     let usage: LanguageModelV3Usage = createEmptyUsage();
     let finishReason: LanguageModelV3FinishReason = { unified: 'stop', raw: undefined };
@@ -1316,9 +1317,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       for await (const message of response) {
         this.logger.debug(`[claude-code] Received message type: ${message.type}`);
         if (message.type === 'assistant') {
-          text += message.message.content
-            .map((c: { type: string; text?: string }) => (c.type === 'text' ? c.text : ''))
-            .join('');
+          const { text: messageText, thinking: messageThinking } = this.extractTextAndThinking(
+            message.message.content
+          );
+          text += messageText;
+          thinkingTraces.push(...messageThinking);
         } else if (message.type === 'result') {
           done();
           this.setSessionId(message.session_id);
@@ -1411,7 +1414,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     const finalText = structuredOutput !== undefined ? JSON.stringify(structuredOutput) : text;
 
     return {
-      content: [{ type: 'text', text: finalText }],
+      content: [
+        ...thinkingTraces.map((trace) => ({
+          type: 'reasoning' as const,
+          text: trace,
+        })),
+        { type: 'text' as const, text: finalText },
+      ],
       usage,
       finishReason,
       warnings,
@@ -1430,6 +1439,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           ...(durationMs !== undefined && { durationMs }),
           ...(modelUsage !== undefined && { modelUsage: modelUsage as unknown as JSONValue }),
           ...(wasTruncated && { truncated: true }),
+          ...(thinkingTraces.length > 0 && { thinkingTraces }),
         },
       },
     };
