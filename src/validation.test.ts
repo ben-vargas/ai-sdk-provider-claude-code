@@ -102,6 +102,18 @@ describe('claudeCodeSettingsSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it('should reject extra keys on thinking variants', () => {
+    const cases = [
+      { type: 'adaptive', budgetTokens: 1000 },
+      { type: 'disabled', budgetTokens: 1000 },
+      { type: 'enabled', extra: true },
+    ];
+    for (const thinking of cases) {
+      const result = claudeCodeSettingsSchema.safeParse({ thinking });
+      expect(result.success).toBe(false);
+    }
+  });
+
   it('should accept promptSuggestions as a boolean', () => {
     expect(claudeCodeSettingsSchema.safeParse({ promptSuggestions: true }).success).toBe(true);
     expect(claudeCodeSettingsSchema.safeParse({ promptSuggestions: false }).success).toBe(true);
