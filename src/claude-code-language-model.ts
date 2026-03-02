@@ -1339,8 +1339,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       for await (const message of response) {
         this.logger.debug(`[claude-code] Received message type: ${message.type}`);
         if (message.type === 'assistant') {
-          const { text: messageText, thinking: messageThinking } =
-            this.extractTextAndThinking(message.message.content);
+          const { text: messageText, thinking: messageThinking } = this.extractTextAndThinking(
+            message.message.content
+          );
           text += messageText;
           thinkingTraces.push(...messageThinking);
         } else if (message.type === 'result') {
