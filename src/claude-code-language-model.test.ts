@@ -1242,6 +1242,72 @@ describe('ClaudeCodeLanguageModel', () => {
 
       expect(result.providerMetadata?.['claude-code']?.modelUsage).toBeUndefined();
     });
+
+    it('extracts thinking blocks as reasoning content parts', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                { type: 'thinking', thinking: 'Let me reason about this...' },
+                { type: 'text', text: 'Here is the answer.' },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'thinking-session',
+            usage: { input_tokens: 50, output_tokens: 30 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Think about this' }] }],
+      } as any);
+
+      if (result.content.length < 2) {
+        throw new Error(`expected at least 2 content parts, got ${result.content.length}`);
+      }
+      expect(result.content[0]).toEqual({ type: 'reasoning', text: 'Let me reason about this...' });
+      expect(result.content[1]).toEqual({ type: 'text', text: 'Here is the answer.' });
+      expect(result.providerMetadata?.['claude-code']?.thinkingTraces).toEqual([
+        'Let me reason about this...',
+      ]);
+    });
+
+    it('returns only text part when no thinking blocks present', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: 'Just text, no thinking.' }],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'no-thinking-session',
+            usage: { input_tokens: 10, output_tokens: 10 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+      } as any);
+
+      expect(result.content).toHaveLength(1);
+      expect(result.content[0]).toEqual({ type: 'text', text: 'Just text, no thinking.' });
+      expect(result.providerMetadata?.['claude-code']?.thinkingTraces).toBeUndefined();
+    });
   });
 
   describe('doStream', () => {

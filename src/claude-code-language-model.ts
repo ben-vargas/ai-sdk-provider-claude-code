@@ -676,6 +676,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     return sdkOptions?.resume ?? this.settings.resume ?? this.sessionId;
   }
 
+  private extractTextAndThinking(content: unknown): { text: string; thinking: string[] } {
+    if (!Array.isArray(content)) return { text: '', thinking: [] };
+
+    let text = '';
+    const thinking: string[] = [];
+
+    for (const part of content) {
+      if (typeof part !== 'object' || part === null || !('type' in part)) continue;
+      const typed = part as { type: string; text?: string; thinking?: string };
+      if (typed.type === 'text' && typed.text) {
+        text += typed.text;
+      } else if (typed.type === 'thinking' && typed.thinking) {
+        thinking.push(typed.thinking);
+      }
+    }
+
+    return { text, thinking };
+  }
+
   private extractToolUses(content: unknown): ClaudeToolUse[] {
     if (!Array.isArray(content)) {
       return [];
@@ -943,6 +962,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       pathToClaudeCodeExecutable: this.settings.pathToClaudeCodeExecutable,
       maxTurns: this.settings.maxTurns,
       maxThinkingTokens: this.settings.maxThinkingTokens,
+      thinking: this.settings.thinking,
+      effort: this.settings.effort,
+      promptSuggestions: this.settings.promptSuggestions,
       cwd: this.settings.cwd,
       executable: this.settings.executable,
       executableArgs: this.settings.executableArgs,
@@ -1245,6 +1267,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     );
 
     let text = '';
+    const thinkingTraces: string[] = [];
     let structuredOutput: unknown | undefined;
     let usage: LanguageModelV3Usage = createEmptyUsage();
     let finishReason: LanguageModelV3FinishReason = { unified: 'stop', raw: undefined };
@@ -1316,9 +1339,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       for await (const message of response) {
         this.logger.debug(`[claude-code] Received message type: ${message.type}`);
         if (message.type === 'assistant') {
-          text += message.message.content
-            .map((c: { type: string; text?: string }) => (c.type === 'text' ? c.text : ''))
-            .join('');
+          const { text: messageText, thinking: messageThinking } =
+            this.extractTextAndThinking(message.message.content);
+          text += messageText;
+          thinkingTraces.push(...messageThinking);
         } else if (message.type === 'result') {
           done();
           this.setSessionId(message.session_id);
@@ -1411,7 +1435,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     const finalText = structuredOutput !== undefined ? JSON.stringify(structuredOutput) : text;
 
     return {
-      content: [{ type: 'text', text: finalText }],
+      content: [
+        ...thinkingTraces.map((trace) => ({
+          type: 'reasoning' as const,
+          text: trace,
+        })),
+        { type: 'text' as const, text: finalText },
+      ],
       usage,
       finishReason,
       warnings,
@@ -1430,6 +1460,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           ...(durationMs !== undefined && { durationMs }),
           ...(modelUsage !== undefined && { modelUsage: modelUsage as unknown as JSONValue }),
           ...(wasTruncated && { truncated: true }),
+          ...(thinkingTraces.length > 0 && { thinkingTraces }),
         },
       },
     };

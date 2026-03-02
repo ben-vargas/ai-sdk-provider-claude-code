@@ -74,7 +74,7 @@
   "dependencies": {
     "@ai-sdk/provider": "^3.0.0",
     "@ai-sdk/provider-utils": "^4.0.1",
-    "@anthropic-ai/claude-agent-sdk": "^0.2.33"
+    "@anthropic-ai/claude-agent-sdk": "^0.2.63"
   },
   "devDependencies": {
     "@edge-runtime/vm": "5.0.0",

@@ -11,6 +11,7 @@ import type {
   SpawnOptions,
   AgentMcpServerSpec,
   Query,
+  ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 
 export type StreamingInputMode = 'auto' | 'always' | 'off';
@@ -101,8 +102,40 @@ export interface ClaudeCodeSettings {
 
   /**
    * Maximum thinking tokens for the model
+   *
+   * @deprecated Use `thinking` instead.
    */
   maxThinkingTokens?: number;
+
+  /**
+   * Controls Claude's thinking/reasoning behavior.
+   * Takes precedence over the deprecated `maxThinkingTokens`.
+   *
+   * - `{ type: 'adaptive' }` — Claude decides when and how much to think (Opus 4.6+, default)
+   * - `{ type: 'enabled', budgetTokens?: number }` — Fixed thinking token budget
+   * - `{ type: 'disabled' }` — No extended thinking
+   *
+   * @see https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking
+   */
+  thinking?: ThinkingConfig;
+
+  /**
+   * Controls how much effort Claude puts into its response.
+   *
+   * - `'low'` — Minimal thinking, fastest responses
+   * - `'medium'` — Moderate thinking
+   * - `'high'` — Deep reasoning (default)
+   * - `'max'` — Maximum effort (Opus 4.6 only)
+   *
+   * @see https://docs.anthropic.com/en/docs/build-with-claude/effort
+   */
+  effort?: 'low' | 'medium' | 'high' | 'max';
+
+  /**
+   * Enable prompt suggestions. When true, the agent emits a predicted
+   * next user prompt after each turn (arrives after the result message).
+   */
+  promptSuggestions?: boolean;
 
   /**
    * Working directory for CLI operations

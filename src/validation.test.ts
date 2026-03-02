@@ -72,6 +72,45 @@ describe('claudeCodeSettingsSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it('should accept valid effort values', () => {
+    for (const effort of ['low', 'medium', 'high', 'max']) {
+      const result = claudeCodeSettingsSchema.safeParse({ effort });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it('should reject invalid effort values', () => {
+    const result = claudeCodeSettingsSchema.safeParse({ effort: 'turbo' });
+    expect(result.success).toBe(false);
+  });
+
+  it('should accept valid thinking configurations', () => {
+    const configs = [
+      { type: 'adaptive' },
+      { type: 'enabled', budgetTokens: 10000 },
+      { type: 'enabled' },
+      { type: 'disabled' },
+    ];
+    for (const thinking of configs) {
+      const result = claudeCodeSettingsSchema.safeParse({ thinking });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it('should reject invalid thinking configurations', () => {
+    const result = claudeCodeSettingsSchema.safeParse({ thinking: { type: 'turbo' } });
+    expect(result.success).toBe(false);
+  });
+
+  it('should accept promptSuggestions as a boolean', () => {
+    expect(claudeCodeSettingsSchema.safeParse({ promptSuggestions: true }).success).toBe(true);
+    expect(claudeCodeSettingsSchema.safeParse({ promptSuggestions: false }).success).toBe(true);
+  });
+
+  it('should reject promptSuggestions when not a boolean', () => {
+    expect(claudeCodeSettingsSchema.safeParse({ promptSuggestions: 'yes' }).success).toBe(false);
+  });
+
   it('should accept env as a record of strings', () => {
     const settings = { env: { PATH: '/usr/bin', FOO: 'bar' } };
     const result = claudeCodeSettingsSchema.safeParse(settings);
