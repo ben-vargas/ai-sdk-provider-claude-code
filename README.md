@@ -7,7 +7,7 @@
   <a href="https://www.npmjs.com/package/ai-sdk-provider-claude-code"><img src="https://img.shields.io/npm/l/ai-sdk-provider-claude-code?color=00A79E" alt="License: MIT" /></a>
 </p>
 
-# AI SDK Provider for Claude Code SDK
+# AI SDK Provider for Claude Agent SDK
 
 > **Latest Release**: Version 3.x supports AI SDK v6 stable with the Claude Agent SDK. For AI SDK v5 support, use the `ai-sdk-v5` tag.
 
@@ -82,7 +82,7 @@ npm install ai-sdk-provider-claude-code@ai-sdk-v4 ai@^4.3.16
 
 **This is an unofficial community provider** and is not affiliated with or endorsed by Anthropic or Vercel. By using this provider:
 
-- You understand that your data will be sent to Anthropic's servers through the Claude Code SDK
+- You understand that your data will be sent to Anthropic's servers through the Claude Agent SDK
 - You agree to comply with [Anthropic's Terms of Service](https://www.anthropic.com/legal/consumer-terms)
 - You acknowledge this software is provided "as is" without warranties of any kind
 
