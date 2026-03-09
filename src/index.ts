@@ -69,6 +69,11 @@ export type {
   AgentMcpServerSpec,
   // Query interface for mid-stream message injection via streamInput()
   Query,
+  // Thinking configuration types
+  ThinkingConfig,
+  ThinkingAdaptive,
+  ThinkingEnabled,
+  ThinkingDisabled,
 } from '@anthropic-ai/claude-agent-sdk';
 
 /**

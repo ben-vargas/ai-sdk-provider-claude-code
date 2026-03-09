@@ -13,6 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [3.4.3] - 2026-03-02
+
+### Added
+
+- **`thinking` setting** - First-class `ThinkingConfig` support (`adaptive`, `enabled` with optional `budgetTokens`, `disabled`). Takes precedence over the deprecated `maxThinkingTokens`.
+- **`effort` setting** - Control how much effort Claude puts into its response (`low`, `medium`, `high`, `max`).
+- **`promptSuggestions` setting** - Enable prompt suggestions from the agent after each turn.
+- **Reasoning content parts** - `doGenerate` now extracts thinking blocks as AI SDK `reasoning` content parts, and exposes `thinkingTraces` in `providerMetadata` for convenience access.
+- **Re-exported types** - `ThinkingConfig`, `ThinkingAdaptive`, `ThinkingEnabled`, `ThinkingDisabled` are now exported from the package entry point.
+- **Thinking traces example** - Added `examples/thinking-traces.ts` demonstrating reasoning access in both streaming and non-streaming modes.
+
+### Changed
+
+- **Bumped `@anthropic-ai/claude-agent-sdk`** to `^0.2.63`.
+- **DRY content-block extraction** - Shared `isContentBlock` guard and `filterContentBlocks` utility replace duplicated filter logic in `extractToolUses`, `extractToolResults`, and `extractToolErrors`.
+
+### Fixed
+
+- **Empty-string content blocks** - Fixed truthy bug where empty-string `text` or `thinking` content was silently dropped.
+- **Strict thinking schema validation** - Thinking union variants now use `.strict()` to reject invalid extra keys (e.g. `{ type: 'adaptive', budgetTokens: 1000 }`).
+
 ## [3.4.2] - 2026-02-17
 
 ### Fixed

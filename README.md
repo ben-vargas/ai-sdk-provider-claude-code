@@ -7,7 +7,7 @@
   <a href="https://www.npmjs.com/package/ai-sdk-provider-claude-code"><img src="https://img.shields.io/npm/l/ai-sdk-provider-claude-code?color=00A79E" alt="License: MIT" /></a>
 </p>
 
-# AI SDK Provider for Claude Code SDK
+# AI SDK Provider for Claude Agent SDK
 
 > **Latest Release**: Version 3.x supports AI SDK v6 stable with the Claude Agent SDK. For AI SDK v5 support, use the `ai-sdk-v5` tag.
 
@@ -82,7 +82,7 @@ npm install ai-sdk-provider-claude-code@ai-sdk-v4 ai@^4.3.16
 
 **This is an unofficial community provider** and is not affiliated with or endorsed by Anthropic or Vercel. By using this provider:
 
-- You understand that your data will be sent to Anthropic's servers through the Claude Code SDK
+- You understand that your data will be sent to Anthropic's servers through the Claude Agent SDK
 - You agree to comply with [Anthropic's Terms of Service](https://www.anthropic.com/legal/consumer-terms)
 - You acknowledge this software is provided "as is" without warranties of any kind
 
@@ -273,22 +273,25 @@ console.log(result.object); // Matches the schema above
 
 This provider exposes Agent SDK options directly. Key options include:
 
-| Option                            | Description                                                                                               |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `betas`                           | Enable beta features (e.g., `['context-1m-2025-08-07']`)                                                  |
-| `sandbox`                         | Configure sandbox behavior (`{ enabled: true }`)                                                          |
-| `plugins`                         | Load custom plugins from local paths                                                                      |
-| `resumeSessionAt`                 | Resume session at a specific message UUID                                                                 |
-| `enableFileCheckpointing`         | Enable file rewind support                                                                                |
-| `maxBudgetUsd`                    | Maximum budget in USD for the query                                                                       |
-| `tools`                           | Tool configuration (array of names or preset)                                                             |
-| `allowDangerouslySkipPermissions` | Allow bypassing permissions                                                                               |
-| `persistSession`                  | When `false`, disables session persistence to disk (v3.2.0+)                                              |
-| `spawnClaudeCodeProcess`          | Custom process spawner for VMs/containers (v3.2.0+)                                                       |
-| `permissionMode`                  | Permission mode: `'default'`, `'acceptEdits'`, `'bypassPermissions'`, `'plan'`, `'delegate'`, `'dontAsk'` |
-| `sessionId`                       | Use a specific session ID for deterministic tracking and correlation (v3.4.0+)                            |
-| `debug`                           | Enable programmatic debug logging from the SDK (v3.4.0+)                                                  |
-| `debugFile`                       | Path to a file for SDK debug log output (v3.4.0+)                                                         |
+| Option                            | Description                                                                                                      |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `betas`                           | Enable beta features (e.g., `['context-1m-2025-08-07']`)                                                         |
+| `sandbox`                         | Configure sandbox behavior (`{ enabled: true }`)                                                                 |
+| `plugins`                         | Load custom plugins from local paths                                                                             |
+| `resumeSessionAt`                 | Resume session at a specific message UUID                                                                        |
+| `enableFileCheckpointing`         | Enable file rewind support                                                                                       |
+| `maxBudgetUsd`                    | Maximum budget in USD for the query                                                                              |
+| `tools`                           | Tool configuration (array of names or preset)                                                                    |
+| `allowDangerouslySkipPermissions` | Allow bypassing permissions                                                                                      |
+| `persistSession`                  | When `false`, disables session persistence to disk (v3.2.0+)                                                     |
+| `spawnClaudeCodeProcess`          | Custom process spawner for VMs/containers (v3.2.0+)                                                              |
+| `permissionMode`                  | Permission mode: `'default'`, `'acceptEdits'`, `'bypassPermissions'`, `'plan'`, `'delegate'`, `'dontAsk'`        |
+| `sessionId`                       | Use a specific session ID for deterministic tracking and correlation (v3.4.0+)                                   |
+| `debug`                           | Enable programmatic debug logging from the SDK (v3.4.0+)                                                         |
+| `debugFile`                       | Path to a file for SDK debug log output (v3.4.0+)                                                                |
+| `effort`                          | Effort level: `'low'`, `'medium'`, `'high'`, or `'max'`                                                          |
+| `thinking`                        | Thinking config: `{ type: 'adaptive' }`, `{ type: 'enabled', budgetTokens?: number }`, or `{ type: 'disabled' }` |
+| `promptSuggestions`               | Enable prompt suggestions (`boolean`)                                                                            |
 
 **Agent definitions** (`agents`) now support additional fields (v3.2.0+):
 
@@ -436,7 +439,7 @@ This provider handles Anthropic `content_block_*` stream events directly for mor
 
 - **Tool input streaming** — `tool-input-delta` streams arguments incrementally; `tool-call` emits when the tool input block completes (before results), enabling “running” state in UIs.
 - **Text streaming** — `text-start/delta/end` emitted from content blocks with proper lifecycle management.
-- **Extended thinking** — `reasoning-start/delta/end` emitted from `thinking` content blocks (availability depends on model and request).
+- **Extended thinking** — `reasoning-start/delta/end` emitted from `thinking` content blocks in streaming mode; `reasoning` content parts returned from `doGenerate` in non-streaming mode (availability depends on model and request).
 
 For subagent parent/child tracking, see **Subagent Hierarchy Tracking** in this README.
 

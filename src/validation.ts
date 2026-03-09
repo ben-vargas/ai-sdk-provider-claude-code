@@ -44,6 +44,20 @@ export const claudeCodeSettingsSchema = z
       .optional(),
     maxTurns: z.number().int().min(1).max(100).optional(),
     maxThinkingTokens: z.number().int().positive().max(100000).optional(),
+    thinking: z
+      .union([
+        z.object({ type: z.literal('adaptive') }).strict(),
+        z
+          .object({
+            type: z.literal('enabled'),
+            budgetTokens: z.number().int().positive().optional(),
+          })
+          .strict(),
+        z.object({ type: z.literal('disabled') }).strict(),
+      ])
+      .optional(),
+    effort: z.enum(['low', 'medium', 'high', 'max']).optional(),
+    promptSuggestions: z.boolean().optional(),
     cwd: z
       .string()
       .refine(
