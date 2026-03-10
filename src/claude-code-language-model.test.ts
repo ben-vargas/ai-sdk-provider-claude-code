@@ -1935,9 +1935,7 @@ describe('ClaudeCodeLanguageModel', () => {
             yield {
               type: 'assistant',
               message: {
-                content: [
-                  { type: 'tool_use', id: toolUseId, name: 'TestTool', input: {} },
-                ],
+                content: [{ type: 'tool_use', id: toolUseId, name: 'TestTool', input: {} }],
               },
             };
             yield createResultMessage('tool-mid-text');
