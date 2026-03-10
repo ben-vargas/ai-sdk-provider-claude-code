@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [3.4.4] - 2026-03-10
+
+### Fixed
+
+- **Interrupted text blocks** - Prevent duplicate `text-end` events when a text block is closed early by a tool-use block, reasoning block, or assistant tool message before its later `content_block_stop` arrives.
+
 ## [3.4.3] - 2026-03-02
 
 ### Added
