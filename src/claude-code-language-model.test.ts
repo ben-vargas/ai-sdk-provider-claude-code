@@ -19,6 +19,7 @@ type ExtendedStreamPart = LanguageModelV3StreamPart | ToolErrorPart;
 vi.mock('@anthropic-ai/claude-agent-sdk', () => {
   return {
     query: vi.fn(),
+    getSubagentMessages: vi.fn(),
     // Note: real SDK may not export AbortError at runtime; test mock provides it
     AbortError: class AbortError extends Error {
       constructor(message?: string) {
@@ -30,7 +31,11 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
 });
 
 // Import the mocked module to get typed references
-import { query as mockQuery, AbortError as MockAbortError } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query as mockQuery,
+  getSubagentMessages as mockGetSubagentMessages,
+  AbortError as MockAbortError,
+} from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 const STREAMING_WARNING_MESSAGE =
@@ -4257,6 +4262,541 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const finishChunk = chunks.find((c) => c.type === 'finish');
       expect(finishChunk.providerMetadata['claude-code'].modelUsage).toBeUndefined();
+    });
+  });
+
+  describe('subagentsUsage', () => {
+    const taskFooter = (agentId: string) =>
+      `\nagentId: ${agentId} (use SendMessage with to: '${agentId}' to continue this agent)\n<usage>total_tokens: 100\ntool_uses: 0\nduration_ms: 50</usage>`;
+
+    const subagentAssistantMessage = (
+      sessionId: string,
+      usage: Record<string, unknown>
+    ) => ({
+      type: 'assistant' as const,
+      uuid: `uuid-${Math.random()}`,
+      session_id: sessionId,
+      message: { usage },
+      parent_tool_use_id: null,
+    });
+
+    const taskToolUseMessage = (toolUseId: string) => ({
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'tool_use', id: toolUseId, name: 'Task', input: { description: 'sub' } },
+        ],
+      },
+    });
+
+    const taskToolResultMessage = (toolUseId: string, agentId: string, message: string) => ({
+      type: 'user',
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: toolUseId,
+            name: 'Task',
+            content: `${message}${taskFooter(agentId)}`,
+            is_error: false,
+          },
+        ],
+      },
+    });
+
+    const resultMessage = (sessionId: string) => ({
+      type: 'result',
+      subtype: 'success',
+      session_id: sessionId,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      total_cost_usd: 0.001,
+      duration_ms: 100,
+    });
+
+    describe('doGenerate', () => {
+      it('aggregates per-turn assistant usage from a Task subagent', async () => {
+        const sessionId = 'session-sub-1';
+        const agentId = 'agent_abc123';
+        const toolUseId = 'toolu_task_1';
+
+        vi.mocked(mockGetSubagentMessages).mockResolvedValueOnce([
+          subagentAssistantMessage(sessionId, {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_creation_input_tokens: 2,
+            cache_read_input_tokens: 1,
+            server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
+            cache_creation: {
+              ephemeral_1h_input_tokens: 0,
+              ephemeral_5m_input_tokens: 2,
+            },
+            service_tier: 'standard',
+          }),
+          subagentAssistantMessage(sessionId, {
+            input_tokens: 4,
+            output_tokens: 8,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 3,
+            server_tool_use: { web_search_requests: 0, web_fetch_requests: 2 },
+            cache_creation: {
+              ephemeral_1h_input_tokens: 1,
+              ephemeral_5m_input_tokens: 0,
+            },
+          }),
+        ] as any);
+
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield taskToolUseMessage(toolUseId);
+            yield taskToolResultMessage(toolUseId, agentId, 'subagent reply');
+            yield resultMessage(sessionId);
+          },
+        } as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+        } as any);
+
+        const subs = (result.providerMetadata as any)?.['claude-code']?.subagentsUsage;
+        expect(subs).toEqual([
+          {
+            agentId,
+            usage: {
+              input_tokens: 14,
+              output_tokens: 13,
+              cache_creation_input_tokens: 2,
+              cache_read_input_tokens: 4,
+              server_tool_use: { web_search_requests: 1, web_fetch_requests: 2 },
+              cache_creation: {
+                ephemeral_1h_input_tokens: 1,
+                ephemeral_5m_input_tokens: 2,
+              },
+            },
+          },
+        ]);
+        expect(mockGetSubagentMessages).toHaveBeenCalledWith(
+          sessionId,
+          agentId,
+          undefined
+        );
+      });
+
+      it('emits one entry per subagent for parallel Task calls', async () => {
+        const sessionId = 'session-sub-2';
+        const agentA = 'agent_a';
+        const agentB = 'agent_b';
+
+        vi.mocked(mockGetSubagentMessages).mockImplementation(
+          async (_session: string, agentId: string) => {
+            const tokens = agentId === agentA ? 10 : 20;
+            return [
+              subagentAssistantMessage(sessionId, {
+                input_tokens: tokens,
+                output_tokens: tokens,
+              }),
+            ] as any;
+          }
+        );
+
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield taskToolUseMessage('toolu_a');
+            yield taskToolUseMessage('toolu_b');
+            yield taskToolResultMessage('toolu_a', agentA, 'a done');
+            yield taskToolResultMessage('toolu_b', agentB, 'b done');
+            yield resultMessage(sessionId);
+          },
+        } as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+        } as any);
+
+        const subs = (result.providerMetadata as any)?.['claude-code']?.subagentsUsage as Array<{
+          agentId: string;
+          usage: { input_tokens: number };
+        }>;
+        expect(subs).toHaveLength(2);
+        const byId = Object.fromEntries(subs.map((s) => [s.agentId, s.usage.input_tokens]));
+        expect(byId).toEqual({ [agentA]: 10, [agentB]: 20 });
+      });
+
+      it('records load_failed when getSubagentMessages rejects', async () => {
+        const sessionId = 'session-sub-3';
+        const agentId = 'agent_fail';
+
+        vi.mocked(mockGetSubagentMessages).mockRejectedValueOnce(new Error('disk gone'));
+
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield taskToolUseMessage('toolu_fail');
+            yield taskToolResultMessage('toolu_fail', agentId, 'fail');
+            yield resultMessage(sessionId);
+          },
+        } as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+        } as any);
+
+        const subs = (result.providerMetadata as any)?.['claude-code']?.subagentsUsage;
+        expect(subs).toEqual([{ agentId, usage: null, error: 'load_failed' }]);
+      });
+
+      it('omits subagentsUsage when no Task tool fired', async () => {
+        const sessionId = 'session-no-sub';
+
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text: 'hi' }] },
+            };
+            yield resultMessage(sessionId);
+          },
+        } as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+        } as any);
+
+        expect(
+          (result.providerMetadata as any)?.['claude-code']?.subagentsUsage
+        ).toBeUndefined();
+        expect(mockGetSubagentMessages).not.toHaveBeenCalled();
+      });
+
+      it('skips loading when includeSubagentsUsage is false', async () => {
+        const sessionId = 'session-disabled';
+        const disabledModel = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: { includeSubagentsUsage: false } as any,
+        });
+
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield taskToolUseMessage('toolu_x');
+            yield taskToolResultMessage('toolu_x', 'agent_x', 'done');
+            yield resultMessage(sessionId);
+          },
+        } as any);
+
+        const result = await disabledModel.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+        } as any);
+
+        expect(
+          (result.providerMetadata as any)?.['claude-code']?.subagentsUsage
+        ).toBeUndefined();
+        expect(mockGetSubagentMessages).not.toHaveBeenCalled();
+      });
+
+      it('passes settings.cwd as dir to getSubagentMessages', async () => {
+        const sessionId = 'session-cwd';
+        const agentId = 'agent_cwd';
+        const cwdModel = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: { cwd: '/tmp/proj' } as any,
+        });
+
+        vi.mocked(mockGetSubagentMessages).mockResolvedValueOnce([
+          subagentAssistantMessage(sessionId, { input_tokens: 1, output_tokens: 1 }),
+        ] as any);
+
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield taskToolUseMessage('toolu_cwd');
+            yield taskToolResultMessage('toolu_cwd', agentId, 'done');
+            yield resultMessage(sessionId);
+          },
+        } as any);
+
+        await cwdModel.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+        } as any);
+
+        expect(mockGetSubagentMessages).toHaveBeenCalledWith(sessionId, agentId, {
+          dir: '/tmp/proj',
+        });
+      });
+
+      it('ignores tool_results without the Task footer', async () => {
+        const sessionId = 'session-no-footer';
+
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  { type: 'tool_use', id: 'toolu_read', name: 'Read', input: { path: '/x' } },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: 'toolu_read',
+                    name: 'Read',
+                    content: 'file contents',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield resultMessage(sessionId);
+          },
+        } as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+        } as any);
+
+        expect(
+          (result.providerMetadata as any)?.['claude-code']?.subagentsUsage
+        ).toBeUndefined();
+        expect(mockGetSubagentMessages).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('doStream', () => {
+      it('attaches subagentsUsage to the finish event providerMetadata', async () => {
+        const sessionId = 'stream-session';
+        const agentId = 'agent_stream';
+        const toolUseId = 'toolu_stream';
+
+        vi.mocked(mockGetSubagentMessages).mockResolvedValueOnce([
+          subagentAssistantMessage(sessionId, {
+            input_tokens: 7,
+            output_tokens: 11,
+          }),
+        ] as any);
+
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield taskToolUseMessage(toolUseId);
+            yield taskToolResultMessage(toolUseId, agentId, 'sub done');
+            yield resultMessage(sessionId);
+          },
+        } as any);
+
+        const { stream } = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+        } as any);
+
+        const events: any[] = [];
+        const reader = stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          events.push(value);
+        }
+
+        const finish = events.find((e) => e.type === 'finish');
+        expect(finish?.providerMetadata?.['claude-code']?.subagentsUsage).toEqual([
+          {
+            agentId,
+            usage: {
+              input_tokens: 7,
+              output_tokens: 11,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+              server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
+              cache_creation: {
+                ephemeral_1h_input_tokens: 0,
+                ephemeral_5m_input_tokens: 0,
+              },
+            },
+          },
+        ]);
+      });
+
+      it('parses tolerant agentId variants (snake_case, equals separator, no parenthetical)', async () => {
+        const sessionId = 'stream-tolerant';
+        const toolUseId = 'toolu_tolerant';
+        const variants: Array<{ agentId: string; footer: string }> = [
+          {
+            agentId: 'agent_classic',
+            footer:
+              "\nagentId: agent_classic (use SendMessage with to: 'agent_classic' to continue this agent)",
+          },
+          { agentId: 'agent_snake', footer: '\nagent_id: agent_snake' },
+          { agentId: 'agent_kebab', footer: '\nagent-id: agent_kebab' },
+          { agentId: 'agent_equals', footer: '\nagentId=agent_equals' },
+          { agentId: 'agent_caps', footer: '\nAgentId: agent_caps' },
+        ];
+
+        for (const { agentId, footer } of variants) {
+          vi.mocked(mockGetSubagentMessages).mockReset();
+          vi.mocked(mockGetSubagentMessages).mockResolvedValueOnce([
+            subagentAssistantMessage(sessionId, { input_tokens: 1, output_tokens: 1 }),
+          ] as any);
+
+          vi.mocked(mockQuery).mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              yield taskToolUseMessage(toolUseId);
+              yield {
+                type: 'user',
+                message: {
+                  content: [
+                    {
+                      type: 'tool_result',
+                      tool_use_id: toolUseId,
+                      name: 'Task',
+                      content: `subagent text${footer}`,
+                      is_error: false,
+                    },
+                  ],
+                },
+              };
+              yield resultMessage(sessionId);
+            },
+          } as any);
+
+          const { stream } = await model.doStream({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+          } as any);
+
+          const events: any[] = [];
+          const reader = stream.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            events.push(value);
+          }
+
+          const finish = events.find((e) => e.type === 'finish');
+          const subs = finish?.providerMetadata?.['claude-code']?.subagentsUsage as Array<{
+            agentId: string;
+          }>;
+          expect(subs?.[0]?.agentId, `variant: ${footer}`).toBe(agentId);
+        }
+      });
+
+      it('emits a drift warning and no subagentsUsage when a Task result has no parseable agentId', async () => {
+        const sessionId = 'stream-drift';
+        const toolUseId = 'toolu_drift';
+
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield taskToolUseMessage(toolUseId);
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: toolUseId,
+                    name: 'Task',
+                    content: 'subagent text without any id mention',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield resultMessage(sessionId);
+          },
+        } as any);
+
+        const { stream } = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+        } as any);
+
+        const events: any[] = [];
+        const reader = stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          events.push(value);
+        }
+
+        const streamStart = events.find((e) => e.type === 'stream-start');
+        const finish = events.find((e) => e.type === 'finish');
+        const startWarnings = streamStart?.warnings ?? [];
+        const finishWarnings =
+          finish?.providerMetadata?.['claude-code']?.warnings ?? [];
+        const allWarningMessages = [
+          ...startWarnings.map((w: any) => w.message ?? ''),
+          ...finishWarnings.map((w: any) => w.message ?? ''),
+        ];
+        expect(
+          allWarningMessages.some((m: string) => m.includes('agentId format')),
+          `warnings: ${JSON.stringify(allWarningMessages)}`
+        ).toBe(true);
+        expect(finish?.providerMetadata?.['claude-code']?.subagentsUsage).toBeUndefined();
+        expect(mockGetSubagentMessages).not.toHaveBeenCalled();
+      });
+
+      it('still emits the finish event when the loader throws unexpectedly', async () => {
+        const sessionId = 'stream-loader-throw';
+        const agentId = 'agent_throw';
+        const toolUseId = 'toolu_throw';
+
+        // Simulate a top-level throw inside the per-id Promise.all body that
+        // somehow escapes the inner try/catch (e.g. an SDK export change).
+        vi.mocked(mockGetSubagentMessages).mockImplementationOnce(() => {
+          throw new Error('synchronous boom');
+        });
+
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield taskToolUseMessage(toolUseId);
+            yield taskToolResultMessage(toolUseId, agentId, 'done');
+            yield resultMessage(sessionId);
+          },
+        } as any);
+
+        const { stream } = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+        } as any);
+
+        const events: any[] = [];
+        const reader = stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          events.push(value);
+        }
+
+        const finish = events.find((e) => e.type === 'finish');
+        // Per-id catch surfaces this as load_failed (synchronous throw inside
+        // the map callback is still caught by the inner try). Either way the
+        // finish event must be present.
+        expect(finish).toBeDefined();
+      });
+
+      it('omits subagentsUsage on finish when no Task tool fired', async () => {
+        const sessionId = 'stream-no-task';
+
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text: 'hello' }] },
+            };
+            yield resultMessage(sessionId);
+          },
+        } as any);
+
+        const { stream } = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+
+        const events: any[] = [];
+        const reader = stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          events.push(value);
+        }
+
+        const finish = events.find((e) => e.type === 'finish');
+        expect(finish?.providerMetadata?.['claude-code']?.subagentsUsage).toBeUndefined();
+        expect(mockGetSubagentMessages).not.toHaveBeenCalled();
+      });
     });
   });
 });

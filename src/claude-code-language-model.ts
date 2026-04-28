@@ -16,8 +16,12 @@ import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
 import { validateModelId, validatePrompt, validateSessionId } from './validation.js';
 import { getLogger, createVerboseLogger } from './logger.js';
 
-import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKUserMessage, SDKPartialAssistantMessage } from '@anthropic-ai/claude-agent-sdk';
+import { query, getSubagentMessages, type Options } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  SDKUserMessage,
+  SDKPartialAssistantMessage,
+  SessionMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 
 const CLAUDE_CODE_TRUNCATION_WARNING =
   'Claude Code SDK output ended unexpectedly; returning truncated response from buffered text. Await upstream fix to avoid data loss.';
@@ -192,6 +196,96 @@ function filterContentBlocks(content: unknown, type: string): ContentBlock[] {
     );
   }
   return blocks;
+}
+
+/**
+ * Aggregated subagent (Task tool) usage surfaced via providerMetadata.
+ */
+type SubagentUsageTotals = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  server_tool_use: {
+    web_search_requests: number;
+    web_fetch_requests: number;
+  };
+  cache_creation: {
+    ephemeral_1h_input_tokens: number;
+    ephemeral_5m_input_tokens: number;
+  };
+};
+
+type SubagentUsageEntry = {
+  agentId: string;
+  usage: SubagentUsageTotals | null;
+  error?: 'load_failed';
+};
+
+// Matches the agentId emitted in every Task tool-result. The id itself is
+// structurally required (the parent agent cannot continue a subagent without
+// it via SendMessage), but the surrounding text isn't a stable API. This
+// pattern tolerates reasonable rewordings: optional underscore/hyphen in the
+// key, `:` or `=` separator, any whitespace, at a token boundary.
+const TASK_AGENT_ID_PATTERN = /(?:^|[\s\n])agent[_-]?id\s*[:=]\s*(\S+)/i;
+
+function parseTaskAgentId(rawResult: unknown): string | null {
+  if (typeof rawResult !== 'string') return null;
+  const match = rawResult.match(TASK_AGENT_ID_PATTERN);
+  return match ? match[1] : null;
+}
+
+const SUBAGENT_DRIFT_WARNING =
+  'Task tool result did not match the expected agentId format; subagent usage attribution may be incomplete. This usually indicates a Claude Agent SDK upgrade changed the tool-result text format — please file an issue.';
+
+function aggregateSubagentUsage(messages: SessionMessage[]): SubagentUsageTotals {
+  const totals: SubagentUsageTotals = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
+    cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 },
+  };
+  for (const msg of messages) {
+    if (msg.type !== 'assistant') continue;
+    const body = msg.message as
+      | {
+          usage?: {
+            input_tokens?: number;
+            output_tokens?: number;
+            cache_creation_input_tokens?: number | null;
+            cache_read_input_tokens?: number | null;
+            server_tool_use?: {
+              web_search_requests?: number;
+              web_fetch_requests?: number;
+            } | null;
+            cache_creation?: {
+              ephemeral_1h_input_tokens?: number;
+              ephemeral_5m_input_tokens?: number;
+            } | null;
+          };
+        }
+      | null
+      | undefined;
+    const u = body?.usage;
+    if (!u) continue;
+    totals.input_tokens += u.input_tokens ?? 0;
+    totals.output_tokens += u.output_tokens ?? 0;
+    totals.cache_creation_input_tokens += u.cache_creation_input_tokens ?? 0;
+    totals.cache_read_input_tokens += u.cache_read_input_tokens ?? 0;
+    if (u.server_tool_use) {
+      totals.server_tool_use.web_search_requests += u.server_tool_use.web_search_requests ?? 0;
+      totals.server_tool_use.web_fetch_requests += u.server_tool_use.web_fetch_requests ?? 0;
+    }
+    if (u.cache_creation) {
+      totals.cache_creation.ephemeral_1h_input_tokens +=
+        u.cache_creation.ephemeral_1h_input_tokens ?? 0;
+      totals.cache_creation.ephemeral_5m_input_tokens +=
+        u.cache_creation.ephemeral_5m_input_tokens ?? 0;
+    }
+  }
+  return totals;
 }
 
 /**
@@ -813,6 +907,30 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     return str;
   }
 
+  private async loadSubagentsUsage(
+    sessionId: string | undefined,
+    agentIds: string[]
+  ): Promise<SubagentUsageEntry[]> {
+    if (!sessionId || agentIds.length === 0) return [];
+    return Promise.all(
+      agentIds.map(async (agentId): Promise<SubagentUsageEntry> => {
+        try {
+          const messages = await getSubagentMessages(
+            sessionId,
+            agentId,
+            this.settings.cwd ? { dir: this.settings.cwd } : undefined
+          );
+          return { agentId, usage: aggregateSubagentUsage(messages) };
+        } catch (err) {
+          this.logger.warn(
+            `[claude-code] Failed to load subagent usage for ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+          return { agentId, usage: null, error: 'load_failed' };
+        }
+      })
+    );
+  }
+
   private normalizeToolResult(result: unknown): unknown {
     if (typeof result === 'string') {
       try {
@@ -1253,6 +1371,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     let costUsd: number | undefined;
     let durationMs: number | undefined;
     let modelUsage: Record<string, unknown> | undefined;
+    const collectedSubagentIds = new Set<string>();
     const warnings: SharedV3Warning[] = this.generateAllWarnings(options, messagesPrompt);
 
     // Add warnings from message conversion
@@ -1322,6 +1441,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           );
           text += messageText;
           thinkingTraces.push(...messageThinking);
+        } else if (message.type === 'user') {
+          // Scan tool_result blocks for Task subagent footers so we can load
+          // their full usage from the JSONL transcripts after the run.
+          const userContent = (message as { message?: { content?: unknown } }).message?.content;
+          if (userContent !== undefined) {
+            for (const tr of this.extractToolResults(userContent)) {
+              if (tr.name !== undefined && tr.name !== 'Task') continue;
+              const agentId = parseTaskAgentId(tr.result);
+              if (agentId) {
+                collectedSubagentIds.add(agentId);
+              } else if (
+                tr.name === 'Task' &&
+                this.settings.includeSubagentsUsage !== false
+              ) {
+                this.logger.warn(`[claude-code] ${SUBAGENT_DRIFT_WARNING}`);
+                warnings.push({ type: 'other', message: SUBAGENT_DRIFT_WARNING });
+              }
+            }
+          }
         } else if (message.type === 'result') {
           done();
           this.setSessionId(message.session_id);
@@ -1413,6 +1551,19 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // Otherwise fall back to accumulated text
     const finalText = structuredOutput !== undefined ? JSON.stringify(structuredOutput) : text;
 
+    let subagentsUsage: SubagentUsageEntry[] = [];
+    if (this.settings.includeSubagentsUsage !== false && collectedSubagentIds.size > 0) {
+      try {
+        subagentsUsage = await this.loadSubagentsUsage(this.sessionId, [
+          ...collectedSubagentIds,
+        ]);
+      } catch (err) {
+        this.logger.warn(
+          `[claude-code] Unexpected error loading subagent usage: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
     return {
       content: [
         ...thinkingTraces.map((trace) => ({
@@ -1438,6 +1589,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           ...(costUsd !== undefined && { costUsd }),
           ...(durationMs !== undefined && { durationMs }),
           ...(modelUsage !== undefined && { modelUsage: modelUsage as unknown as JSONValue }),
+          ...(subagentsUsage.length > 0 && {
+            subagentsUsage: subagentsUsage as unknown as JSONValue,
+          }),
           ...(wasTruncated && { truncated: true }),
           ...(thinkingTraces.length > 0 && { thinkingTraces }),
         },
@@ -1530,6 +1684,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         // Track active Task tools for subagent hierarchy
         // Using a Map instead of stack to correctly handle parallel agents
         const activeTaskTools = new Map<string, { startTime: number }>();
+
+        // Collect subagent IDs from completed Task tool results so we can load
+        // their full usage from the JSONL transcripts before emitting `finish`.
+        const collectedSubagentIds = new Set<string>();
 
         // Helper to get fallback parent - only returns a parent when exactly ONE Task is active
         // This prevents incorrect grouping when parallel agents run simultaneously
@@ -2289,9 +2447,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
                 emitToolCall(result.id, state);
 
-                // Remove Task tools from active set when they complete
+                // Remove Task tools from active set when they complete and
+                // collect the subagent's agentId from the result footer.
                 if (toolName === 'Task') {
                   activeTaskTools.delete(result.id);
+                  const agentId = parseTaskAgentId(rawResult);
+                  if (agentId) {
+                    collectedSubagentIds.add(agentId);
+                  } else if (this.settings.includeSubagentsUsage !== false) {
+                    this.logger.warn(`[claude-code] ${SUBAGENT_DRIFT_WARNING}`);
+                    streamWarnings.push({ type: 'other', message: SUBAGENT_DRIFT_WARNING });
+                  }
                 }
 
                 controller.enqueue({
@@ -2492,6 +2658,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               // Prepare JSON-safe warnings for provider metadata
               const warningsJson = this.serializeWarningsForMetadata(streamWarnings);
 
+              let subagentsUsage: SubagentUsageEntry[] = [];
+              if (
+                this.settings.includeSubagentsUsage !== false &&
+                collectedSubagentIds.size > 0
+              ) {
+                try {
+                  subagentsUsage = await this.loadSubagentsUsage(message.session_id, [
+                    ...collectedSubagentIds,
+                  ]);
+                } catch (err) {
+                  // Defensive: per-id errors are caught inside loadSubagentsUsage.
+                  // This guards against an unexpected top-level throw (e.g. SDK
+                  // export shape changes) so the finish event is always emitted.
+                  this.logger.warn(
+                    `[claude-code] Unexpected error loading subagent usage: ${err instanceof Error ? err.message : String(err)}`
+                  );
+                }
+              }
+
               controller.enqueue({
                 type: 'finish',
                 finishReason,
@@ -2505,6 +2690,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     ...(message.duration_ms !== undefined && { durationMs: message.duration_ms }),
                     ...(message.modelUsage !== undefined && {
                       modelUsage: message.modelUsage as unknown as JSONValue,
+                    }),
+                    ...(subagentsUsage.length > 0 && {
+                      subagentsUsage: subagentsUsage as unknown as JSONValue,
                     }),
                     // JSON validation warnings are collected during streaming and included
                     // in providerMetadata since the AI SDK's finish event doesn't support

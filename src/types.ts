@@ -387,6 +387,18 @@ export interface ClaudeCodeSettings {
   maxToolResultSize?: number;
 
   /**
+   * When the model invokes the built-in Task (Agent) tool, read each subagent's
+   * JSONL transcript after the run completes and surface aggregated per-subagent
+   * usage as `providerMetadata['claude-code'].subagentsUsage` on the final
+   * `finish` event (stream) / return value (generate).
+   *
+   * Adds one filesystem read per Task invocation, parallelized. Disable to skip
+   * the extra I/O when subagent usage is not needed.
+   * @default true
+   */
+  includeSubagentsUsage?: boolean;
+
+  /**
    * Callback invoked when the Query object is created.
    * Use this to access the Query for advanced features like mid-stream
    * message injection via `query.streamInput()`.
