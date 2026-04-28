@@ -9,9 +9,9 @@ import type {
   Options,
   SpawnedProcess,
   SpawnOptions,
-  AgentMcpServerSpec,
   Query,
   ThinkingConfig,
+  AgentDefinition,
 } from '@anthropic-ai/claude-agent-sdk';
 
 export type StreamingInputMode = 'auto' | 'always' | 'off';
@@ -324,22 +324,7 @@ export interface ClaudeCodeSettings {
    */
   agents?: Record<
     string,
-    {
-      /** Natural language description of when to use this agent */
-      description: string;
-      /** Array of allowed tool names. If omitted, inherits all tools from parent */
-      tools?: string[];
-      /** Array of tool names to explicitly disallow for this agent */
-      disallowedTools?: string[];
-      /** The agent's system prompt */
-      prompt: string;
-      /** Model to use for this agent. If omitted or 'inherit', uses the main model */
-      model?: 'sonnet' | 'opus' | 'haiku' | 'inherit';
-      /** MCP servers available to this agent (server names or inline configs) */
-      mcpServers?: AgentMcpServerSpec[];
-      /** Experimental: Critical reminder added to system prompt */
-      criticalSystemReminder_EXPERIMENTAL?: string;
-    }
+    AgentDefinition
   >;
 
   /**
