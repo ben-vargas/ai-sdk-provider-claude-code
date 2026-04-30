@@ -9,9 +9,9 @@ import type {
   Options,
   SpawnedProcess,
   SpawnOptions,
-  AgentMcpServerSpec,
   Query,
   ThinkingConfig,
+  AgentDefinition,
 } from '@anthropic-ai/claude-agent-sdk';
 
 export type StreamingInputMode = 'auto' | 'always' | 'off';
@@ -324,22 +324,7 @@ export interface ClaudeCodeSettings {
    */
   agents?: Record<
     string,
-    {
-      /** Natural language description of when to use this agent */
-      description: string;
-      /** Array of allowed tool names. If omitted, inherits all tools from parent */
-      tools?: string[];
-      /** Array of tool names to explicitly disallow for this agent */
-      disallowedTools?: string[];
-      /** The agent's system prompt */
-      prompt: string;
-      /** Model to use for this agent. If omitted or 'inherit', uses the main model */
-      model?: 'sonnet' | 'opus' | 'haiku' | 'inherit';
-      /** MCP servers available to this agent (server names or inline configs) */
-      mcpServers?: AgentMcpServerSpec[];
-      /** Experimental: Critical reminder added to system prompt */
-      criticalSystemReminder_EXPERIMENTAL?: string;
-    }
+    AgentDefinition
   >;
 
   /**
@@ -400,6 +385,18 @@ export interface ClaudeCodeSettings {
    * @default 10000
    */
   maxToolResultSize?: number;
+
+  /**
+   * When the model invokes the built-in Task (Agent) tool, read each subagent's
+   * JSONL transcript after the run completes and surface aggregated per-subagent
+   * usage as `providerMetadata['claude-code'].subagentsUsage` on the final
+   * `finish` event (stream) / return value (generate).
+   *
+   * Adds one filesystem read per Task invocation, parallelized. Disable to skip
+   * the extra I/O when subagent usage is not needed.
+   * @default true
+   */
+  includeSubagentsUsage?: boolean;
 
   /**
    * Callback invoked when the Query object is created.
