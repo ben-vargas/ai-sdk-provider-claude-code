@@ -2067,6 +2067,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         const textSegments: Array<{ uuid?: string; text: string }> = [];
         let textPartId: string | undefined;
         let streamedTextLength = 0; // Track text already emitted via stream_events to avoid duplication
+        // Model text actually delivered to the client as text-delta parts (non-JSON
+        // mode). Used to decide whether a superseding assistant message's
+        // replacement text was already streamed or must be emitted as a new part.
+        let emittedTextDeltas = '';
         let hasReceivedStreamEvents = false; // Track if we've received any stream_events
         let hasStreamedJson = false; // Track if JSON has been streamed via input_json_delta
         // SDK 0.3.x structured error kind from assistant messages (e.g. 'overloaded')
@@ -2168,6 +2172,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 });
                 accumulatedText += deltaText;
                 streamedTextLength += deltaText.length;
+                emittedTextDeltas += deltaText;
               }
               // Handle input_json_delta events for structured output streaming
               // The SDK uses a StructuredOutput tool internally, and JSON is streamed via input_json_delta
@@ -2652,9 +2657,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   });
                   accumulatedText = textSegments.map((segment) => segment.text).join('');
 
-                  if (hasReceivedStreamEvents) {
-                    // The replacement text already arrived via stream_event deltas;
-                    // the retracted text was emitted and cannot be un-streamed, so
+                  if (emittedTextDeltas.includes(text)) {
+                    // The replacement text itself already arrived via stream_event
+                    // deltas (not merely SOME earlier stream event, e.g. a
+                    // tool-input delta or the refused message's own text); the
+                    // retracted text was emitted and cannot be un-streamed, so
                     // re-emitting the replacement here would duplicate output.
                     streamedTextLength = Math.max(streamedTextLength, text.length);
                     this.logger.debug(
@@ -2690,6 +2697,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       id: textPartId,
                       delta: text,
                     });
+                    emittedTextDeltas += text;
+                    streamedTextLength = Math.max(streamedTextLength, text.length);
                     this.logger.debug(
                       '[claude-code] Emitted superseding assistant message as a new text part (canonical replacement)'
                     );
@@ -2724,6 +2733,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       id: textPartId,
                       delta: deltaText,
                     });
+                    emittedTextDeltas += deltaText;
                   }
 
                   // Update streamedTextLength to match what we now know is the full text
@@ -2753,6 +2763,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       id: textPartId,
                       delta: text,
                     });
+                    emittedTextDeltas += text;
                   }
                 }
               }
@@ -2784,6 +2795,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 accumulatedText = '';
                 textSegments.length = 0;
                 streamedTextLength = 0;
+                emittedTextDeltas = '';
                 this.logger.debug('[claude-code] Closed text part due to user message');
               }
 

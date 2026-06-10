@@ -5866,6 +5866,80 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
     });
 
+    it('should emit unstreamed replacement text even when earlier stream events occurred', async () => {
+      // A tool-input stream event sets hasReceivedStreamEvents, but the
+      // superseding message's replacement text below never arrives as deltas.
+      // The skip decision must gate on the replacement text actually having
+      // been streamed, not on the global stream-events flag.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          yield {
+            type: 'stream_event',
+            event: {
+              type: 'content_block_start',
+              index: 1,
+              content_block: {
+                type: 'tool_use',
+                id: 'tool-pre-supersede',
+                name: 'Read',
+                input: {},
+              },
+            },
+          };
+          yield {
+            type: 'stream_event',
+            event: {
+              type: 'content_block_stop',
+              index: 1,
+            },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'supersede-tool-event-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // The canonical replacement was never streamed, so it must be emitted
+      // as a new text part despite stream events having occurred.
+      const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+      expect(textDeltas.map((c) => c.delta)).toEqual([
+        'Refused partial answer',
+        'Replacement answer',
+      ]);
+      expect(textDeltas[0].id).not.toBe(textDeltas[1].id);
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
     it('should drop superseded thinking traces in doGenerate', async () => {
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
