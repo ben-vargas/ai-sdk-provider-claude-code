@@ -1222,9 +1222,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // auto-resumes via the captured session ID (which already IS the custom
     // ID), so only forward sessionId while no resume target exists — or when
     // the user opted into forking (sessionId then names the fork's ID).
+    // forkSession may arrive via the sdkOptions escape hatch (merged below,
+    // after this decision), so honor the effective flag here.
+    const effectiveForkSession = sdkOptions?.forkSession ?? this.settings.forkSession;
     if (
       this.settings.sessionId !== undefined &&
-      (opts.resume === undefined || this.settings.forkSession === true)
+      (opts.resume === undefined || effectiveForkSession === true)
     ) {
       opts.sessionId = this.settings.sessionId;
     }

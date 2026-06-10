@@ -1001,6 +1001,74 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.forkSession).toBe(true);
     });
 
+    it('should honor forkSession from the sdkOptions escape hatch when forwarding sessionId', async () => {
+      const forkId = '4f3a2b1c-8d7e-4f6a-9b0c-1d2e3f4a5b6c';
+      const modelWithSdkFork = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sessionId: forkId,
+          resume: 'original-session',
+          sdkOptions: { forkSession: true },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: forkId,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithSdkFork.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.resume).toBe('original-session');
+      expect(call?.options?.sessionId).toBe(forkId);
+      expect(call?.options?.forkSession).toBe(true);
+    });
+
+    it('should let sdkOptions.forkSession: false override settings.forkSession for the sessionId decision', async () => {
+      const modelWithForkDisabled = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sessionId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+          resume: 'original-session',
+          forkSession: true,
+          sdkOptions: { forkSession: false },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'original-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithForkDisabled.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.resume).toBe('original-session');
+      // Fork disabled via escape hatch -> sessionId must be dropped to avoid
+      // the CLI's --session-id/--resume conflict.
+      expect(call?.options?.sessionId).toBeUndefined();
+      expect(call?.options?.forkSession).toBe(false);
+    });
+
     it('should reject fallbackModel equal to the main model before invoking the SDK', async () => {
       const modelWithSameFallback = new ClaudeCodeLanguageModel({
         id: 'sonnet',
