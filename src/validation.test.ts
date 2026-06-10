@@ -430,6 +430,12 @@ describe('validateSettings', () => {
     const invalidResult = validateSettings({ permissionMode: 'invalid' });
     expect(invalidResult.valid).toBe(false);
     expect(invalidResult.errors[0]).toContain('permissionMode');
+
+    // Compile-time check: 'delegate' must remain assignable to
+    // ClaudeCodeSettings.permissionMode even though SDK 0.3.x dropped it
+    // from the PermissionMode type (documented backward compatibility).
+    const delegateSettings: ClaudeCodeSettings = { permissionMode: 'delegate' };
+    expect(validateSettings(delegateSettings).valid).toBe(true);
   });
 
   it('should validate mcpServers configuration', () => {

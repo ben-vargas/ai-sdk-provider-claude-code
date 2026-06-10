@@ -95,7 +95,9 @@ jobs:
               'failure means runtime behavior changed and needs investigation before the next',
               'dependency bump.',
             ].join('\n');
-            const { data: open } = await github.rest.issues.listForRepo({
+            // Paginate so the tracking issue is still found (and not duplicated)
+            // even if the repo ever has more than 100 open issues.
+            const open = await github.paginate(github.rest.issues.listForRepo, {
               ...context.repo,
               state: 'open',
               per_page: 100,
