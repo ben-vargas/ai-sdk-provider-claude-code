@@ -356,6 +356,19 @@ export function validateSettings(settings: unknown): {
       return { valid: false, warnings, errors };
     }
 
+    // SDK constraint: checkpoint backup blobs are not mirrored to a sessionStore,
+    // so rewindFiles() would fail after a store-backed resume. The SDK throws at
+    // query time; reject early here instead.
+    if (
+      validSettings.sessionStore !== undefined &&
+      validSettings.enableFileCheckpointing === true
+    ) {
+      errors.push(
+        'sessionStore cannot be combined with enableFileCheckpointing: true. Checkpoint backup blobs are not mirrored to the store (rewindFiles() fails after a store-backed resume); remove enableFileCheckpointing or drop sessionStore.'
+      );
+      return { valid: false, warnings, errors };
+    }
+
     // Warn about high turn limits
     if (validSettings.maxTurns && validSettings.maxTurns > 20) {
       warnings.push(

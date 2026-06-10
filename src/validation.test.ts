@@ -593,6 +593,20 @@ describe('validateSettings', () => {
     expect(validateSettings({ sessionStore, persistSession: true }).valid).toBe(true);
   });
 
+  it('should reject sessionStore combined with enableFileCheckpointing: true', () => {
+    const sessionStore = { append: async () => undefined, load: async () => null };
+
+    const conflict = validateSettings({ sessionStore, enableFileCheckpointing: true });
+    expect(conflict.valid).toBe(false);
+    expect(conflict.errors[0]).toContain(
+      'sessionStore cannot be combined with enableFileCheckpointing'
+    );
+
+    // enableFileCheckpointing without sessionStore (and vice versa) is fine
+    expect(validateSettings({ enableFileCheckpointing: true }).valid).toBe(true);
+    expect(validateSettings({ sessionStore, enableFileCheckpointing: false }).valid).toBe(true);
+  });
+
   it('should accept agents with full model ID strings (SDK 0.3.x AgentDefinition)', () => {
     const result = validateSettings({
       agents: {

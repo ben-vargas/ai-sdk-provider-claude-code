@@ -522,7 +522,9 @@ export interface ClaudeCodeSettings {
    * Mirror session transcripts to a custom storage adapter (e.g. Postgres,
    * S3, Redis) in addition to local JSONL files. Cannot be combined with
    * `persistSession: false` — local writes are required for the mirror to
-   * function (the provider rejects that combination at validation time).
+   * function — or with `enableFileCheckpointing: true` — checkpoint backup
+   * blobs are not mirrored, so `rewindFiles()` fails after a store-backed
+   * resume. The provider rejects both combinations at validation time.
    *
    * @alpha Subject to change in upstream Agent SDK releases.
    */
