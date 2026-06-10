@@ -690,6 +690,59 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.includeHookEvents).toBe(true);
     });
 
+    it('should pass through onUserDialog and supportedDialogKinds', async () => {
+      const onUserDialog = vi.fn(async () => ({ behavior: 'cancelled' as const }));
+      const modelWithDialogs = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          onUserDialog,
+          supportedDialogKinds: ['refusal_fallback_prompt'],
+        },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-dialogs',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithDialogs.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.onUserDialog).toBe(onUserDialog);
+      expect(call?.options?.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
+    });
+
+    it('should omit onUserDialog and supportedDialogKinds when unset', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-no-dialogs',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect('onUserDialog' in call.options).toBe(false);
+      expect('supportedDialogKinds' in call.options).toBe(false);
+    });
+
     it("should pass through skills: 'all'", async () => {
       const modelWithSkills = new ClaudeCodeLanguageModel({
         id: 'sonnet',
@@ -4885,6 +4938,7 @@ describe('ClaudeCodeLanguageModel', () => {
             ttft_ms: 120,
             ttft_stream_ms: 80,
             time_to_request_ms: 40,
+            warm_spare_claimed: true,
             terminal_reason: 'completed',
           };
         },
@@ -4900,6 +4954,7 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(metadata.ttftMs).toBe(120);
       expect(metadata.ttftStreamMs).toBe(80);
       expect(metadata.timeToRequestMs).toBe(40);
+      expect(metadata.warmSpareClaimed).toBe(true);
       expect(metadata.terminalReason).toBe('completed');
       // Existing fields are untouched
       expect(metadata.costUsd).toBe(0.001);
@@ -4930,6 +4985,7 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(metadata.ttftMs).toBeUndefined();
       expect(metadata.ttftStreamMs).toBeUndefined();
       expect(metadata.timeToRequestMs).toBeUndefined();
+      expect(metadata.warmSpareClaimed).toBeUndefined();
       expect(metadata.terminalReason).toBeUndefined();
     });
 
@@ -4950,6 +5006,7 @@ describe('ClaudeCodeLanguageModel', () => {
             ttft_ms: 150,
             ttft_stream_ms: 95,
             time_to_request_ms: 55,
+            warm_spare_claimed: false,
             terminal_reason: 'completed',
           };
         },
@@ -4974,6 +5031,9 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(metadata.ttftMs).toBe(150);
       expect(metadata.ttftStreamMs).toBe(95);
       expect(metadata.timeToRequestMs).toBe(55);
+      // false (not just true) is surfaced so consumers can distinguish
+      // "reported as not claimed" from "not reported at all"
+      expect(metadata.warmSpareClaimed).toBe(false);
       expect(metadata.terminalReason).toBe('completed');
       // Existing fields are untouched
       expect(metadata.costUsd).toBe(0.001);

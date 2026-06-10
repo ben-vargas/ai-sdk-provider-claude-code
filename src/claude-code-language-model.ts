@@ -1105,6 +1105,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       mcpServers: this.settings.mcpServers,
       canUseTool: this.settings.canUseTool,
     };
+    // Blocking user-dialog handling (SDK fails closed without these: the CLI
+    // never emits a dialog kind that is not declared in supportedDialogKinds,
+    // and the dialog-gated flow degrades to its no-dialog behavior).
+    if (this.settings.onUserDialog !== undefined) {
+      opts.onUserDialog = this.settings.onUserDialog;
+    }
+    if (this.settings.supportedDialogKinds !== undefined) {
+      opts.supportedDialogKinds = this.settings.supportedDialogKinds;
+    }
     // NEW: Agent SDK options with legacy mapping
     if (this.settings.systemPrompt !== undefined) {
       opts.systemPrompt = this.settings.systemPrompt;
@@ -1579,6 +1588,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     let ttftMs: number | undefined;
     let ttftStreamMs: number | undefined;
     let timeToRequestMs: number | undefined;
+    let warmSpareClaimed: boolean | undefined;
     let terminalReason: string | undefined;
     // SDK 0.3.x informational counters surfaced in providerMetadata
     const metadataTracking: RequestMetadataTracking = {
@@ -1703,6 +1713,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           }
           if ('time_to_request_ms' in message) {
             timeToRequestMs = message.time_to_request_ms;
+          }
+          if ('warm_spare_claimed' in message) {
+            warmSpareClaimed = message.warm_spare_claimed;
           }
           terminalReason = message.terminal_reason;
 
@@ -1834,6 +1847,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           ...(ttftMs !== undefined && { ttftMs }),
           ...(ttftStreamMs !== undefined && { ttftStreamMs }),
           ...(timeToRequestMs !== undefined && { timeToRequestMs }),
+          ...(warmSpareClaimed !== undefined && { warmSpareClaimed }),
           ...(terminalReason !== undefined && { terminalReason }),
           ...(metadataTracking.apiRetries > 0 && { apiRetries: metadataTracking.apiRetries }),
           ...(metadataTracking.permissionDenials.length > 0 && {
@@ -3028,6 +3042,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     ...('time_to_request_ms' in message &&
                       message.time_to_request_ms !== undefined && {
                         timeToRequestMs: message.time_to_request_ms,
+                      }),
+                    ...('warm_spare_claimed' in message &&
+                      message.warm_spare_claimed !== undefined && {
+                        warmSpareClaimed: message.warm_spare_claimed,
                       }),
                     ...(message.terminal_reason !== undefined && {
                       terminalReason: message.terminal_reason,

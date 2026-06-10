@@ -5,8 +5,17 @@
  * including text generation, conversations, and error handling.
  */
 
+import { copyFile, mkdtemp, rm } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { generateText } from 'ai';
-import { claudeCode, isAuthenticationError } from '../dist/index.js';
+import {
+  claudeCode,
+  deleteSession,
+  forkSession,
+  getSessionInfo,
+  isAuthenticationError,
+} from '../dist/index.js';
 // NOTE: Migrating to Claude Agent SDK:
 // - System prompt is not applied by default
 // - Filesystem settings (CLAUDE.md, settings.json) are not loaded by default
@@ -179,6 +188,99 @@ async function testStreaming() {
   }
 }
 
+async function testSessionLifecycle() {
+  console.log('\n🧪 Test 6: Session lifecycle (create/resume/fork/inspect/delete)...');
+
+  // Exercise the session helpers against real JSONL storage, but inside a
+  // temporary CLAUDE_CONFIG_DIR so the test never touches ~/.claude/projects/.
+  // The spawned CLI inherits CLAUDE_CONFIG_DIR from process.env, and the
+  // in-process session helpers read it at call time.
+  const realConfigDir = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
+  const tempConfigDir = await mkdtemp(join(tmpdir(), 'claude-it-sessions-'));
+
+  // A custom config dir has its own credential store, so keep the CLI
+  // authenticated two ways (both best-effort, covering the common setups):
+  // 1. Copy the credentials file when present (file-based auth, e.g. Linux).
+  // 2. Set CLAUDE_SECURESTORAGE_CONFIG_DIR to '' so OS secure storage
+  //    (e.g. the macOS Keychain) keeps using its default entry instead of a
+  //    per-config-dir one. Env-var auth (ANTHROPIC_API_KEY /
+  //    CLAUDE_CODE_OAUTH_TOKEN) is unaffected either way.
+  try {
+    await copyFile(
+      join(realConfigDir, '.credentials.json'),
+      join(tempConfigDir, '.credentials.json')
+    );
+  } catch {
+    // No credentials file to copy — rely on secure-storage or env-based auth.
+  }
+
+  const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  const previousSecureStorageDir = process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = tempConfigDir;
+  process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR = previousSecureStorageDir ?? '';
+
+  try {
+    // 1. Create a session.
+    const first = await generateText({
+      model: claudeCode('opus', { title: 'integration-test session' }),
+      prompt: 'Remember this code word: "papaya". Reply with just OK.',
+    });
+    const sessionId = first.providerMetadata?.['claude-code']?.sessionId as string | undefined;
+    if (!sessionId) {
+      throw new Error('Session test failed - no session ID in providerMetadata');
+    }
+    console.log('✅ Created session:', sessionId);
+
+    // 2. Resume it — context must carry over.
+    const second = await generateText({
+      model: claudeCode('opus', { resume: sessionId }),
+      prompt: 'What was the code word? Reply with just the word.',
+    });
+    if (!second.text.toLowerCase().includes('papaya')) {
+      throw new Error(`Session test failed - resume lost context: ${second.text}`);
+    }
+    console.log('✅ Resumed session with context intact');
+
+    // 3. Fork the stored transcript without running a query.
+    const fork = await forkSession(sessionId, { title: 'integration-test session (fork)' });
+    if (!fork.sessionId || fork.sessionId === sessionId) {
+      throw new Error('Session test failed - fork did not return a new session ID');
+    }
+    console.log('✅ Forked session:', fork.sessionId);
+
+    // 4. Inspect both sessions.
+    const originalInfo = await getSessionInfo(sessionId);
+    const forkInfo = await getSessionInfo(fork.sessionId);
+    if (!originalInfo || !forkInfo) {
+      throw new Error('Session test failed - getSessionInfo did not find both sessions');
+    }
+    console.log('✅ Inspected sessions:', {
+      original: originalInfo.customTitle ?? originalInfo.summary,
+      fork: forkInfo.customTitle ?? forkInfo.summary,
+    });
+
+    // 5. Delete both; lookups should then come back empty.
+    await deleteSession(fork.sessionId);
+    await deleteSession(sessionId);
+    if ((await getSessionInfo(sessionId)) !== undefined) {
+      throw new Error('Session test failed - session still present after deleteSession');
+    }
+    console.log('✅ Sessions deleted');
+  } finally {
+    if (previousConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+    }
+    if (previousSecureStorageDir === undefined) {
+      delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR = previousSecureStorageDir;
+    }
+    await rm(tempConfigDir, { recursive: true, force: true });
+  }
+}
+
 // Import streamText for the streaming test
 import { streamText } from 'ai';
 
@@ -195,6 +297,7 @@ async function runAllTests() {
     { name: 'Conversation', fn: testConversation },
     { name: 'Error Handling', fn: testErrorHandling },
     { name: 'Streaming', fn: testStreaming },
+    { name: 'Session Lifecycle', fn: testSessionLifecycle },
   ];
 
   for (const test of tests) {

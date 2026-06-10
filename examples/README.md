@@ -331,6 +331,32 @@ npx tsx examples/limitations.ts
 
 **Key concepts**: Unsupported parameters, workarounds, provider constraints
 
+## Session Management
+
+### 28. Session Management (`session-management.ts`)
+
+**Purpose**: Full session lifecycle - create, resume, fork, inspect, and delete persisted sessions.
+
+```bash
+npx tsx examples/session-management.ts
+```
+
+**Key concepts**: `providerMetadata['claude-code'].sessionId`, `resume` setting, `forkSession()`, `getSessionInfo()`, `deleteSession()`
+
+**What you'll see**: A session created and resumed (context carries over), forked into a new session ID without running a query, inspected via session metadata, and cleaned up from `~/.claude/projects/`. See [docs/sessions.md](../docs/sessions.md) for the full guide.
+
+## Permission Hooks
+
+### 29. Permission Hooks (`hooks-permission-denied.ts`)
+
+**Purpose**: Use the SDK 0.3.x permission vocabulary in hooks - a PreToolUse hook that returns `permissionDecision: 'defer'` and a PermissionDenied hook observing auto-denied tools.
+
+```bash
+npx tsx examples/hooks-permission-denied.ts
+```
+
+**Key concepts**: PreToolUse `'defer'` decision (hand the decision back to the permission system), PermissionDenied hook, `disallowedTools`, `providerMetadata['claude-code'].permissionDenials`
+
 ## Common Patterns
 
 ### Object Generation
@@ -472,6 +498,7 @@ const result4 = streamText({
 | custom-config               | Enterprise setup      | Configuration options   |
 | tool-management             | Security              | Access control          |
 | hooks-callbacks             | Event handling        | Lifecycle hooks         |
+| hooks-permission-denied     | Permission control    | 'defer' + denial hooks  |
 | sdk-tools-callbacks         | Custom tools          | In-process MCP tools    |
 | skills-management           | Skills configuration  | settingSources setup    |
 | long-running-tasks          | Complex reasoning     | Timeout handling        |

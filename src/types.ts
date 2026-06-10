@@ -17,6 +17,7 @@ import type {
   ToolConfig,
   SessionStore,
   SessionStoreFlush,
+  OnUserDialog,
 } from '@anthropic-ai/claude-agent-sdk';
 
 export type StreamingInputMode = 'auto' | 'always' | 'off';
@@ -359,6 +360,37 @@ export interface ClaudeCodeSettings {
    * Allows runtime approval/denial and optional input mutation.
    */
   canUseTool?: CanUseTool;
+
+  /**
+   * Callback for handling `request_user_dialog` control requests — blocking
+   * dialogs the CLI asks the host to render (e.g. the refusal-fallback
+   * prompt). Each `dialogKind` defines its own payload and result shape;
+   * answer unrecognized kinds with `{ behavior: 'cancelled' }` so the CLI
+   * applies the dialog's default behavior.
+   *
+   * The SDK fails closed around dialogs: when the CLI requests a dialog and
+   * no handler/declared kind exists, the dialog-gated flow degrades to its
+   * no-dialog behavior (for `'refusal_fallback_prompt'`, the classic refusal
+   * error ends the turn). Wire this callback together with
+   * `supportedDialogKinds` to opt in — providing the callback alone does NOT
+   * make the CLI emit dialogs.
+   */
+  onUserDialog?: OnUserDialog;
+
+  /**
+   * Dialog kinds (`request_user_dialog` `dialog_kind` values, e.g.
+   * `'refusal_fallback_prompt'`) that your `onUserDialog` callback can
+   * actually render. The CLI only emits dialog kinds declared here and
+   * fails closed on absence: an undeclared kind is never emitted and the
+   * flow behind it degrades to its no-dialog behavior instead. Omitting the
+   * option entirely means no dialogs are emitted, even with `onUserDialog`
+   * wired.
+   *
+   * Requires `onUserDialog` — the SDK throws at option intake when a
+   * non-empty list is passed without the callback (the provider also warns
+   * at validation time).
+   */
+  supportedDialogKinds?: string[];
 
   /**
    * Controls whether to send streaming input to the SDK (enables canUseTool).

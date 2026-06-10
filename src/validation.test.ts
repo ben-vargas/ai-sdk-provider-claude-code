@@ -408,7 +408,8 @@ describe('validateSettings', () => {
   });
 
   it('should validate permissionMode values', () => {
-    // Valid permission modes (including delegate and dontAsk added in SDK 0.2.x)
+    // Valid permission modes (including 'auto' added in SDK 0.3.x; 'delegate'
+    // is kept for runtime backward compatibility)
     const validModes = [
       'default',
       'acceptEdits',
@@ -416,6 +417,7 @@ describe('validateSettings', () => {
       'plan',
       'delegate',
       'dontAsk',
+      'auto',
     ];
     validModes.forEach((mode) => {
       const result = validateSettings({ permissionMode: mode });
@@ -718,6 +720,61 @@ describe('validateSettings', () => {
       expect(result.valid).toBe(true);
       const skillWarnings = result.warnings.filter((w) => w.includes('Skill'));
       expect(skillWarnings).toHaveLength(0);
+    });
+  });
+
+  describe('User dialog settings', () => {
+    it('should accept onUserDialog and supportedDialogKinds together', () => {
+      const result = validateSettings({
+        onUserDialog: async () => ({ behavior: 'cancelled' }),
+        supportedDialogKinds: ['refusal_fallback_prompt'],
+      });
+
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+      expect(result.warnings.filter((w) => w.includes('supportedDialogKinds'))).toHaveLength(0);
+    });
+
+    it('should reject non-function onUserDialog', () => {
+      const result = validateSettings({ onUserDialog: 'not-a-function' });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('onUserDialog must be a function');
+    });
+
+    it('should warn when supportedDialogKinds is set without onUserDialog', () => {
+      const result = validateSettings({
+        supportedDialogKinds: ['refusal_fallback_prompt'],
+      });
+
+      expect(result.valid).toBe(true);
+      expect(
+        result.warnings.some((w) => w.includes('supportedDialogKinds is set without onUserDialog'))
+      ).toBe(true);
+    });
+
+    it('should not warn for an empty supportedDialogKinds array without onUserDialog', () => {
+      // The SDK only throws for a NON-empty list without the callback.
+      const result = validateSettings({
+        supportedDialogKinds: [],
+      });
+
+      expect(result.valid).toBe(true);
+      expect(result.warnings.filter((w) => w.includes('supportedDialogKinds'))).toHaveLength(0);
+    });
+
+    it('should not warn when onUserDialog is supplied via sdkOptions', () => {
+      // sdkOptions is merged after the settings block, so this combination is
+      // valid at runtime and must not draw the warning.
+      const result = validateSettings({
+        supportedDialogKinds: ['refusal_fallback_prompt'],
+        sdkOptions: {
+          onUserDialog: async () => ({ behavior: 'cancelled' }),
+        },
+      });
+
+      expect(result.valid).toBe(true);
+      expect(result.warnings.filter((w) => w.includes('supportedDialogKinds'))).toHaveLength(0);
     });
   });
 });

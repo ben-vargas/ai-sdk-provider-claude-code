@@ -75,8 +75,11 @@ export const claudeCodeSettingsSchema = z
       .optional(),
     executable: z.enum(['bun', 'deno', 'node']).optional(),
     executableArgs: z.array(z.string()).optional(),
+    // 'auto' was added in SDK 0.3.x; 'delegate' is kept for runtime
+    // backward compatibility even though SDK 0.3.x dropped it from the
+    // PermissionMode type.
     permissionMode: z
-      .enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'delegate', 'dontAsk'])
+      .enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'delegate', 'dontAsk', 'auto'])
       .optional(),
     permissionPromptToolName: z.string().optional(),
     continue: z.boolean().optional(),
@@ -163,6 +166,13 @@ export const claudeCodeSettingsSchema = z
         message: 'canUseTool must be a function',
       })
       .optional(),
+    onUserDialog: z
+      .any()
+      .refine((v) => v === undefined || typeof v === 'function', {
+        message: 'onUserDialog must be a function',
+      })
+      .optional(),
+    supportedDialogKinds: z.array(z.string()).optional(),
     hooks: z
       .record(
         z.string(),
@@ -383,6 +393,24 @@ export function validateSettings(settings: unknown): {
 
     if (validSettings.disallowedTools) {
       validateToolNames(validSettings.disallowedTools, 'disallowed');
+    }
+
+    // supportedDialogKinds is only meaningful alongside onUserDialog; the SDK
+    // throws at option intake when a non-empty list is passed without the
+    // callback, so surface the mistake early as a validation warning.
+    // An empty list does not throw, and onUserDialog may be supplied via the
+    // sdkOptions escape hatch (merged after settings), so neither case warns.
+    const sdkOptionsOnUserDialog = (validSettings.sdkOptions as Record<string, unknown> | undefined)
+      ?.onUserDialog;
+    if (
+      validSettings.supportedDialogKinds !== undefined &&
+      validSettings.supportedDialogKinds.length > 0 &&
+      validSettings.onUserDialog == null &&
+      sdkOptionsOnUserDialog == null
+    ) {
+      warnings.push(
+        'supportedDialogKinds is set without onUserDialog. The SDK requires the onUserDialog callback to render declared dialog kinds and throws when a non-empty list is passed without it.'
+      );
     }
 
     // Warn about Skills configuration issues

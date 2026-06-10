@@ -48,6 +48,44 @@ export {
   // Reference SessionStore implementation (alpha)
   InMemorySessionStore,
 } from '@anthropic-ai/claude-agent-sdk';
+
+/**
+ * Session lifecycle helpers re-exported from the SDK.
+ *
+ * These operate on persisted session storage — the local
+ * `~/.claude/projects/` JSONL files by default, or a custom `SessionStore`
+ * when one is passed via each helper's `sessionStore` option (alpha).
+ * See docs/sessions.md for a guide tying these together with the
+ * session-related settings (`sessionId`, `resume`, `forkSession`, ...).
+ */
+export {
+  forkSession,
+  getSessionInfo,
+  deleteSession,
+  renameSession,
+  tagSession,
+  listSubagents,
+  getSubagentMessages,
+  // Pure summary-folding utility for SessionStore implementers (alpha)
+  foldSessionSummary,
+  // Migrate a local JSONL session into a SessionStore (alpha)
+  importSessionToStore,
+} from '@anthropic-ai/claude-agent-sdk';
+
+/**
+ * Warm-start helper re-exported from the SDK.
+ *
+ * `startup()` pre-spawns the CLI subprocess and completes its initialize
+ * handshake, returning a {@link WarmQuery} handle whose `query()` method
+ * writes the prompt to the already-running process (no startup latency).
+ *
+ * Note: a `WarmQuery` is a standalone SDK query path — it cannot be handed
+ * to this provider's `generateText`/`streamText` flow (the SDK exposes no
+ * option for passing a pre-warmed handle to `query()`). See the README
+ * section "Reducing time-to-first-token (warm start)" for the standalone
+ * usage pattern and this limitation.
+ */
+export { startup } from '@anthropic-ai/claude-agent-sdk';
 export { createCustomMcpServer, createAiSdkMcpServer } from './mcp-helpers.js';
 export type {
   ToolAnnotations,
@@ -90,6 +128,14 @@ export type {
   PermissionUpdate,
   PermissionBehavior,
   PermissionRuleValue,
+  // Provenance of a canUseTool decision (PermissionResult.decisionClassification)
+  PermissionDecisionClassification,
+  // Blocking user-dialog callback (`onUserDialog` setting) and its request/result shapes
+  OnUserDialog,
+  UserDialogRequest,
+  UserDialogResult,
+  // Pre-warmed query handle returned by startup()
+  WarmQuery,
   McpServerConfig,
   McpSdkServerConfigWithInstance,
   OutputFormat,
@@ -107,6 +153,24 @@ export type {
   // Session transcript mirroring (alpha `sessionStore` options)
   SessionStore,
   SessionStoreFlush,
+  // Session lifecycle helper option/result types
+  ForkSessionOptions,
+  ForkSessionResult,
+  GetSessionInfoOptions,
+  GetSubagentMessagesOptions,
+  ListSubagentsOptions,
+  SessionMutationOptions,
+  ImportSessionToStoreOptions,
+  // Session metadata returned by getSessionInfo()
+  SDKSessionInfo,
+  // Transcript message shape returned by getSubagentMessages()
+  SessionMessage,
+  // Building blocks for custom SessionStore implementations (alpha)
+  SessionKey,
+  SessionStoreEntry,
+  SessionSummaryEntry,
+  // Cron task summaries surfaced in session state (referenced by session metadata)
+  SessionCronSummary,
   // Query interface for mid-stream message injection via streamInput()
   Query,
   // Thinking configuration types
