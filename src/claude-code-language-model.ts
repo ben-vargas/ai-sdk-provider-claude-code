@@ -1001,6 +1001,35 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       }
     }
 
+    // AI SDK tool definitions cannot be auto-bridged: the Claude Code CLI
+    // executes its own tools, and at the provider layer `options.tools` only
+    // carries declarations (the execute functions never reach the provider).
+    if (options.tools !== undefined && options.tools.length > 0) {
+      warnings.push({
+        type: 'unsupported',
+        feature: 'tools',
+        details:
+          'The Claude Code CLI executes its own tools; AI SDK tools cannot be auto-bridged at the provider layer and will be ignored. To expose custom tools to the CLI, build an in-process MCP server with the createAiSdkMcpServer helper (exported by this package) and pass it via the mcpServers setting (plus allowedTools).',
+      });
+    }
+
+    if (options.toolChoice !== undefined && options.toolChoice.type !== 'auto') {
+      warnings.push({
+        type: 'unsupported',
+        feature: 'toolChoice',
+        details: `Claude Code CLI does not support toolChoice '${options.toolChoice.type}'. Only automatic tool selection is available; the toolChoice parameter will be ignored.`,
+      });
+    }
+
+    if (options.maxOutputTokens !== undefined) {
+      warnings.push({
+        type: 'unsupported',
+        feature: 'maxOutputTokens',
+        details:
+          'Claude Code CLI does not accept an output token cap. The maxOutputTokens parameter will be ignored.',
+      });
+    }
+
     // Add model validation warning if present
     if (this.modelValidationWarning) {
       warnings.push({

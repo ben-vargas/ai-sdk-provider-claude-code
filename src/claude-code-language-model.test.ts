@@ -5841,4 +5841,172 @@ describe('ClaudeCodeLanguageModel', () => {
       }
     });
   });
+
+  describe('unsupported call option warnings', () => {
+    const mockSimpleResponse = () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Hello' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'warnings-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+    };
+
+    it('should warn when AI SDK tools are provided', async () => {
+      mockSimpleResponse();
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        tools: [
+          {
+            type: 'function',
+            name: 'getWeather',
+            description: 'Get the weather',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ],
+      } as any);
+
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({
+          type: 'unsupported',
+          feature: 'tools',
+          details: expect.stringContaining('createAiSdkMcpServer'),
+        })
+      );
+      const toolsWarning = result.warnings.find(
+        (w: any) => w.type === 'unsupported' && w.feature === 'tools'
+      ) as any;
+      expect(toolsWarning?.details).toContain('mcpServers');
+    });
+
+    it('should not warn when tools array is empty', async () => {
+      mockSimpleResponse();
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        tools: [],
+      } as any);
+
+      expect(result.warnings).not.toContainEqual(
+        expect.objectContaining({ type: 'unsupported', feature: 'tools' })
+      );
+    });
+
+    it('should warn when toolChoice is set to a non-auto value', async () => {
+      mockSimpleResponse();
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        toolChoice: { type: 'required' },
+      } as any);
+
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({
+          type: 'unsupported',
+          feature: 'toolChoice',
+          details: expect.stringContaining("'required'"),
+        })
+      );
+    });
+
+    it('should warn when toolChoice requests a specific tool', async () => {
+      mockSimpleResponse();
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        toolChoice: { type: 'tool', toolName: 'getWeather' },
+      } as any);
+
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({
+          type: 'unsupported',
+          feature: 'toolChoice',
+        })
+      );
+    });
+
+    it('should not warn when toolChoice is auto or unset', async () => {
+      mockSimpleResponse();
+
+      const autoResult = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        toolChoice: { type: 'auto' },
+      } as any);
+
+      expect(autoResult.warnings).not.toContainEqual(
+        expect.objectContaining({ type: 'unsupported', feature: 'toolChoice' })
+      );
+
+      mockSimpleResponse();
+
+      const unsetResult = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      expect(unsetResult.warnings).not.toContainEqual(
+        expect.objectContaining({ type: 'unsupported', feature: 'toolChoice' })
+      );
+    });
+
+    it('should warn when maxOutputTokens is set', async () => {
+      mockSimpleResponse();
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        maxOutputTokens: 1024,
+      } as any);
+
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({
+          type: 'unsupported',
+          feature: 'maxOutputTokens',
+          details: expect.stringContaining('output token cap'),
+        })
+      );
+    });
+
+    it('should emit the warnings on the doStream stream-start event', async () => {
+      mockSimpleResponse();
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        tools: [
+          {
+            type: 'function',
+            name: 'getWeather',
+            description: 'Get the weather',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ],
+        toolChoice: { type: 'none' },
+        maxOutputTokens: 256,
+      } as any);
+
+      const reader = result.stream.getReader();
+      const { value: first } = await reader.read();
+      await reader.cancel();
+
+      expect(first).toMatchObject({ type: 'stream-start' });
+      const warnings = (first as any).warnings;
+      expect(warnings).toContainEqual(
+        expect.objectContaining({ type: 'unsupported', feature: 'tools' })
+      );
+      expect(warnings).toContainEqual(
+        expect.objectContaining({ type: 'unsupported', feature: 'toolChoice' })
+      );
+      expect(warnings).toContainEqual(
+        expect.objectContaining({ type: 'unsupported', feature: 'maxOutputTokens' })
+      );
+    });
+  });
 });

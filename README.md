@@ -481,11 +481,52 @@ const result = await streamText({
 
 See [examples/skills-management.ts](examples/skills-management.ts) for more examples.
 
+## Using AI SDK Tools
+
+The Claude Code CLI executes its own tools, so AI SDK tools passed to `generateText`/`streamText` via the `tools` option are ignored (with an `unsupported` warning). Automatic bridging is impossible by design: at the `LanguageModelV3` layer the provider only receives tool _declarations_ (name, description, JSON schema) — the `execute` functions live in the `ai` package layer and never reach any provider.
+
+Instead, bridge your tools explicitly with the `createAiSdkMcpServer` helper, which turns a map of AI SDK tools into an in-process MCP server that the CLI can call:
+
+```typescript
+import { generateText, tool } from 'ai';
+import { z } from 'zod';
+import { claudeCode, createAiSdkMcpServer } from 'ai-sdk-provider-claude-code';
+
+const tools = {
+  add: tool({
+    description: 'Add two numbers',
+    inputSchema: z.object({ a: z.number(), b: z.number() }),
+    execute: async ({ a, b }) => ({ sum: a + b }),
+  }),
+};
+
+const { text } = await generateText({
+  model: claudeCode('sonnet', {
+    mcpServers: { myTools: createAiSdkMcpServer('myTools', tools) },
+    // Tools are exposed to the CLI as mcp__<serverName>__<toolName>
+    allowedTools: ['mcp__myTools__add'],
+  }),
+  prompt: 'What is 2 + 3? Use the add tool.',
+});
+```
+
+Notes:
+
+- Each tool's `execute` runs in your process; string results pass through as MCP text content, everything else is `JSON.stringify`'d, and thrown errors become `isError` tool results instead of crashing the CLI session. Results that cannot be serialized to JSON (e.g. circular objects) also become `isError` results with a serialization message.
+- Tool calls/results surface to the AI SDK as **provider-executed dynamic tool parts** (`tool-call`/`tool-result` with `mcp__<serverName>__<toolName>` names), not as executions of your local `tools` option.
+- Only **Zod object schemas** are supported (`z.object({...})`, the same schema you pass to the AI SDK `tool()` helper). Tools defined with the AI SDK's `jsonSchema()` helper are rejected at creation time because the Agent SDK's `tool()` requires a Zod shape.
+- Tools without an `execute` function (client-executed tools) are rejected at creation time.
+- The minimal options object passed to `execute` contains `toolCallId` and `abortSignal` when available; the AI SDK's full `ToolCallOptions` (e.g. `messages`) is not available since the tool runs outside the AI SDK call loop. Note that `toolCallId` here is the MCP JSON-RPC request id (often a small integer like `'42'`), not the model's `toolu_...` tool_use id, so it will not match the `toolCallId` on the AI SDK's `tool-call`/`tool-result` stream parts.
+
+See [examples/ai-sdk-tools.ts](examples/ai-sdk-tools.ts) for a runnable example (`npm run example:ai-sdk-tools`).
+
 ## Limitations
 
 - Requires Node.js ≥ 18
 - Image inputs require streaming mode with base64/data URLs (remote fetch is not supported)
-- Some AI SDK parameters unsupported (temperature, maxTokens, etc.)
+- Some AI SDK parameters are unsupported and ignored with an `unsupported` warning: `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, and `maxOutputTokens` (the CLI does not accept an output token cap)
+- AI SDK `tools` and `toolChoice` are not supported: the Claude Code CLI executes its own tools, so AI SDK tool definitions cannot be auto-bridged at the provider layer (both emit an `unsupported` warning). To expose custom tools to the CLI, bridge them with the `createAiSdkMcpServer` helper and pass the result via the `mcpServers` setting (plus `allowedTools`) — see **Using AI SDK Tools** above
+- When replaying conversation history through the prompt, assistant tool calls are serialized as text lines — `[Tool call: Read({"file_path":"/x"})]` (inputs truncated at 1000 characters) — paired with `Tool Result (Read): ...` lines for tool messages
 - `canUseTool` requires streaming input at the SDK level (AsyncIterable prompt). This provider supports it via `streamingInput`: use `'auto'` (default when `canUseTool` is set) or `'always'`. See GUIDE for details.
 
 ## Tool Error Parity (Streaming)

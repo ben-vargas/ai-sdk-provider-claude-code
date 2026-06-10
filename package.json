@@ -64,6 +64,7 @@
     "example:object": "npm run build && npx tsx examples/generate-object.ts",
     "example:object:constraints": "npm run build && npx tsx examples/generate-object-constraints.ts",
     "example:tools": "npm run build && npx tsx examples/tool-management.ts",
+    "example:ai-sdk-tools": "npm run build && npx tsx examples/ai-sdk-tools.ts",
     "example:mcp:filesystem": "npm run build && npx tsx examples/mcp-filesystem.ts",
     "example:mcp:exa": "npm run build && npx tsx examples/mcp-exa.ts",
     "example:timeout": "npm run build && npx tsx examples/long-running-tasks.ts",

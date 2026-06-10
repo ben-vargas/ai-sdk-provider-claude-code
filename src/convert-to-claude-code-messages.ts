@@ -10,6 +10,38 @@ interface StreamingSegment {
 const IMAGE_URL_WARNING = 'Image URLs are not supported by this provider; supply base64/data URLs.';
 const IMAGE_CONVERSION_WARNING = 'Unable to convert image content; supply base64/data URLs.';
 
+/**
+ * Maximum serialized length for a single tool-call input when replaying
+ * conversation history. Mirrors the spirit of the model's tool-result
+ * truncation (maxToolResultSize): the live turn saw the full data, history
+ * replay only needs enough context to stay coherent. Inputs longer than this
+ * are cut and suffixed with '...[truncated]'.
+ */
+const MAX_TOOL_CALL_INPUT_LENGTH = 1000;
+
+/**
+ * Serializes a tool-call input to a bounded JSON string for history replay.
+ * Non-JSON-serializable inputs fall back to String(); oversized payloads are
+ * truncated at MAX_TOOL_CALL_INPUT_LENGTH with a '...[truncated]' suffix.
+ */
+function serializeToolCallInput(input: unknown): string {
+  let serialized: string;
+  if (input === undefined) {
+    serialized = '';
+  } else {
+    try {
+      serialized = JSON.stringify(input) ?? String(input);
+    } catch {
+      serialized = String(input);
+    }
+  }
+
+  if (serialized.length > MAX_TOOL_CALL_INPUT_LENGTH) {
+    return `${serialized.slice(0, MAX_TOOL_CALL_INPUT_LENGTH)}...[truncated]`;
+  }
+  return serialized;
+}
+
 function normalizeBase64(base64: string): string {
   return base64.replace(/\s+/g, '');
 }
@@ -181,7 +213,8 @@ function parseFilePart(part: FileLikePart): { content?: SDKUserContentPart; warn
  *
  * @remarks
  * - Image parts are collected for streaming input; unsupported variants produce warnings
- * - Tool calls are simplified to "[Tool calls made]" notation
+ * - Tool calls are serialized one per line as `[Tool call: name({...input})]`
+ *   (inputs truncated at 1000 characters), pairing with `Tool Result (name): ...` lines
  * - JSON schema enforcement is handled natively by the SDK's outputFormat option (v0.1.45+)
  */
 export function convertToClaudeCodeMessages(prompt: readonly ModelMessage[]): {
@@ -273,11 +306,15 @@ export function convertToClaudeCodeMessages(prompt: readonly ModelMessage[]): {
             assistantContent = textParts;
           }
 
-          // Handle tool calls if present
+          // Serialize tool calls so replayed history keeps tool context.
+          // One line per call, pairing with the "Tool Result (name): ..." lines
+          // emitted for tool messages below.
           const toolCalls = message.content.filter((part) => part.type === 'tool-call');
           if (toolCalls.length > 0) {
-            // For now, we'll just note that tool calls were made
-            assistantContent += `\n[Tool calls made]`;
+            const serializedCalls = toolCalls
+              .map((call) => `[Tool call: ${call.toolName}(${serializeToolCallInput(call.input)})]`)
+              .join('\n');
+            assistantContent += assistantContent ? `\n${serializedCalls}` : serializedCalls;
           }
         }
         const formattedAssistant = `Assistant: ${assistantContent}`;

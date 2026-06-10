@@ -48,8 +48,13 @@ export {
   // Reference SessionStore implementation (alpha)
   InMemorySessionStore,
 } from '@anthropic-ai/claude-agent-sdk';
-export { createCustomMcpServer } from './mcp-helpers.js';
-export type { ToolAnnotations, MinimalCallToolResult } from './mcp-helpers.js';
+export { createCustomMcpServer, createAiSdkMcpServer } from './mcp-helpers.js';
+export type {
+  ToolAnnotations,
+  MinimalCallToolResult,
+  AiSdkLikeTool,
+  AiSdkToolExecuteOptions,
+} from './mcp-helpers.js';
 export type {
   HookEvent,
   HookCallback,

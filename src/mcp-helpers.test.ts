@@ -20,8 +20,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
 });
 
 import { tool as mockTool } from '@anthropic-ai/claude-agent-sdk';
-import { createCustomMcpServer } from './mcp-helpers.js';
-import type { ToolAnnotations } from './mcp-helpers.js';
+import { createCustomMcpServer, createAiSdkMcpServer } from './mcp-helpers.js';
+import type { ToolAnnotations, MinimalCallToolResult } from './mcp-helpers.js';
 
 describe('createCustomMcpServer', () => {
   beforeEach(() => {
@@ -67,5 +67,178 @@ describe('createCustomMcpServer', () => {
     expect(vi.mocked(mockTool)).toHaveBeenCalledOnce();
     const callArgs = vi.mocked(mockTool).mock.calls[0];
     expect(callArgs?.[4]).toBeUndefined();
+  });
+});
+
+describe('createAiSdkMcpServer', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  type MockedToolDef = {
+    name: string;
+    description: string;
+    inputSchema: unknown;
+    handler: (args: Record<string, unknown>, extra: unknown) => Promise<MinimalCallToolResult>;
+  };
+
+  function getToolDefs(config: unknown): MockedToolDef[] {
+    return (config as { instance: { tools: MockedToolDef[] } }).instance.tools;
+  }
+
+  it('should produce a server config whose tools execute and return text content', async () => {
+    const config = createAiSdkMcpServer('myTools', {
+      greet: {
+        description: 'Greet someone',
+        inputSchema: z.object({ name: z.string() }),
+        execute: async ({ name }: { name: string }) => `Hello, ${name}!`,
+      },
+    });
+
+    expect(config).toMatchObject({ type: 'sdk', name: 'myTools' });
+    const [greet] = getToolDefs(config);
+    expect(greet?.name).toBe('greet');
+    expect(greet?.description).toBe('Greet someone');
+    // The Zod object's shape (a ZodRawShape) is passed to the SDK tool()
+    expect(greet?.inputSchema).toHaveProperty('name');
+
+    const result = await greet!.handler({ name: 'Ada' }, undefined);
+    expect(result).toEqual({ content: [{ type: 'text', text: 'Hello, Ada!' }] });
+  });
+
+  it('should JSON.stringify non-string results', async () => {
+    const config = createAiSdkMcpServer('myTools', {
+      add: {
+        inputSchema: z.object({ a: z.number(), b: z.number() }),
+        execute: ({ a, b }: { a: number; b: number }) => ({ sum: a + b }),
+      },
+    });
+
+    const [add] = getToolDefs(config);
+    const result = await add!.handler({ a: 2, b: 3 }, undefined);
+    expect(result).toEqual({ content: [{ type: 'text', text: '{"sum":5}' }] });
+  });
+
+  it('should pass toolCallId and abortSignal from the MCP extra to execute', async () => {
+    const execute = vi.fn(async () => 'ok');
+    const config = createAiSdkMcpServer('myTools', {
+      probe: {
+        inputSchema: z.object({}),
+        execute,
+      },
+    });
+
+    const abortController = new AbortController();
+    const [probe] = getToolDefs(config);
+    await probe!.handler({}, { requestId: 42, signal: abortController.signal });
+
+    expect(execute).toHaveBeenCalledWith(
+      {},
+      { toolCallId: '42', abortSignal: abortController.signal }
+    );
+  });
+
+  it('should convert non-JSON-serializable results into isError results with a serialization message', async () => {
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+
+    const config = createAiSdkMcpServer('myTools', {
+      loop: {
+        inputSchema: z.object({}),
+        execute: () => circular,
+      },
+    });
+
+    const [loop] = getToolDefs(config);
+    const result = await loop!.handler({}, undefined);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(
+      /^Tool "loop" succeeded but its result could not be serialized to JSON: /
+    );
+    expect(result.content[0]?.text).toContain('circular');
+  });
+
+  it('should convert thrown errors into isError results', async () => {
+    const config = createAiSdkMcpServer('myTools', {
+      boom: {
+        inputSchema: z.object({}),
+        execute: () => {
+          throw new Error('kaboom');
+        },
+      },
+    });
+
+    const [boom] = getToolDefs(config);
+    const result = await boom!.handler({}, undefined);
+    expect(result).toEqual({
+      isError: true,
+      content: [{ type: 'text', text: 'kaboom' }],
+    });
+  });
+
+  it('should convert rejected promises into isError results', async () => {
+    const config = createAiSdkMcpServer('myTools', {
+      reject: {
+        inputSchema: z.object({}),
+        execute: async () => {
+          throw new Error('async kaboom');
+        },
+      },
+    });
+
+    const [reject] = getToolDefs(config);
+    const result = await reject!.handler({}, undefined);
+    expect(result).toEqual({
+      isError: true,
+      content: [{ type: 'text', text: 'async kaboom' }],
+    });
+  });
+
+  it('should throw at creation time when a tool lacks execute', () => {
+    expect(() =>
+      createAiSdkMcpServer('myTools', {
+        noExec: {
+          inputSchema: z.object({}),
+        },
+      })
+    ).toThrow(/tool "noExec" has no execute function/);
+  });
+
+  it('should throw at creation time for jsonSchema()-based tools', () => {
+    // Mimic the AI SDK's jsonSchema() helper output (Symbol marker + jsonSchema)
+    const jsonSchemaLike = {
+      [Symbol.for('vercel.ai.schema')]: true,
+      jsonSchema: { type: 'object', properties: {} },
+      validate: undefined,
+    };
+
+    expect(() =>
+      createAiSdkMcpServer('myTools', {
+        jsonTool: {
+          inputSchema: jsonSchemaLike,
+          execute: () => 'ok',
+        },
+      })
+    ).toThrow(/Only Zod object schemas are supported/);
+  });
+
+  it('should throw at creation time when inputSchema is not a Zod object schema', () => {
+    expect(() =>
+      createAiSdkMcpServer('myTools', {
+        plain: {
+          inputSchema: { type: 'object', properties: {} },
+          execute: () => 'ok',
+        },
+      })
+    ).toThrow(/not a Zod object/);
+
+    expect(() =>
+      createAiSdkMcpServer('myTools', {
+        notObject: {
+          inputSchema: z.string(),
+          execute: () => 'ok',
+        },
+      })
+    ).toThrow(/not a Zod object/);
   });
 });

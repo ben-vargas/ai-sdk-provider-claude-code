@@ -178,6 +178,133 @@ describe('convertToClaudeCodeMessages', () => {
     );
   });
 
+  it('should serialize a single assistant tool call with its input', () => {
+    const result = convertToClaudeCodeMessages([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Let me read that file.' },
+          {
+            type: 'tool-call',
+            toolCallId: 'call-1',
+            toolName: 'Read',
+            input: { file_path: '/x' },
+          },
+        ],
+      },
+    ] as any);
+
+    expect(result.messagesPrompt).toBe(
+      'Assistant: Let me read that file.\n[Tool call: Read({"file_path":"/x"})]'
+    );
+  });
+
+  it('should serialize a tool-call-only assistant message without leading newline', () => {
+    const result = convertToClaudeCodeMessages([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'call-1',
+            toolName: 'Bash',
+            input: { command: 'ls' },
+          },
+        ],
+      },
+    ] as any);
+
+    expect(result.messagesPrompt).toBe('Assistant: [Tool call: Bash({"command":"ls"})]');
+  });
+
+  it('should serialize multiple tool calls one per line', () => {
+    const result = convertToClaudeCodeMessages([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Checking both files.' },
+          {
+            type: 'tool-call',
+            toolCallId: 'call-1',
+            toolName: 'Read',
+            input: { file_path: '/a' },
+          },
+          {
+            type: 'tool-call',
+            toolCallId: 'call-2',
+            toolName: 'Read',
+            input: { file_path: '/b' },
+          },
+        ],
+      },
+    ] as any);
+
+    expect(result.messagesPrompt).toBe(
+      'Assistant: Checking both files.\n[Tool call: Read({"file_path":"/a"})]\n[Tool call: Read({"file_path":"/b"})]'
+    );
+  });
+
+  it('should truncate oversized tool call inputs', () => {
+    const bigValue = 'x'.repeat(5000);
+    const result = convertToClaudeCodeMessages([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'call-1',
+            toolName: 'Write',
+            input: { content: bigValue },
+          },
+        ],
+      },
+    ] as any);
+
+    const expectedPrefix = `Assistant: [Tool call: Write(${JSON.stringify({ content: bigValue }).slice(0, 1000)}...[truncated])]`;
+    expect(result.messagesPrompt).toBe(expectedPrefix);
+    // Serialized input is capped at 1000 chars plus the truncation suffix
+    expect(result.messagesPrompt.length).toBeLessThan(1100);
+  });
+
+  it('should pair tool calls with tool results in a multi-turn replay', () => {
+    const result = convertToClaudeCodeMessages([
+      { role: 'user', content: 'What is in /x?' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Reading it now.' },
+          {
+            type: 'tool-call',
+            toolCallId: 'call-1',
+            toolName: 'Read',
+            input: { file_path: '/x' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'call-1',
+            toolName: 'Read',
+            output: { type: 'text', value: 'file contents' },
+          },
+        ],
+      },
+      { role: 'assistant', content: 'The file says: file contents' },
+      { role: 'user', content: 'Thanks!' },
+    ] as any);
+
+    expect(result.messagesPrompt).toBe(
+      'Human: What is in /x?\n\n' +
+        'Assistant: Reading it now.\n[Tool call: Read({"file_path":"/x"})]\n\n' +
+        'Tool Result (Read): file contents\n\n' +
+        'Assistant: The file says: file contents\n\n' +
+        'Human: Thanks!'
+    );
+  });
+
   it('should handle consecutive messages properly', () => {
     const result = convertToClaudeCodeMessages([
       { role: 'user', content: 'First message' },
