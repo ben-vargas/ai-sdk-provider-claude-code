@@ -928,6 +928,119 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.sessionId).toBe('custom-session-123');
     });
 
+    it('should stop forwarding sessionId once a resume target exists (CLI rejects --session-id with --resume)', async () => {
+      const customSessionId = '4ed1ad15-2d5e-4e0c-92cb-e4ae42049fb6';
+      const modelWithSessionId = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sessionId: customSessionId,
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: customSessionId,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const doGenerateOptions = {
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any;
+
+      // Turn 1: no resume target yet, sessionId is forwarded.
+      await modelWithSessionId.doGenerate(doGenerateOptions);
+      const firstCall = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(firstCall?.options?.sessionId).toBe(customSessionId);
+      expect(firstCall?.options?.resume).toBeUndefined();
+
+      // Turn 2: the provider auto-resumes via the captured session ID (which
+      // already IS the custom ID); forwarding sessionId again would send the
+      // CLI-forbidden --resume + --session-id combination.
+      await modelWithSessionId.doGenerate(doGenerateOptions);
+      const secondCall = vi.mocked(mockQuery).mock.calls[1]?.[0] as any;
+      expect(secondCall?.options?.resume).toBe(customSessionId);
+      expect(secondCall?.options?.sessionId).toBeUndefined();
+    });
+
+    it('should keep forwarding sessionId alongside resume when forkSession is set', async () => {
+      const forkId = '9bd1ad15-2d5e-4e0c-92cb-e4ae42049fb7';
+      const modelWithFork = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sessionId: forkId,
+          resume: 'original-session',
+          forkSession: true,
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: forkId,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithFork.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.resume).toBe('original-session');
+      expect(call?.options?.sessionId).toBe(forkId);
+      expect(call?.options?.forkSession).toBe(true);
+    });
+
+    it('should reject fallbackModel equal to the main model before invoking the SDK', async () => {
+      const modelWithSameFallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          fallbackModel: 'sonnet',
+        } as any,
+      });
+
+      await expect(
+        modelWithSameFallback.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any)
+      ).rejects.toThrow(/fallbackModel cannot be the same as the model/);
+      expect(vi.mocked(mockQuery)).not.toHaveBeenCalled();
+
+      // A different fallbackModel passes through untouched.
+      const modelWithFallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          fallbackModel: 'haiku',
+        } as any,
+      });
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-fallback',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+      await modelWithFallback.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.fallbackModel).toBe('haiku');
+    });
+
     it('should pass through debug and debugFile options', async () => {
       const modelWithDebug = new ClaudeCodeLanguageModel({
         id: 'sonnet',
@@ -5414,6 +5527,66 @@ describe('ClaudeCodeLanguageModel', () => {
         .map((c) => c.delta)
         .join('');
       expect(streamedText).toBe('Kept intro. Replacement answer');
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
+    it('should retract superseded segments even when the superseding message carries no text', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-kept',
+            message: { content: [{ type: 'text', text: 'Kept intro. ' }] },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          // The SDK does not guarantee the canonical replacement carries text
+          // blocks - here it is tool_use-only, and the retraction must still
+          // happen on arrival (matches doGenerate).
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: {
+              content: [{ type: 'tool_use', id: 'tool-supersede-1', name: 'Read', input: {} }],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'supersede-no-text-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        responseFormat: { type: 'json' },
+      } as any);
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // JSON mode without schema falls back to emitting the accumulated text,
+      // which must no longer contain the retracted segment - only the kept one.
+      const streamedText = chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join('');
+      expect(streamedText).toBe('Kept intro. ');
       expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
     });
 

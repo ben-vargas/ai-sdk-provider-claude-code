@@ -47,6 +47,11 @@ export {
   SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
   // Reference SessionStore implementation (alpha)
   InMemorySessionStore,
+  // Value-level companion to the HookEvent type (iterate/validate hook event names)
+  HOOK_EVENTS,
+  // Error class thrown by the SDK on abort (relevant on the standalone
+  // startup()/WarmQuery path, where SDK errors propagate unwrapped)
+  AbortError,
 } from '@anthropic-ai/claude-agent-sdk';
 
 /**
@@ -101,24 +106,61 @@ export type {
   HookCallbackMatcher,
   HookInput,
   HookJSONOutput,
+  // HookJSONOutput union members
+  AsyncHookJSONOutput,
+  SyncHookJSONOutput,
+  // Hook event inputs (every member of the SDK HookInput union)
   PreToolUseHookInput,
   PostToolUseHookInput,
-  UserPromptSubmitHookInput,
-  SessionStartHookInput,
-  SessionEndHookInput,
-  TeammateIdleHookInput,
-  TaskCompletedHookInput,
-  // Hook event inputs added in SDK 0.3.x
+  PostToolUseFailureHookInput,
   PostToolBatchHookInput,
   PermissionDeniedHookInput,
+  NotificationHookInput,
+  UserPromptSubmitHookInput,
+  UserPromptExpansionHookInput,
+  SessionStartHookInput,
+  SessionEndHookInput,
+  StopHookInput,
+  StopFailureHookInput,
+  SubagentStartHookInput,
+  SubagentStopHookInput,
+  PreCompactHookInput,
   PostCompactHookInput,
+  PermissionRequestHookInput,
+  SetupHookInput,
+  TeammateIdleHookInput,
+  TaskCreatedHookInput,
+  TaskCompletedHookInput,
+  ElicitationHookInput,
+  ElicitationResultHookInput,
+  ConfigChangeHookInput,
+  InstructionsLoadedHookInput,
+  WorktreeCreateHookInput,
+  WorktreeRemoveHookInput,
   CwdChangedHookInput,
   FileChangedHookInput,
   MessageDisplayHookInput,
-  InstructionsLoadedHookInput,
-  UserPromptExpansionHookInput,
-  StopFailureHookInput,
-  TaskCreatedHookInput,
+  // Hook-specific output payloads (SyncHookJSONOutput['hookSpecificOutput'] union members)
+  PreToolUseHookSpecificOutput,
+  UserPromptSubmitHookSpecificOutput,
+  UserPromptExpansionHookSpecificOutput,
+  SessionStartHookSpecificOutput,
+  SetupHookSpecificOutput,
+  SubagentStartHookSpecificOutput,
+  PostToolUseHookSpecificOutput,
+  PostToolUseFailureHookSpecificOutput,
+  PostToolBatchHookSpecificOutput,
+  StopHookSpecificOutput,
+  SubagentStopHookSpecificOutput,
+  PermissionDeniedHookSpecificOutput,
+  NotificationHookSpecificOutput,
+  PermissionRequestHookSpecificOutput,
+  ElicitationHookSpecificOutput,
+  ElicitationResultHookSpecificOutput,
+  CwdChangedHookSpecificOutput,
+  FileChangedHookSpecificOutput,
+  WorktreeCreateHookSpecificOutput,
+  MessageDisplayHookSpecificOutput,
   // Hook permission decision union (adds 'defer' in SDK 0.3.x)
   HookPermissionDecision,
   // Provenance of a user-role message (peer session, team lead, channel)
@@ -130,6 +172,11 @@ export type {
   PermissionUpdate,
   PermissionBehavior,
   PermissionRuleValue,
+  // Permission mode union referenced by ClaudeCodeSettings.permissionMode,
+  // AgentDefinition.permissionMode, and Query.setPermissionMode()
+  PermissionMode,
+  // Destination carried by every PermissionUpdate variant
+  PermissionUpdateDestination,
   // Provenance of a canUseTool decision (PermissionResult.decisionClassification)
   PermissionDecisionClassification,
   // Blocking user-dialog callback (`onUserDialog` setting) and its request/result shapes
@@ -138,8 +185,18 @@ export type {
   UserDialogResult,
   // Pre-warmed query handle returned by startup()
   WarmQuery,
+  // SDK query() options shape (also accepted by startup() and referenced by
+  // ClaudeCodeSettings.systemPrompt/tools/sdkOptions)
+  Options,
   McpServerConfig,
+  // McpServerConfig union members
+  McpStdioServerConfig,
+  McpSSEServerConfig,
+  McpHttpServerConfig,
+  McpSdkServerConfig,
   McpSdkServerConfigWithInstance,
+  // Per-agent MCP server map values (AgentMcpServerSpec record values)
+  McpServerConfigForProcessTransport,
   OutputFormat,
   SpawnedProcess,
   SpawnOptions,
@@ -177,6 +234,27 @@ export type {
   SessionCronSummary,
   // Query interface for mid-stream message injection via streamInput()
   Query,
+  // Messages yielded by Query (AsyncGenerator<SDKMessage>) and accepted by
+  // Query.streamInput()/WarmQuery.query() (AsyncIterable<SDKUserMessage>)
+  SDKMessage,
+  SDKUserMessage,
+  // Query method result shapes
+  SlashCommand,
+  ModelInfo,
+  AgentInfo,
+  AccountInfo,
+  McpServerStatus,
+  RewindFilesResult,
+  McpSetServersResult,
+  // Beta feature identifiers (`betas` setting values)
+  SdkBeta,
+  // Plugin configuration (`plugins` setting values)
+  SdkPluginConfig,
+  // Sandbox configuration (`sandbox` setting) and its nested shapes
+  SandboxSettings,
+  SandboxNetworkConfig,
+  SandboxFilesystemConfig,
+  SandboxIgnoreViolations,
   // Thinking configuration types
   ThinkingConfig,
   ThinkingAdaptive,

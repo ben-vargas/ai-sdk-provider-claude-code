@@ -48,11 +48,17 @@ export const claudeCodeSettingsSchema = z
     maxThinkingTokens: z.number().int().positive().max(100000).optional(),
     thinking: z
       .union([
-        z.object({ type: z.literal('adaptive') }).strict(),
+        z
+          .object({
+            type: z.literal('adaptive'),
+            display: z.enum(['summarized', 'omitted']).optional(),
+          })
+          .strict(),
         z
           .object({
             type: z.literal('enabled'),
             budgetTokens: z.number().int().positive().optional(),
+            display: z.enum(['summarized', 'omitted']).optional(),
           })
           .strict(),
         z.object({ type: z.literal('disabled') }).strict(),
@@ -75,16 +81,25 @@ export const claudeCodeSettingsSchema = z
       .optional(),
     executable: z.enum(['bun', 'deno', 'node']).optional(),
     executableArgs: z.array(z.string()).optional(),
-    // 'auto' was added in SDK 0.3.x; 'delegate' is kept for runtime
-    // backward compatibility even though SDK 0.3.x dropped it from the
-    // PermissionMode type.
+    // Mirrors the SDK 0.3.x PermissionMode union ('auto' and 'dontAsk' were
+    // added in 0.3.x; 'delegate' was dropped AND is rejected by the CLI's
+    // --permission-mode flag parser, so it is rejected here too).
     permissionMode: z
-      .enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'delegate', 'dontAsk', 'auto'])
+      .enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'])
       .optional(),
     permissionPromptToolName: z.string().optional(),
     continue: z.boolean().optional(),
     resume: z.string().optional(),
-    sessionId: z.string().optional(),
+    // The CLI rejects --session-id values that are not valid UUIDs, so
+    // enforce the UUID shape here instead of failing at query time.
+    sessionId: z
+      .string()
+      .refine(
+        (val) =>
+          /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(val),
+        { message: 'sessionId must be a valid UUID (the CLI rejects non-UUID session IDs)' }
+      )
+      .optional(),
     allowedTools: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional(),
     betas: z.array(z.string()).optional(),
@@ -95,7 +110,9 @@ export const claudeCodeSettingsSchema = z
       .array(
         z
           .object({
-            type: z.string(),
+            // SDK SdkPluginConfig: only 'local' is supported; the SDK throws
+            // 'Unsupported plugin type' at query time for anything else.
+            type: z.literal('local'),
             path: z.string(),
           })
           .passthrough()
@@ -296,7 +313,7 @@ export const claudeCodeSettingsSchema = z
  * @returns Warning message if model is unknown, undefined otherwise
  */
 export function validateModelId(modelId: string): string | undefined {
-  const knownModels = ['opus', 'sonnet', 'haiku'];
+  const knownModels = ['opus', 'sonnet', 'haiku', 'fable'];
 
   // Check for empty or whitespace-only
   if (!modelId || modelId.trim() === '') {
@@ -365,6 +382,59 @@ export function validateSettings(settings: unknown): {
     ) {
       errors.push(
         'sessionStore cannot be combined with enableFileCheckpointing: true. Checkpoint backup blobs are not mirrored to the store (rewindFiles() fails after a store-backed resume); remove enableFileCheckpointing or drop sessionStore.'
+      );
+      return { valid: false, warnings, errors };
+    }
+
+    // sdkOptions escape-hatch values participate in the cross-option checks
+    // below (they are merged over explicit settings at query time).
+    const sdkOptionsRecord = validSettings.sdkOptions as Record<string, unknown> | undefined;
+
+    // SDK constraint: continue with a sessionStore needs store.listSessions()
+    // to discover the most recent session (unless a resume id is given).
+    // The SDK throws at query time; reject early here instead.
+    if (
+      validSettings.continue === true &&
+      validSettings.sessionStore !== undefined &&
+      validSettings.resume === undefined &&
+      sdkOptionsRecord?.resume === undefined &&
+      typeof (validSettings.sessionStore as { listSessions?: unknown }).listSessions !== 'function'
+    ) {
+      errors.push(
+        'continue: true with sessionStore requires the store to implement listSessions() (used to discover the most recent session). Implement listSessions(), pass resume with an explicit session ID, or drop continue.'
+      );
+      return { valid: false, warnings, errors };
+    }
+
+    // SDK constraint: the sandbox option cannot be combined with a settings
+    // FILE PATH (inline Settings objects are fine - the SDK serializes them
+    // to inline JSON). The SDK throws at query time; reject early here instead.
+    if (
+      validSettings.sandbox !== undefined &&
+      typeof validSettings.settings === 'string' &&
+      !(
+        validSettings.settings.trim().startsWith('{') && validSettings.settings.trim().endsWith('}')
+      )
+    ) {
+      errors.push(
+        'sandbox cannot be combined with a settings file path. Pass settings as an inline Settings object, or move the sandbox configuration into the settings file and drop the sandbox option.'
+      );
+      return { valid: false, warnings, errors };
+    }
+
+    // CLI constraint: --session-id cannot be combined with --continue or
+    // --resume unless --fork-session is also set (to name the forked
+    // session's ID). The CLI rejects the flags at argv parsing; reject early
+    // here instead.
+    const forkSessionEnabled =
+      validSettings.forkSession === true || sdkOptionsRecord?.forkSession === true;
+    if (
+      validSettings.sessionId !== undefined &&
+      !forkSessionEnabled &&
+      (validSettings.continue === true || validSettings.resume !== undefined)
+    ) {
+      errors.push(
+        "sessionId cannot be combined with continue or resume unless forkSession: true is also set (it then names the forked session's ID). Remove sessionId, remove continue/resume, or add forkSession: true."
       );
       return { valid: false, warnings, errors };
     }
@@ -438,7 +508,7 @@ export function validateSettings(settings: unknown): {
     // like neither a known alias nor a full model ID, to catch typo'd aliases
     // at validation time instead of failing later in the CLI.
     if (validSettings.agents) {
-      const knownAgentModelAliases = ['sonnet', 'opus', 'haiku', 'inherit'];
+      const knownAgentModelAliases = ['sonnet', 'opus', 'haiku', 'fable', 'inherit'];
       for (const [agentName, agent] of Object.entries(validSettings.agents)) {
         const agentModel = agent.model;
         if (

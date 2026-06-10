@@ -100,7 +100,7 @@ By default, everything above operates on the local JSONL files under `~/.claude/
 
 For custom backends (Postgres, S3, Redis, ...), the SDK defines a **`SessionStore`** adapter (alpha — subject to upstream change):
 
-- The `sessionStore` **setting** (with `sessionStoreFlush`, `loadTimeoutMs`) mirrors transcripts to your store **in addition to** local files while queries run. It cannot be combined with `persistSession: false` (the provider rejects that combination at validation time — local writes are required for the mirror).
+- The `sessionStore` **setting** (with `sessionStoreFlush`, `loadTimeoutMs`) mirrors transcripts to your store **in addition to** local files while queries run. It cannot be combined with `persistSession: false` (local writes are required for the mirror) or `enableFileCheckpointing: true`, and combining it with `continue: true` (without an explicit `resume` ID) requires the store to implement `listSessions()` — the SDK uses it to discover the most recent session. The provider rejects all three invalid combinations at validation time.
 - Each helper's `options.sessionStore` redirects that helper to read/write **your store instead of the local filesystem** (e.g. `getSessionInfo(id, { sessionStore: myStore })`).
 - `importSessionToStore()` migrates an existing local session into a store; `foldSessionSummary()` and the `SessionKey`/`SessionStoreEntry`/`SessionSummaryEntry` types are the building blocks for writing a store; `InMemorySessionStore` is a reference implementation for tests.
 
@@ -112,6 +112,6 @@ For custom backends (Postgres, S3, Redis, ...), the SDK defines a **`SessionStor
 
 ## Notes
 
-- `sessionId` cannot be combined with `continue` or `resume` unless `forkSession: true` is also set (in which case it names the forked session's ID).
+- `sessionId` cannot be combined with `continue` or `resume` unless `forkSession: true` is also set (in which case it names the forked session's ID). The provider enforces this — and the UUID requirement — at validation time, and on multi-turn conversations it stops forwarding `sessionId` once it auto-resumes via the captured session ID (which already carries the custom ID).
 - Sessions are stored per working directory (project). If you run queries with different `cwd` settings, pass `dir` to the helpers to disambiguate, or rely on the default search across all project directories.
 - `persistSession: false` sessions never reach disk, so none of the helpers can see them.

@@ -169,12 +169,12 @@ export interface ClaudeCodeSettings {
   /**
    * Permission mode for tool usage.
    *
-   * `'delegate'` was dropped from the SDK's `PermissionMode` type in 0.3.x
-   * but is still accepted at runtime, so it remains assignable here for
-   * backward compatibility.
+   * Note: `'delegate'` was removed in Agent SDK 0.3.x — the CLI rejects
+   * `--permission-mode delegate` at argv parsing — so it is no longer
+   * accepted here either.
    * @default 'default'
    */
-  permissionMode?: PermissionMode | 'delegate';
+  permissionMode?: PermissionMode;
 
   /**
    * Custom tool name for permission prompts
@@ -194,6 +194,13 @@ export interface ClaudeCodeSettings {
   /**
    * Use a specific session ID for this query.
    * Allows deterministic session identifiers for tracking and correlation.
+   *
+   * Must be a valid UUID (the CLI rejects other formats). Cannot be combined
+   * with `continue` or `resume` unless `forkSession` is also set (it then
+   * names the forked session's ID); the provider rejects those combinations
+   * at validation time. On multi-turn conversations the provider forwards
+   * `sessionId` only on the first turn — subsequent turns resume the captured
+   * session (which already carries the custom ID).
    */
   sessionId?: string;
 
@@ -241,6 +248,11 @@ export interface ClaudeCodeSettings {
 
   /**
    * Configure sandbox behavior programmatically.
+   *
+   * Cannot be combined with a `settings` FILE PATH (the SDK throws at query
+   * time); pass `settings` as an inline object instead, or move the sandbox
+   * configuration into the settings file. The provider rejects the
+   * combination at validation time.
    */
   sandbox?: SandboxSettings;
 
@@ -267,6 +279,10 @@ export interface ClaudeCodeSettings {
   /**
    * Inline settings object or path to a settings JSON file.
    * Applied as an additional settings layer for the session.
+   *
+   * A settings file path cannot be combined with the `sandbox` option (the
+   * SDK throws at query time; inline objects are fine). The provider rejects
+   * the combination at validation time.
    */
   settings?: string | Settings;
 
@@ -478,6 +494,9 @@ export interface ClaudeCodeSettings {
    * Model(s) to use if the primary model is overloaded or unavailable.
    * Accepts a comma-separated list to try each in order; the primary model
    * is re-tried at the start of each user turn.
+   *
+   * Must differ from the main model (the SDK throws when they are equal);
+   * the provider rejects the combination before invoking the SDK.
    */
   fallbackModel?: string;
 
@@ -524,7 +543,10 @@ export interface ClaudeCodeSettings {
    * `persistSession: false` — local writes are required for the mirror to
    * function — or with `enableFileCheckpointing: true` — checkpoint backup
    * blobs are not mirrored, so `rewindFiles()` fails after a store-backed
-   * resume. The provider rejects both combinations at validation time.
+   * resume. Combining it with `continue: true` (without a `resume` ID)
+   * additionally requires the store to implement `listSessions()`, which the
+   * SDK uses to discover the most recent session. The provider rejects all
+   * three invalid combinations at validation time.
    *
    * @alpha Subject to change in upstream Agent SDK releases.
    */

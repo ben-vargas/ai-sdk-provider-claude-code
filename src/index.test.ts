@@ -37,6 +37,11 @@ describe('index exports', () => {
     expect(typeof exports.SYSTEM_PROMPT_DYNAMIC_BOUNDARY).toBe('string');
     expect(exports.InMemorySessionStore).toBeDefined();
     expect(typeof exports.InMemorySessionStore).toBe('function');
+    expect(exports.HOOK_EVENTS).toBeDefined();
+    expect(Array.isArray(exports.HOOK_EVENTS)).toBe(true);
+    expect(exports.HOOK_EVENTS).toContain('PreToolUse');
+    expect(exports.AbortError).toBeDefined();
+    expect(typeof exports.AbortError).toBe('function');
 
     // Session lifecycle helpers (SDK passthroughs)
     expect(exports.listSessions).toBeDefined();

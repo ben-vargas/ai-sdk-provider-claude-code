@@ -1089,9 +1089,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       cwd: this.settings.cwd,
       executable: this.settings.executable,
       executableArgs: this.settings.executableArgs,
-      // 'delegate' was dropped from the SDK's PermissionMode type in 0.3.x but
-      // is still accepted at runtime; forward it through for backward compatibility.
-      permissionMode: this.settings.permissionMode as Options['permissionMode'],
+      permissionMode: this.settings.permissionMode,
       permissionPromptToolName: this.settings.permissionPromptToolName,
       continue: this.settings.continue,
       allowedTools: this.settings.allowedTools,
@@ -1219,7 +1217,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     if (this.settings.hooks) {
       opts.hooks = this.settings.hooks;
     }
-    if (this.settings.sessionId !== undefined) {
+    // The CLI rejects --session-id combined with --resume/--continue unless
+    // --fork-session is also set. On multi-turn conversations the provider
+    // auto-resumes via the captured session ID (which already IS the custom
+    // ID), so only forward sessionId while no resume target exists — or when
+    // the user opted into forking (sessionId then names the fork's ID).
+    if (
+      this.settings.sessionId !== undefined &&
+      (opts.resume === undefined || this.settings.forkSession === true)
+    ) {
       opts.sessionId = this.settings.sessionId;
     }
     if (this.settings.debug !== undefined) {
@@ -1253,6 +1259,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           opts[key] = value;
         }
       }
+    }
+
+    // SDK constraint: fallbackModel must differ from the main model (the SDK
+    // throws while building CLI args at query time). Reject early with
+    // guidance instead. Mirrors the SDK's naive string equality check.
+    if (typeof opts.fallbackModel === 'string' && opts.fallbackModel === opts.model) {
+      throw new Error(
+        `fallbackModel cannot be the same as the model ('${String(opts.model)}'). Specify a different model for fallbackModel, or remove it.`
+      );
     }
 
     // Wrap stderr callback to also collect data for error reporting
@@ -2443,6 +2458,18 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 this.logger.debug(
                   `[claude-code] Assistant message supersedes ${message.supersedes?.length} prior message(s)`
                 );
+                // Evict retracted segments on arrival (matches doGenerate).
+                // The SDK does not guarantee the canonical replacement carries
+                // text blocks, so retraction must not depend on this message
+                // having text of its own.
+                const retracted = new Set<string>(message.supersedes ?? []);
+                for (let i = textSegments.length - 1; i >= 0; i--) {
+                  const segmentUuid = textSegments[i]?.uuid;
+                  if (segmentUuid !== undefined && retracted.has(segmentUuid)) {
+                    textSegments.splice(i, 1);
+                  }
+                }
+                accumulatedText = textSegments.map((segment) => segment.text).join('');
               }
 
               if (!message.message?.content) {
@@ -2576,16 +2603,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 // that we've already emitted via stream_event deltas - skip duplicates
                 // When no stream_events received, assistant messages contain incremental text
                 if (supersedesPriorMessages) {
-                  // Refusal-fallback replacement: retract only the superseded
-                  // segments so kept text from earlier assistant messages
-                  // survives in the accumulators (matches doGenerate).
-                  const retracted = new Set<string>(message.supersedes ?? []);
-                  for (let i = textSegments.length - 1; i >= 0; i--) {
-                    const segmentUuid = textSegments[i]?.uuid;
-                    if (segmentUuid !== undefined && retracted.has(segmentUuid)) {
-                      textSegments.splice(i, 1);
-                    }
-                  }
+                  // Refusal-fallback replacement: the superseded segments were
+                  // already retracted on arrival (above); record the
+                  // replacement text so kept text from earlier assistant
+                  // messages survives in the accumulators (matches doGenerate).
                   textSegments.push({
                     ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
                     text,

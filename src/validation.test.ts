@@ -6,7 +6,6 @@ import {
   validatePrompt,
   validateSessionId,
 } from './validation.js';
-import type { ClaudeCodeSettings } from './types.js';
 import * as fs from 'fs';
 
 // Mock fs module
@@ -88,8 +87,12 @@ describe('claudeCodeSettingsSchema', () => {
   it('should accept valid thinking configurations', () => {
     const configs = [
       { type: 'adaptive' },
+      { type: 'adaptive', display: 'summarized' },
+      { type: 'adaptive', display: 'omitted' },
       { type: 'enabled', budgetTokens: 10000 },
       { type: 'enabled' },
+      { type: 'enabled', budgetTokens: 8000, display: 'omitted' },
+      { type: 'enabled', display: 'summarized' },
       { type: 'disabled' },
     ];
     for (const thinking of configs) {
@@ -103,6 +106,18 @@ describe('claudeCodeSettingsSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it('should reject invalid thinking display values', () => {
+    const cases = [
+      { type: 'adaptive', display: 'full' },
+      { type: 'enabled', display: 'full' },
+      { type: 'disabled', display: 'summarized' }, // ThinkingDisabled has no display
+    ];
+    for (const thinking of cases) {
+      const result = claudeCodeSettingsSchema.safeParse({ thinking });
+      expect(result.success).toBe(false);
+    }
+  });
+
   it('should reject extra keys on thinking variants', () => {
     const cases = [
       { type: 'adaptive', budgetTokens: 1000 },
@@ -113,6 +128,16 @@ describe('claudeCodeSettingsSchema', () => {
       const result = claudeCodeSettingsSchema.safeParse({ thinking });
       expect(result.success).toBe(false);
     }
+  });
+
+  it('should only accept plugins with type local (SDK SdkPluginConfig)', () => {
+    expect(
+      claudeCodeSettingsSchema.safeParse({ plugins: [{ type: 'local', path: './p' }] }).success
+    ).toBe(true);
+    // The SDK throws 'Unsupported plugin type' at query time for anything else.
+    expect(
+      claudeCodeSettingsSchema.safeParse({ plugins: [{ type: 'remote', path: './p' }] }).success
+    ).toBe(false);
   });
 
   it('should accept systemPrompt as a string array (cache boundary form)', () => {
@@ -252,10 +277,16 @@ describe('claudeCodeSettingsSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('should accept sessionId as a string', () => {
-    const settings = { sessionId: 'my-custom-session-id' };
+  it('should accept sessionId as a UUID string', () => {
+    const settings = { sessionId: '4ed1ad15-2d5e-4e0c-92cb-e4ae42049fb6' };
     const result = claudeCodeSettingsSchema.safeParse(settings);
     expect(result.success).toBe(true);
+  });
+
+  it('should reject sessionId values that are not UUIDs', () => {
+    // The CLI rejects --session-id values that are not valid UUIDs.
+    const result = claudeCodeSettingsSchema.safeParse({ sessionId: 'my-session-1' });
+    expect(result.success).toBe(false);
   });
 
   it('should reject sessionId when not a string', () => {
@@ -292,12 +323,14 @@ describe('validateModelId', () => {
     expect(validateModelId('opus')).toBeUndefined();
     expect(validateModelId('sonnet')).toBeUndefined();
     expect(validateModelId('haiku')).toBeUndefined();
+    // 'fable' is documented as a valid alias by the SDK (AgentDefinition.model)
+    expect(validateModelId('fable')).toBeUndefined();
   });
 
   it('should warn about unknown models', () => {
     const warning = validateModelId('gpt-4');
     expect(warning).toContain("Unknown model ID: 'gpt-4'");
-    expect(warning).toContain('Known models are: opus, sonnet, haiku');
+    expect(warning).toContain('Known models are: opus, sonnet, haiku, fable');
   });
 
   it('should throw error for empty model ID', () => {
@@ -409,17 +442,9 @@ describe('validateSettings', () => {
   });
 
   it('should validate permissionMode values', () => {
-    // Valid permission modes (including 'auto' added in SDK 0.3.x; 'delegate'
-    // is kept for runtime backward compatibility)
-    const validModes = [
-      'default',
-      'acceptEdits',
-      'bypassPermissions',
-      'plan',
-      'delegate',
-      'dontAsk',
-      'auto',
-    ];
+    // Valid permission modes (mirrors the SDK 0.3.x PermissionMode union,
+    // including 'auto' and 'dontAsk' added in 0.3.x)
+    const validModes = ['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'];
     validModes.forEach((mode) => {
       const result = validateSettings({ permissionMode: mode });
       expect(result.valid).toBe(true);
@@ -431,11 +456,12 @@ describe('validateSettings', () => {
     expect(invalidResult.valid).toBe(false);
     expect(invalidResult.errors[0]).toContain('permissionMode');
 
-    // Compile-time check: 'delegate' must remain assignable to
-    // ClaudeCodeSettings.permissionMode even though SDK 0.3.x dropped it
-    // from the PermissionMode type (documented backward compatibility).
-    const delegateSettings: ClaudeCodeSettings = { permissionMode: 'delegate' };
-    expect(validateSettings(delegateSettings).valid).toBe(true);
+    // 'delegate' was removed in SDK 0.3.x and the CLI rejects
+    // --permission-mode delegate at argv parsing, so validation rejects it
+    // too instead of letting every query fail at spawn time.
+    const delegateResult = validateSettings({ permissionMode: 'delegate' });
+    expect(delegateResult.valid).toBe(false);
+    expect(delegateResult.errors[0]).toContain('permissionMode');
   });
 
   it('should validate mcpServers configuration', () => {
@@ -607,6 +633,77 @@ describe('validateSettings', () => {
     expect(validateSettings({ sessionStore, enableFileCheckpointing: false }).valid).toBe(true);
   });
 
+  it('should reject continue: true with a sessionStore lacking listSessions()', () => {
+    const sessionStore = { append: async () => undefined, load: async () => null };
+
+    const conflict = validateSettings({ continue: true, sessionStore });
+    expect(conflict.valid).toBe(false);
+    expect(conflict.errors[0]).toContain('requires the store to implement listSessions()');
+
+    // A store implementing listSessions() is fine
+    const storeWithList = { ...sessionStore, listSessions: async () => [] };
+    expect(validateSettings({ continue: true, sessionStore: storeWithList }).valid).toBe(true);
+
+    // An explicit resume ID sidesteps the discovery requirement
+    expect(validateSettings({ continue: true, sessionStore, resume: 'session-123' }).valid).toBe(
+      true
+    );
+    expect(
+      validateSettings({ continue: true, sessionStore, sdkOptions: { resume: 'session-123' } })
+        .valid
+    ).toBe(true);
+
+    // continue without sessionStore (and vice versa) is fine
+    expect(validateSettings({ continue: true }).valid).toBe(true);
+    expect(validateSettings({ sessionStore }).valid).toBe(true);
+  });
+
+  it('should reject sandbox combined with a settings file path', () => {
+    const conflict = validateSettings({
+      sandbox: { enabled: true },
+      settings: '/etc/claude/settings.json',
+    });
+    expect(conflict.valid).toBe(false);
+    expect(conflict.errors[0]).toContain('sandbox cannot be combined with a settings file path');
+
+    // Inline Settings objects (and inline JSON strings) are fine with sandbox
+    expect(
+      validateSettings({ sandbox: { enabled: true }, settings: { model: 'sonnet' } }).valid
+    ).toBe(true);
+    expect(
+      validateSettings({ sandbox: { enabled: true }, settings: '{"model":"sonnet"}' }).valid
+    ).toBe(true);
+
+    // A settings file path without sandbox is fine
+    expect(validateSettings({ settings: '/etc/claude/settings.json' }).valid).toBe(true);
+  });
+
+  it('should reject sessionId combined with continue/resume unless forkSession is set', () => {
+    const sessionId = '4ed1ad15-2d5e-4e0c-92cb-e4ae42049fb6';
+
+    const withContinue = validateSettings({ sessionId, continue: true });
+    expect(withContinue.valid).toBe(false);
+    expect(withContinue.errors[0]).toContain(
+      'sessionId cannot be combined with continue or resume'
+    );
+
+    const withResume = validateSettings({ sessionId, resume: 'session-123' });
+    expect(withResume.valid).toBe(false);
+    expect(withResume.errors[0]).toContain('sessionId cannot be combined with continue or resume');
+
+    // forkSession: true makes the combination valid (sessionId names the fork's ID)
+    expect(validateSettings({ sessionId, resume: 'session-123', forkSession: true }).valid).toBe(
+      true
+    );
+    expect(
+      validateSettings({ sessionId, resume: 'session-123', sdkOptions: { forkSession: true } })
+        .valid
+    ).toBe(true);
+
+    // sessionId alone is fine
+    expect(validateSettings({ sessionId }).valid).toBe(true);
+  });
+
   it('should accept agents with full model ID strings (SDK 0.3.x AgentDefinition)', () => {
     const result = validateSettings({
       agents: {
@@ -644,7 +741,7 @@ describe('validateSettings', () => {
   });
 
   it('should not warn for known agent model aliases or full model IDs', () => {
-    for (const model of ['sonnet', 'opus', 'haiku', 'inherit', 'claude-sonnet-4-5']) {
+    for (const model of ['sonnet', 'opus', 'haiku', 'fable', 'inherit', 'claude-sonnet-4-5']) {
       const result = validateSettings({
         agents: {
           worker: {
