@@ -1220,14 +1220,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // The CLI rejects --session-id combined with --resume/--continue unless
     // --fork-session is also set. On multi-turn conversations the provider
     // auto-resumes via the captured session ID (which already IS the custom
-    // ID), so only forward sessionId while no resume target exists — or when
-    // the user opted into forking (sessionId then names the fork's ID).
-    // forkSession may arrive via the sdkOptions escape hatch (merged below,
-    // after this decision), so honor the effective flag here.
+    // ID), so only forward sessionId while no resume/continue target exists —
+    // or when the user opted into forking (sessionId then names the fork's
+    // ID). forkSession and continue may arrive via the sdkOptions escape
+    // hatch (merged below, after this decision), so honor the effective
+    // values here. (opts.resume already reflects sdkOptions.resume via
+    // effectiveResume.)
     const effectiveForkSession = sdkOptions?.forkSession ?? this.settings.forkSession;
+    const effectiveContinue = sdkOptions?.continue ?? this.settings.continue;
     if (
       this.settings.sessionId !== undefined &&
-      (opts.resume === undefined || effectiveForkSession === true)
+      ((opts.resume === undefined && effectiveContinue !== true) || effectiveForkSession === true)
     ) {
       opts.sessionId = this.settings.sessionId;
     }

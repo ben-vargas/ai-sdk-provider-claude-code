@@ -428,10 +428,13 @@ export function validateSettings(settings: unknown): {
     // here instead.
     const forkSessionEnabled =
       validSettings.forkSession === true || sdkOptionsRecord?.forkSession === true;
+    const continueEnabled = validSettings.continue === true || sdkOptionsRecord?.continue === true;
+    const hasResumeTarget =
+      validSettings.resume !== undefined || sdkOptionsRecord?.resume !== undefined;
     if (
       validSettings.sessionId !== undefined &&
       !forkSessionEnabled &&
-      (validSettings.continue === true || validSettings.resume !== undefined)
+      (continueEnabled || hasResumeTarget)
     ) {
       errors.push(
         "sessionId cannot be combined with continue or resume unless forkSession: true is also set (it then names the forked session's ID). Remove sessionId, remove continue/resume, or add forkSession: true."

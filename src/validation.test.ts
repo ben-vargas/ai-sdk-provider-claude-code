@@ -700,6 +700,21 @@ describe('validateSettings', () => {
         .valid
     ).toBe(true);
 
+    // continue/resume via the sdkOptions escape hatch hit the same CLI
+    // constraint and are rejected too
+    const withSdkContinue = validateSettings({ sessionId, sdkOptions: { continue: true } });
+    expect(withSdkContinue.valid).toBe(false);
+    expect(withSdkContinue.errors[0]).toContain(
+      'sessionId cannot be combined with continue or resume'
+    );
+    const withSdkResume = validateSettings({ sessionId, sdkOptions: { resume: 'session-123' } });
+    expect(withSdkResume.valid).toBe(false);
+
+    // ...unless forkSession accompanies them
+    expect(
+      validateSettings({ sessionId, sdkOptions: { continue: true, forkSession: true } }).valid
+    ).toBe(true);
+
     // sessionId alone is fine
     expect(validateSettings({ sessionId }).valid).toBe(true);
   });
