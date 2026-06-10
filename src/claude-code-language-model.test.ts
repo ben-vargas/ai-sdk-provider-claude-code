@@ -5397,7 +5397,7 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const finishChunk = chunks.find((c) => c.type === 'finish');
       expect(finishChunk.providerMetadata['claude-code'].permissionDenials).toEqual([
-        { toolName: 'Bash', reason: 'Matched deny rule' },
+        { toolName: 'Bash', toolUseId: 'tool-1', reason: 'Matched deny rule' },
       ]);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('Permission denied - Tool: Bash'));
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('Matched deny rule'));
@@ -5444,7 +5444,86 @@ describe('ClaudeCodeLanguageModel', () => {
       const metadata = result.providerMetadata?.['claude-code'] as Record<string, unknown>;
       expect(metadata.apiRetries).toBe(1);
       expect(metadata.permissionDenials).toEqual([
-        { toolName: 'Write', reason: 'Auto-denied in dontAsk mode' },
+        { toolName: 'Write', toolUseId: 'tool-2', reason: 'Auto-denied in dontAsk mode' },
+      ]);
+    });
+
+    it('should surface PreToolUse-hook denials from the result permission_denials list', async () => {
+      // Hook denies bypass canUseTool and emit NO permission_denied system
+      // event (SDK docs on SDKPermissionDeniedMessage) — the result message's
+      // permission_denials list is the only place they appear.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'hook-denial-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+            permission_denials: [
+              { tool_name: 'Bash', tool_use_id: 'hook-tool-1', tool_input: { command: 'rm -rf' } },
+            ],
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      const metadata = result.providerMetadata?.['claude-code'] as Record<string, unknown>;
+      expect(metadata.permissionDenials).toEqual([{ toolName: 'Bash', toolUseId: 'hook-tool-1' }]);
+    });
+
+    it('should dedupe result permission_denials against stream-recorded denials by tool_use_id', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'permission_denied',
+            tool_name: 'Write',
+            tool_use_id: 'tool-9',
+            message: 'Auto-denied in dontAsk mode',
+            session_id: 'dedupe-session',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'dedupe-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+            permission_denials: [
+              // Same denial as the stream event — must not duplicate
+              { tool_name: 'Write', tool_use_id: 'tool-9', tool_input: {} },
+              // Hook-only denial — must be appended
+              { tool_name: 'Edit', tool_use_id: 'tool-10', tool_input: {} },
+            ],
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      expect(finishChunk.providerMetadata['claude-code'].permissionDenials).toEqual([
+        { toolName: 'Write', toolUseId: 'tool-9', reason: 'Auto-denied in dontAsk mode' },
+        { toolName: 'Edit', toolUseId: 'tool-10' },
       ]);
     });
 
@@ -6094,7 +6173,7 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(metadata.truncated).toBe(true);
       expect(metadata.apiRetries).toBe(1);
       expect(metadata.permissionDenials).toEqual([
-        { toolName: 'Bash', reason: 'Matched deny rule' },
+        { toolName: 'Bash', toolUseId: 'tool-1', reason: 'Matched deny rule' },
       ]);
     });
 

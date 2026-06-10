@@ -239,9 +239,15 @@ const INFORMATIONAL_SYSTEM_SUBTYPES = new Set<string>([
 /** Narrowed union of SDK system messages (init, api_retry, permission_denied, ...). */
 type SDKSystemMessageVariant = Extract<SDKMessage, { type: 'system' }>;
 
-/** A tool denial recorded from a `permission_denied` system message. */
+/**
+ * A tool denial recorded from a `permission_denied` system message or from
+ * the result message's `permission_denials` list (the latter is the only
+ * place PreToolUse-hook denials appear — they bypass canUseTool and emit no
+ * `permission_denied` system event).
+ */
 type PermissionDenialRecord = {
   toolName: string;
+  toolUseId?: string;
   reason?: string;
 };
 
@@ -1521,6 +1527,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         const reason = message.decision_reason ?? message.message;
         tracking.permissionDenials.push({
           toolName: message.tool_name,
+          toolUseId: message.tool_use_id,
           ...(reason !== undefined && { reason }),
         });
         this.logger.warn(
@@ -1550,6 +1557,31 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           this.logger.debug(`[claude-code] Unhandled system message subtype: ${message.subtype}`);
         }
         break;
+    }
+  }
+
+  /**
+   * Merges the result message's `permission_denials` list into the tracked
+   * denials. PreToolUse-hook denies bypass canUseTool and emit no
+   * `permission_denied` system event (per the SDK docs on
+   * SDKPermissionDeniedMessage), so the result list is the only place they
+   * surface. Entries already recorded from stream-time events are deduped by
+   * `tool_use_id`.
+   */
+  private mergeResultPermissionDenials(
+    message: { permission_denials?: Array<{ tool_name: string; tool_use_id: string }> },
+    tracking: RequestMetadataTracking
+  ): void {
+    for (const denial of message.permission_denials ?? []) {
+      const alreadyTracked = tracking.permissionDenials.some(
+        (d) => d.toolUseId !== undefined && d.toolUseId === denial.tool_use_id
+      );
+      if (!alreadyTracked) {
+        tracking.permissionDenials.push({
+          toolName: denial.tool_name,
+          toolUseId: denial.tool_use_id,
+        });
+      }
     }
   }
 
@@ -1741,6 +1773,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             warmSpareClaimed = message.warm_spare_claimed;
           }
           terminalReason = message.terminal_reason;
+          this.mergeResultPermissionDenials(message, metadataTracking);
 
           // Handle is_error flag in result message (e.g., auth failures).
           // SDKResultSuccess carries the error text in `result`; SDKResultError
@@ -2926,6 +2959,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               }
             } else if (message.type === 'result') {
               done();
+              this.mergeResultPermissionDenials(message, metadataTracking);
 
               // Handle is_error flag in result message (e.g., auth failures).
               // SDKResultSuccess carries the error text in `result`; SDKResultError
