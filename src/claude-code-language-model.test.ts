@@ -5940,6 +5940,65 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
     });
 
+    it('should emit an unstreamed replacement even when it is a substring of the refused text', async () => {
+      // The replacement text is contained verbatim in the already-emitted
+      // refused text. A transcript-wide substring search would false-positive
+      // and skip the canonical replacement; the streamed-replacement check
+      // must be scoped to deltas attributable to the superseding message.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: {
+              content: [
+                {
+                  type: 'text',
+                  text: 'The answer is 4. Actually, I cannot continue with that request.',
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'The answer is 4.' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'supersede-substring-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+      expect(textDeltas.map((c) => c.delta)).toEqual([
+        'The answer is 4. Actually, I cannot continue with that request.',
+        'The answer is 4.',
+      ]);
+      expect(textDeltas[0].id).not.toBe(textDeltas[1].id);
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
     it('should drop superseded thinking traces in doGenerate', async () => {
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
