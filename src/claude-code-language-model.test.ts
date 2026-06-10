@@ -642,6 +642,211 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.persistSession).toBe(false);
     });
 
+    it('should pass through new SDK 0.3.x options', async () => {
+      const modelWithNewOptions = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          skills: ['pdf', 'docx'],
+          settings: { permissions: { allow: ['Bash(ls:*)'] } },
+          managedSettings: { sandbox: { network: { allowManagedDomainsOnly: true } } },
+          toolAliases: { Bash: 'mcp__workspace__bash' },
+          toolConfig: { askUserQuestion: { previewFormat: 'html' } },
+          planModeInstructions: 'Research only; produce a migration plan.',
+          title: 'My custom session',
+          forwardSubagentText: true,
+          agentProgressSummaries: true,
+          includeHookEvents: true,
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-new-options',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithNewOptions.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.skills).toEqual(['pdf', 'docx']);
+      expect(call?.options?.settings).toEqual({ permissions: { allow: ['Bash(ls:*)'] } });
+      expect(call?.options?.managedSettings).toEqual({
+        sandbox: { network: { allowManagedDomainsOnly: true } },
+      });
+      expect(call?.options?.toolAliases).toEqual({ Bash: 'mcp__workspace__bash' });
+      expect(call?.options?.toolConfig).toEqual({ askUserQuestion: { previewFormat: 'html' } });
+      expect(call?.options?.planModeInstructions).toBe('Research only; produce a migration plan.');
+      expect(call?.options?.title).toBe('My custom session');
+      expect(call?.options?.forwardSubagentText).toBe(true);
+      expect(call?.options?.agentProgressSummaries).toBe(true);
+      expect(call?.options?.includeHookEvents).toBe(true);
+    });
+
+    it("should pass through skills: 'all'", async () => {
+      const modelWithSkills = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { skills: 'all' } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-skills-all',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithSkills.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.skills).toBe('all');
+    });
+
+    it("should accept effort 'xhigh' and pass it through", async () => {
+      const modelWithEffort = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { effort: 'xhigh' },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-effort',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithEffort.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.effort).toBe('xhigh');
+    });
+
+    it('should pass through systemPrompt as an array of blocks', async () => {
+      const systemPrompt = [
+        'Static instructions.',
+        '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__',
+        'Session-specific context.',
+      ];
+      const modelWithArrayPrompt = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { systemPrompt } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-sysprompt-array',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithArrayPrompt.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.systemPrompt).toEqual(systemPrompt);
+    });
+
+    it('should pass through systemPrompt preset with excludeDynamicSections', async () => {
+      const modelWithPreset = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          systemPrompt: {
+            type: 'preset',
+            preset: 'claude_code',
+            excludeDynamicSections: true,
+          },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-sysprompt-preset',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithPreset.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.systemPrompt).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+        excludeDynamicSections: true,
+      });
+    });
+
+    it('should pass through alpha options (taskBudget, sessionStore, sessionStoreFlush, loadTimeoutMs)', async () => {
+      const sessionStore = {
+        append: async () => undefined,
+        load: async () => null,
+      };
+      const modelWithAlphaOptions = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          taskBudget: { total: 50000 },
+          sessionStore,
+          sessionStoreFlush: 'eager',
+          loadTimeoutMs: 30000,
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-alpha',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithAlphaOptions.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.taskBudget).toEqual({ total: 50000 });
+      expect(call?.options?.sessionStore).toBe(sessionStore);
+      expect(call?.options?.sessionStoreFlush).toBe('eager');
+      expect(call?.options?.loadTimeoutMs).toBe(30000);
+    });
+
     it('should pass through sessionId option', async () => {
       const modelWithSessionId = new ClaudeCodeLanguageModel({
         id: 'sonnet',
@@ -4663,6 +4868,977 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const finishChunk = chunks.find((c) => c.type === 'finish');
       expect(finishChunk.providerMetadata['claude-code'].modelUsage).toBeUndefined();
+    });
+  });
+
+  describe('SDK 0.3.x stream handling and metadata enrichment', () => {
+    it('should include SDK timing metadata in doGenerate providerMetadata', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'timing-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+            ttft_ms: 120,
+            ttft_stream_ms: 80,
+            time_to_request_ms: 40,
+            terminal_reason: 'completed',
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      const metadata = result.providerMetadata?.['claude-code'] as Record<string, unknown>;
+      expect(metadata.ttftMs).toBe(120);
+      expect(metadata.ttftStreamMs).toBe(80);
+      expect(metadata.timeToRequestMs).toBe(40);
+      expect(metadata.terminalReason).toBe('completed');
+      // Existing fields are untouched
+      expect(metadata.costUsd).toBe(0.001);
+      expect(metadata.durationMs).toBe(500);
+    });
+
+    it('should omit timing metadata in doGenerate when absent on the result message', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'no-timing-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      const metadata = result.providerMetadata?.['claude-code'] as Record<string, unknown>;
+      expect(metadata.ttftMs).toBeUndefined();
+      expect(metadata.ttftStreamMs).toBeUndefined();
+      expect(metadata.timeToRequestMs).toBeUndefined();
+      expect(metadata.terminalReason).toBeUndefined();
+    });
+
+    it('should include SDK timing metadata in doStream finish providerMetadata', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Hello' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'stream-timing-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+            ttft_ms: 150,
+            ttft_stream_ms: 95,
+            time_to_request_ms: 55,
+            terminal_reason: 'completed',
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      const metadata = finishChunk.providerMetadata['claude-code'];
+      expect(metadata.ttftMs).toBe(150);
+      expect(metadata.ttftStreamMs).toBe(95);
+      expect(metadata.timeToRequestMs).toBe(55);
+      expect(metadata.terminalReason).toBe('completed');
+      // Existing fields are untouched
+      expect(metadata.costUsd).toBe(0.001);
+      expect(metadata.durationMs).toBe(500);
+    });
+
+    it('should count api_retry messages into apiRetries in doStream finish metadata', async () => {
+      const debug = vi.fn();
+      const logger: Logger = { debug, info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const modelWithLogger = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { logger, verbose: true },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'api_retry',
+            attempt: 1,
+            max_retries: 3,
+            retry_delay_ms: 1000,
+            error_status: 529,
+            error: 'overloaded',
+            session_id: 'retry-session',
+          };
+          yield {
+            type: 'system',
+            subtype: 'api_retry',
+            attempt: 2,
+            max_retries: 3,
+            retry_delay_ms: 2000,
+            error_status: 529,
+            error: 'overloaded',
+            session_id: 'retry-session',
+          };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Recovered' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'retry-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await modelWithLogger.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      expect(finishChunk.providerMetadata['claude-code'].apiRetries).toBe(2);
+      expect(debug).toHaveBeenCalledWith(expect.stringContaining('API retry 1/3'));
+      expect(debug).toHaveBeenCalledWith(expect.stringContaining('API retry 2/3'));
+    });
+
+    it('should record permission_denied messages in doStream finish metadata and warn', async () => {
+      const warn = vi.fn();
+      const logger: Logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+      const modelWithLogger = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { logger },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'permission_denied',
+            tool_name: 'Bash',
+            tool_use_id: 'tool-1',
+            decision_reason_type: 'rule',
+            decision_reason: 'Matched deny rule',
+            message: 'Permission denied by rule',
+            session_id: 'denied-session',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'denied-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await modelWithLogger.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      expect(finishChunk.providerMetadata['claude-code'].permissionDenials).toEqual([
+        { toolName: 'Bash', reason: 'Matched deny rule' },
+      ]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Permission denied - Tool: Bash'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Matched deny rule'));
+    });
+
+    it('should record api_retry and permission_denied in doGenerate providerMetadata', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'api_retry',
+            attempt: 1,
+            max_retries: 3,
+            retry_delay_ms: 1000,
+            error_status: 529,
+            error: 'overloaded',
+            session_id: 'gen-meta-session',
+          };
+          yield {
+            type: 'system',
+            subtype: 'permission_denied',
+            tool_name: 'Write',
+            tool_use_id: 'tool-2',
+            message: 'Auto-denied in dontAsk mode',
+            session_id: 'gen-meta-session',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'gen-meta-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      const metadata = result.providerMetadata?.['claude-code'] as Record<string, unknown>;
+      expect(metadata.apiRetries).toBe(1);
+      expect(metadata.permissionDenials).toEqual([
+        { toolName: 'Write', reason: 'Auto-denied in dontAsk mode' },
+      ]);
+    });
+
+    it('should invoke onPromptSuggestion for the post-result message in doStream', async () => {
+      const onPromptSuggestion = vi.fn();
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion } as any,
+      });
+
+      // Use a true generator so iteration continues past the result message,
+      // matching the real Query async-generator behavior.
+      const mockResponse = (async function* () {
+        yield {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'Done' }] },
+        };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'suggestion-session',
+          usage: { input_tokens: 10, output_tokens: 5 },
+          total_cost_usd: 0.001,
+          duration_ms: 500,
+        };
+        yield {
+          type: 'prompt_suggestion',
+          suggestion: 'Run the test suite next',
+          session_id: 'suggestion-session',
+        };
+      })();
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await modelWithCallback.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // Stream finished normally before the suggestion arrived
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+
+      // The suggestion is drained after the stream closes
+      await vi.waitFor(() => {
+        expect(onPromptSuggestion).toHaveBeenCalledWith('Run the test suite next');
+      });
+      expect(onPromptSuggestion).toHaveBeenCalledTimes(1);
+    });
+
+    it('should invoke onPromptSuggestion in doGenerate', async () => {
+      const onPromptSuggestion = vi.fn();
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'gen-suggestion-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+          };
+          yield {
+            type: 'prompt_suggestion',
+            suggestion: 'Try asking about tests',
+            session_id: 'gen-suggestion-session',
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithCallback.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      expect(onPromptSuggestion).toHaveBeenCalledTimes(1);
+      expect(onPromptSuggestion).toHaveBeenCalledWith('Try asking about tests');
+    });
+
+    it('should emit the canonical replacement as a new text part for superseding assistant messages in doStream', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          yield {
+            type: 'system',
+            subtype: 'model_refusal_fallback',
+            trigger: 'refusal',
+            direction: 'retry',
+            original_model: 'claude-opus-4-6',
+            fallback_model: 'claude-sonnet-4-5',
+            request_id: 'req-1',
+            content: 'Retried on fallback model',
+            session_id: 'supersede-session',
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'supersede-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // The retracted text was already emitted and cannot be un-streamed, but
+      // the canonical replacement must still reach the stream: the refused
+      // text part is closed and the replacement is emitted as a NEW text part.
+      const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+      expect(textDeltas.map((c) => c.delta)).toEqual([
+        'Refused partial answer',
+        'Replacement answer',
+      ]);
+      // The replacement uses a fresh text part, opened after the refused part closed.
+      expect(textDeltas[0].id).not.toBe(textDeltas[1].id);
+      const partEvents = chunks
+        .filter((c) => ['text-start', 'text-end'].includes(c.type))
+        .map((c) => `${c.type}:${c.id === textDeltas[0].id ? 'refused' : 'replacement'}`);
+      expect(partEvents).toEqual([
+        'text-start:refused',
+        'text-end:refused',
+        'text-start:replacement',
+        'text-end:replacement',
+      ]);
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
+    it('should keep earlier non-retracted text when a supersede arrives in doStream JSON mode', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-kept',
+            message: { content: [{ type: 'text', text: 'Kept intro. ' }] },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'supersede-json-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        responseFormat: { type: 'json' },
+      } as any);
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // JSON mode without schema falls back to emitting the accumulated text,
+      // which must contain the kept segment plus the replacement - only the
+      // retracted segment is dropped (matches doGenerate).
+      const streamedText = chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join('');
+      expect(streamedText).toBe('Kept intro. Replacement answer');
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
+    it('should not re-emit the replacement when it was already streamed via stream_events', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'stream_event',
+            event: {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'text_delta', text: 'Refused partial answer' },
+            },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          yield {
+            type: 'stream_event',
+            event: {
+              type: 'content_block_delta',
+              index: 1,
+              delta: { type: 'text_delta', text: 'Replacement answer' },
+            },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'supersede-stream-events-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // The replacement already arrived via stream_event deltas, so the
+      // superseding assistant message must not emit it a second time.
+      const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+      expect(textDeltas.map((c) => c.delta)).toEqual([
+        'Refused partial answer',
+        'Replacement answer',
+      ]);
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
+    it('should drop superseded thinking traces in doGenerate', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: {
+              content: [
+                { type: 'thinking', thinking: 'Refused thinking trace' },
+                { type: 'text', text: 'Refused partial answer' },
+              ],
+            },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: {
+              content: [
+                { type: 'thinking', thinking: 'Replacement thinking trace' },
+                { type: 'text', text: 'Replacement answer' },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'gen-supersede-thinking-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      // Reasoning from the retracted (refused) message is evicted along with
+      // its text; only the replacement's thinking survives.
+      const reasoningParts = result.content.filter((c: any) => c.type === 'reasoning') as any[];
+      expect(reasoningParts.map((c) => c.text)).toEqual(['Replacement thinking trace']);
+      expect(result.providerMetadata?.['claude-code']?.thinkingTraces).toEqual([
+        'Replacement thinking trace',
+      ]);
+      const textContent = result.content.find((c: any) => c.type === 'text') as any;
+      expect(textContent.text).toBe('Replacement answer');
+    });
+
+    it('should drop superseded text segments in doGenerate', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'gen-supersede-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      const textContent = result.content.find((c: any) => c.type === 'text') as any;
+      expect(textContent.text).toBe('Replacement answer');
+    });
+
+    it('should debug-log and ignore informational SDK 0.3.x system messages in doStream', async () => {
+      const debug = vi.fn();
+      const logger: Logger = { debug, info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const modelWithLogger = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { logger, verbose: true },
+      });
+
+      const informationalMessages = [
+        { subtype: 'notification', key: 'k', text: 'note', priority: 'low' },
+        { subtype: 'status', status: 'requesting' },
+        { subtype: 'status', status: null, compact_result: 'failed', compact_error: 'boom' },
+        { subtype: 'task_updated', task_id: 't1', patch: { status: 'running' } },
+        { subtype: 'session_state_changed', state: 'running' },
+        { subtype: 'commands_changed', commands: [] },
+        { subtype: 'memory_recall', mode: 'select', memories: [] },
+        { subtype: 'plugin_install', status: 'started' },
+        {
+          subtype: 'mirror_error',
+          error: 'append failed',
+          key: { projectKey: 'p', sessionId: 's' },
+        },
+      ];
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          for (const informational of informationalMessages) {
+            yield { type: 'system', session_id: 'info-session', ...informational };
+          }
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Still working' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'info-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await modelWithLogger.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // The stream completes normally with no error chunks
+      expect(chunks.find((c) => c.type === 'error')).toBeUndefined();
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+      const streamedText = chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join('');
+      expect(streamedText).toBe('Still working');
+
+      // Each informational subtype is debug-logged as intentionally ignored
+      for (const informational of informationalMessages) {
+        expect(debug).toHaveBeenCalledWith(
+          expect.stringContaining(`Ignoring informational system message: ${informational.subtype}`)
+        );
+      }
+    });
+
+    it('should accumulate thinking_tokens deltas into estimatedThinkingTokens in doStream finish metadata', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          // First thinking block: running total grows 40 -> 100
+          yield {
+            type: 'system',
+            subtype: 'thinking_tokens',
+            estimated_tokens: 40,
+            estimated_tokens_delta: 40,
+            session_id: 'thinking-session',
+          };
+          yield {
+            type: 'system',
+            subtype: 'thinking_tokens',
+            estimated_tokens: 100,
+            estimated_tokens_delta: 60,
+            session_id: 'thinking-session',
+          };
+          // Second thinking block: per-block running total resets, so only
+          // summing deltas yields the correct cross-block estimate (125).
+          yield {
+            type: 'system',
+            subtype: 'thinking_tokens',
+            estimated_tokens: 25,
+            estimated_tokens_delta: 25,
+            session_id: 'thinking-session',
+          };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'thinking-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      expect(finishChunk.providerMetadata['claude-code'].estimatedThinkingTokens).toBe(125);
+      // The estimate is not authoritative billed output tokens, so usage is untouched.
+      expect(finishChunk.usage.outputTokens.reasoning).toBeUndefined();
+    });
+
+    it('should surface estimatedThinkingTokens in doGenerate providerMetadata', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'thinking_tokens',
+            estimated_tokens: 100,
+            estimated_tokens_delta: 100,
+            session_id: 'gen-thinking-session',
+          };
+          yield {
+            type: 'system',
+            subtype: 'thinking_tokens',
+            estimated_tokens: 150,
+            estimated_tokens_delta: 50,
+            session_id: 'gen-thinking-session',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'gen-thinking-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      const metadata = result.providerMetadata?.['claude-code'] as Record<string, unknown>;
+      expect(metadata.estimatedThinkingTokens).toBe(150);
+      expect(result.usage.outputTokens.reasoning).toBeUndefined();
+    });
+
+    it('should include apiRetries and permissionDenials in the truncation-recovery finish metadata', async () => {
+      // Long enough to pass the truncation-detection length threshold
+      const longText = 'A'.repeat(600);
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'api_retry',
+            attempt: 1,
+            max_retries: 3,
+            retry_delay_ms: 1000,
+            error_status: 529,
+            error: 'overloaded',
+            session_id: 'truncated-session',
+          };
+          yield {
+            type: 'system',
+            subtype: 'permission_denied',
+            tool_name: 'Bash',
+            tool_use_id: 'tool-1',
+            decision_reason: 'Matched deny rule',
+            session_id: 'truncated-session',
+          };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: longText }] },
+          };
+          throw new SyntaxError('Unexpected end of JSON input');
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      const metadata = finishChunk.providerMetadata['claude-code'];
+      expect(metadata.truncated).toBe(true);
+      expect(metadata.apiRetries).toBe(1);
+      expect(metadata.permissionDenials).toEqual([
+        { toolName: 'Bash', reason: 'Matched deny rule' },
+      ]);
+    });
+
+    it('should stop the post-result drain after the first prompt_suggestion', async () => {
+      const onPromptSuggestion = vi.fn();
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion } as any,
+      });
+
+      let yieldedAfterSuggestion = false;
+      let generatorClosed = false;
+      const mockResponse = (async function* () {
+        try {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Done' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'bounded-drain-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+          yield {
+            type: 'prompt_suggestion',
+            suggestion: 'Run the test suite next',
+            session_id: 'bounded-drain-session',
+          };
+          yieldedAfterSuggestion = true;
+          // Simulate a lingering CLI that never exits on its own.
+          await new Promise(() => {});
+        } finally {
+          generatorClosed = true;
+        }
+      })();
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await modelWithCallback.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+
+      await vi.waitFor(() => {
+        expect(onPromptSuggestion).toHaveBeenCalledWith('Run the test suite next');
+        // The drain closes the SDK iterator after the (at most one per turn)
+        // suggestion instead of holding the subprocess open indefinitely.
+        expect(generatorClosed).toBe(true);
+      });
+      expect(yieldedAfterSuggestion).toBe(false);
+    });
+
+    it('should time out the post-result drain when no prompt_suggestion arrives', async () => {
+      const debug = vi.fn();
+      const logger: Logger = { debug, info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const onPromptSuggestion = vi.fn();
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion, logger, verbose: true } as any,
+      });
+
+      const mockResponse = (async function* () {
+        yield {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'Done' }] },
+        };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'drain-timeout-session',
+          usage: { input_tokens: 10, output_tokens: 5 },
+          total_cost_usd: 0.001,
+          duration_ms: 500,
+        };
+        // Lingering CLI: never emits a prompt_suggestion and never exits.
+        await new Promise(() => {});
+      })();
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      vi.useFakeTimers();
+      try {
+        const result = await modelWithCallback.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done } = await reader.read();
+          if (done) break;
+        }
+
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(onPromptSuggestion).not.toHaveBeenCalled();
+        expect(debug).toHaveBeenCalledWith(
+          expect.stringContaining('Post-result drain timed out; closing SDK iterator')
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

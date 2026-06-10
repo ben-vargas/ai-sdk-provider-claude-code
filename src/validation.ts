@@ -35,10 +35,12 @@ export const claudeCodeSettingsSchema = z
     systemPrompt: z
       .union([
         z.string(),
+        z.array(z.string()),
         z.object({
           type: z.literal('preset'),
           preset: z.literal('claude_code'),
           append: z.string().optional(),
+          excludeDynamicSections: z.boolean().optional(),
         }),
       ])
       .optional(),
@@ -56,7 +58,7 @@ export const claudeCodeSettingsSchema = z
         z.object({ type: z.literal('disabled') }).strict(),
       ])
       .optional(),
-    effort: z.enum(['low', 'medium', 'high', 'max']).optional(),
+    effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
     promptSuggestions: z.boolean().optional(),
     cwd: z
       .string()
@@ -112,6 +114,46 @@ export const claudeCodeSettingsSchema = z
         }),
       ])
       .optional(),
+    skills: z.union([z.array(z.string()), z.literal('all')]).optional(),
+    settings: z
+      .union([
+        z.string(),
+        z.record(z.string(), z.any()), // inline Settings object
+      ])
+      .optional(),
+    managedSettings: z.record(z.string(), z.any()).optional(),
+    toolAliases: z.record(z.string(), z.string()).optional(),
+    toolConfig: z
+      .object({
+        askUserQuestion: z
+          .object({
+            previewFormat: z.enum(['markdown', 'html']).optional(),
+          })
+          .passthrough()
+          .optional(),
+      })
+      .passthrough()
+      .optional(),
+    planModeInstructions: z.string().optional(),
+    title: z.string().optional(),
+    forwardSubagentText: z.boolean().optional(),
+    agentProgressSummaries: z.boolean().optional(),
+    includeHookEvents: z.boolean().optional(),
+    taskBudget: z.object({ total: z.number().positive() }).strict().optional(),
+    sessionStore: z
+      .any()
+      .refine(
+        (val) =>
+          val === undefined ||
+          (typeof val === 'object' &&
+            val !== null &&
+            typeof (val as { append?: unknown }).append === 'function' &&
+            typeof (val as { load?: unknown }).load === 'function'),
+        { message: 'sessionStore must be an object with append() and load() functions' }
+      )
+      .optional(),
+    sessionStoreFlush: z.enum(['batched', 'eager']).optional(),
+    loadTimeoutMs: z.number().int().positive().optional(),
     settingSources: z.array(z.enum(['user', 'project', 'local'])).optional(),
     streamingInput: z.enum(['auto', 'always', 'off']).optional(),
     // Hooks and tool-permission callback (permissive validation of shapes)
@@ -179,7 +221,8 @@ export const claudeCodeSettingsSchema = z
             tools: z.array(z.string()).optional(),
             disallowedTools: z.array(z.string()).optional(),
             prompt: z.string(),
-            model: z.enum(['sonnet', 'opus', 'haiku', 'inherit']).optional(),
+            // SDK 0.3.x AgentDefinition accepts any model alias or full model ID
+            model: z.string().optional(),
             mcpServers: z
               .array(
                 z.union([
@@ -224,6 +267,13 @@ export const claudeCodeSettingsSchema = z
       .any()
       .refine((val) => val === undefined || typeof val === 'function', {
         message: 'onStreamStart must be a function',
+      })
+      .optional(),
+    // Callback invoked with the predicted next user prompt (requires promptSuggestions: true)
+    onPromptSuggestion: z
+      .any()
+      .refine((val) => val === undefined || typeof val === 'function', {
+        message: 'onPromptSuggestion must be a function',
       })
       .optional(),
   })
@@ -287,6 +337,15 @@ export function validateSettings(settings: unknown): {
     // Additional validation warnings
     const validSettings = result.data;
 
+    // SDK constraint: sessionStore mirroring requires local session writes,
+    // so it cannot be combined with persistSession: false.
+    if (validSettings.sessionStore !== undefined && validSettings.persistSession === false) {
+      errors.push(
+        'sessionStore cannot be combined with persistSession: false. Transcript mirroring requires local session writes; remove persistSession: false or drop sessionStore.'
+      );
+      return { valid: false, warnings, errors };
+    }
+
     // Warn about high turn limits
     if (validSettings.maxTurns && validSettings.maxTurns > 20) {
       warnings.push(
@@ -331,6 +390,26 @@ export function validateSettings(settings: unknown): {
       warnings.push(
         "allowedTools includes 'Skill' but settingSources is not set. Skills require settingSources (e.g., ['user', 'project']) to load skill definitions."
       );
+    }
+
+    // SDK 0.3.x accepts any string for agents[].model (alias or full model ID),
+    // so the schema no longer rejects typos. Warn (but allow) when a value looks
+    // like neither a known alias nor a full model ID, to catch typo'd aliases
+    // at validation time instead of failing later in the CLI.
+    if (validSettings.agents) {
+      const knownAgentModelAliases = ['sonnet', 'opus', 'haiku', 'inherit'];
+      for (const [agentName, agent] of Object.entries(validSettings.agents)) {
+        const agentModel = agent.model;
+        if (
+          agentModel !== undefined &&
+          !knownAgentModelAliases.includes(agentModel) &&
+          !agentModel.includes('-')
+        ) {
+          warnings.push(
+            `Unknown model alias '${agentModel}' for agent '${agentName}'. Known aliases are: ${knownAgentModelAliases.join(', ')}; full model IDs (e.g. 'claude-sonnet-4-5') are also accepted.`
+          );
+        }
+      }
     }
 
     return { valid: true, warnings, errors };

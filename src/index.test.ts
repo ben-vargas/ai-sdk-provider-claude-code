@@ -33,6 +33,10 @@ describe('index exports', () => {
     expect(typeof exports.createSdkMcpServer).toBe('function');
     expect(exports.tool).toBeDefined();
     expect(typeof exports.tool).toBe('function');
+    expect(exports.SYSTEM_PROMPT_DYNAMIC_BOUNDARY).toBeDefined();
+    expect(typeof exports.SYSTEM_PROMPT_DYNAMIC_BOUNDARY).toBe('string');
+    expect(exports.InMemorySessionStore).toBeDefined();
+    expect(typeof exports.InMemorySessionStore).toBe('function');
   });
 
   it('should export correct modules', async () => {

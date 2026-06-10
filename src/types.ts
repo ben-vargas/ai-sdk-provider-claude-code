@@ -9,9 +9,14 @@ import type {
   Options,
   SpawnedProcess,
   SpawnOptions,
-  AgentMcpServerSpec,
+  AgentDefinition,
   Query,
   ThinkingConfig,
+  EffortLevel,
+  Settings,
+  ToolConfig,
+  SessionStore,
+  SessionStoreFlush,
 } from '@anthropic-ai/claude-agent-sdk';
 
 export type StreamingInputMode = 'auto' | 'always' | 'off';
@@ -91,9 +96,15 @@ export interface ClaudeCodeSettings {
   /**
    * Agent SDK system prompt configuration. Preferred over legacy fields.
    * - string: custom system prompt
-   * - preset object: Claude Code preset, with optional append
+   * - string[]: custom system prompt blocks; include the
+   *   `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` marker (re-exported by this package)
+   *   as a standalone element to split the static (cross-session cacheable)
+   *   prefix from the dynamic (session-specific) suffix
+   * - preset object: Claude Code preset, with optional `append` and
+   *   `excludeDynamicSections` (strips per-user dynamic sections such as
+   *   working directory and git status so the prompt caches across users)
    */
-  systemPrompt?: string | { type: 'preset'; preset: 'claude_code'; append?: string };
+  systemPrompt?: Options['systemPrompt'];
 
   /**
    * Maximum number of turns for the conversation
@@ -125,11 +136,12 @@ export interface ClaudeCodeSettings {
    * - `'low'` — Minimal thinking, fastest responses
    * - `'medium'` — Moderate thinking
    * - `'high'` — Deep reasoning (default)
+   * - `'xhigh'` — Extra-high effort
    * - `'max'` — Maximum effort (Opus 4.6 only)
    *
    * @see https://docs.anthropic.com/en/docs/build-with-claude/effort
    */
-  effort?: 'low' | 'medium' | 'high' | 'max';
+  effort?: EffortLevel;
 
   /**
    * Enable prompt suggestions. When true, the agent emits a predicted
@@ -233,6 +245,85 @@ export interface ClaudeCodeSettings {
   tools?: Options['tools'];
 
   /**
+   * Skills to enable for the main session. This is the single place to turn
+   * skills on; you do not need to add `'Skill'` to `allowedTools` yourself
+   * when using this option.
+   *
+   * - `'all'`: enable every discovered skill
+   * - `string[]`: enable only the listed skills (SKILL.md `name`/directory
+   *   name, or `plugin:skill` for plugin-qualified skills)
+   * - omitted (default): no SDK auto-configuration
+   *
+   * Note: filesystem skills are discovered via `settingSources` — set it
+   * (e.g. `['user', 'project']`) so skill definitions can be loaded.
+   */
+  skills?: string[] | 'all';
+
+  /**
+   * Inline settings object or path to a settings JSON file.
+   * Applied as an additional settings layer for the session.
+   */
+  settings?: string | Settings;
+
+  /**
+   * Policy-tier settings supplied by the spawning parent process.
+   * Filtered restrictive-only by the SDK; intended for embedding
+   * applications that need to enforce lockdown settings on the
+   * subprocess without writing root-owned files.
+   */
+  managedSettings?: Settings;
+
+  /**
+   * Map built-in tool names to replacement tools (e.g. MCP tools).
+   *
+   * @example
+   * ```typescript
+   * toolAliases: { Bash: 'mcp__workspace__bash' }
+   * ```
+   */
+  toolAliases?: Record<string, string>;
+
+  /**
+   * Per-tool configuration for built-in tools
+   * (e.g. `{ askUserQuestion: { previewFormat: 'html' } }`).
+   */
+  toolConfig?: ToolConfig;
+
+  /**
+   * Custom workflow instructions for plan mode. When `permissionMode` is
+   * `'plan'`, this string replaces the default code-implementation workflow
+   * body in the plan-mode system reminder.
+   */
+  planModeInstructions?: string;
+
+  /**
+   * Custom title for a new session. When provided, the session uses this
+   * title instead of auto-generating one from the first user message.
+   * When resuming, the resumed session's persisted title takes precedence.
+   */
+  title?: string;
+
+  /**
+   * Forward subagent text and thinking blocks as messages with
+   * `parent_tool_use_id` set so consumers can render a nested transcript.
+   * By default only tool_use/tool_result blocks from subagents are emitted.
+   */
+  forwardSubagentText?: boolean;
+
+  /**
+   * Enable periodic AI-generated progress summaries for running subagents,
+   * emitted on `task_progress` events via the `summary` field.
+   */
+  agentProgressSummaries?: boolean;
+
+  /**
+   * Include hook lifecycle events (`hook_started`, `hook_progress`,
+   * `hook_response`) in the output stream for all hook event types.
+   * @default false
+   */
+  includeHookEvents?: boolean;
+
+  /**
    * MCP server configuration
    */
   mcpServers?: Record<string, McpServerConfig>;
@@ -334,26 +425,13 @@ export interface ClaudeCodeSettings {
 
   /**
    * Programmatically defined subagents.
+   *
+   * Uses the Agent SDK's `AgentDefinition` directly, which includes
+   * `effort`, `permissionMode`, `background`, `memory`, `initialPrompt`,
+   * `skills`, `maxTurns`, and full model ID strings in addition to the
+   * core `description`/`prompt`/`tools` fields.
    */
-  agents?: Record<
-    string,
-    {
-      /** Natural language description of when to use this agent */
-      description: string;
-      /** Array of allowed tool names. If omitted, inherits all tools from parent */
-      tools?: string[];
-      /** Array of tool names to explicitly disallow for this agent */
-      disallowedTools?: string[];
-      /** The agent's system prompt */
-      prompt: string;
-      /** Model to use for this agent. If omitted or 'inherit', uses the main model */
-      model?: 'sonnet' | 'opus' | 'haiku' | 'inherit';
-      /** MCP servers available to this agent (server names or inline configs) */
-      mcpServers?: AgentMcpServerSpec[];
-      /** Experimental: Critical reminder added to system prompt */
-      criticalSystemReminder_EXPERIMENTAL?: string;
-    }
-  >;
+  agents?: Record<string, AgentDefinition>;
 
   /**
    * Include partial message events from the SDK stream.
@@ -361,7 +439,9 @@ export interface ClaudeCodeSettings {
   includePartialMessages?: boolean;
 
   /**
-   * Model to use if primary fails.
+   * Model(s) to use if the primary model is overloaded or unavailable.
+   * Accepts a comma-separated list to try each in order; the primary model
+   * is re-tried at the start of each user turn.
    */
   fallbackModel?: string;
 
@@ -392,6 +472,42 @@ export interface ClaudeCodeSettings {
    * @default true
    */
   persistSession?: boolean;
+
+  /**
+   * API-side task budget in tokens. When set, the model is made aware of
+   * its remaining token budget so it can pace tool use and wrap up before
+   * the limit.
+   *
+   * @alpha Subject to change in upstream Agent SDK releases.
+   */
+  taskBudget?: { total: number };
+
+  /**
+   * Mirror session transcripts to a custom storage adapter (e.g. Postgres,
+   * S3, Redis) in addition to local JSONL files. Cannot be combined with
+   * `persistSession: false` — local writes are required for the mirror to
+   * function (the provider rejects that combination at validation time).
+   *
+   * @alpha Subject to change in upstream Agent SDK releases.
+   */
+  sessionStore?: SessionStore;
+
+  /**
+   * Flush strategy for `sessionStore` transcript mirroring:
+   * `'batched'` (default) or `'eager'`. Ignored when `sessionStore` is unset.
+   *
+   * @alpha Subject to change in upstream Agent SDK releases.
+   */
+  sessionStoreFlush?: SessionStoreFlush;
+
+  /**
+   * Timeout in milliseconds for each `sessionStore.load()` /
+   * `sessionStore.listSubkeys()` call during resume materialization.
+   *
+   * @default 60000
+   * @alpha Subject to change in upstream Agent SDK releases.
+   */
+  loadTimeoutMs?: number;
 
   /**
    * Custom function to spawn the Claude Code process.
@@ -453,6 +569,28 @@ export interface ClaudeCodeSettings {
    * ```
    */
   onStreamStart?: (injector: MessageInjector) => void;
+
+  /**
+   * Callback invoked when the agent emits a prompt suggestion (a predicted
+   * next user prompt). Requires `promptSuggestions: true`.
+   *
+   * The SDK emits at most one `prompt_suggestion` message per turn, and it
+   * arrives AFTER the `result` message — i.e. after the AI SDK response has
+   * already finished. That is why suggestions are delivered through this
+   * callback instead of `providerMetadata` (which is finalized with the
+   * finish event/result).
+   *
+   * @example
+   * ```typescript
+   * const model = claudeCode('sonnet', {
+   *   promptSuggestions: true,
+   *   onPromptSuggestion: (suggestion) => {
+   *     console.log('Suggested next prompt:', suggestion);
+   *   }
+   * });
+   * ```
+   */
+  onPromptSuggestion?: (suggestion: string) => void;
 }
 
 /**

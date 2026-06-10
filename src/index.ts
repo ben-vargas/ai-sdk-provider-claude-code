@@ -40,7 +40,14 @@ export type {
 export type { ClaudeCodeSettings, Logger, MessageInjector } from './types.js';
 
 // Convenience re-exports from the SDK for custom tools and hooks
-export { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+export {
+  createSdkMcpServer,
+  tool,
+  // Marker element for string[] systemPrompt cache splitting
+  SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+  // Reference SessionStore implementation (alpha)
+  InMemorySessionStore,
+} from '@anthropic-ai/claude-agent-sdk';
 export { createCustomMcpServer } from './mcp-helpers.js';
 export type { ToolAnnotations, MinimalCallToolResult } from './mcp-helpers.js';
 export type {
@@ -56,6 +63,23 @@ export type {
   SessionEndHookInput,
   TeammateIdleHookInput,
   TaskCompletedHookInput,
+  // Hook event inputs added in SDK 0.3.x
+  PostToolBatchHookInput,
+  PermissionDeniedHookInput,
+  PostCompactHookInput,
+  CwdChangedHookInput,
+  FileChangedHookInput,
+  MessageDisplayHookInput,
+  InstructionsLoadedHookInput,
+  UserPromptExpansionHookInput,
+  StopFailureHookInput,
+  TaskCreatedHookInput,
+  // Hook permission decision union (adds 'defer' in SDK 0.3.x)
+  HookPermissionDecision,
+  // Provenance of a user-role message (peer session, team lead, channel)
+  SDKMessageOrigin,
+  // Why the turn loop terminated (providerMetadata['claude-code'].terminalReason)
+  TerminalReason,
   CanUseTool,
   PermissionResult,
   PermissionUpdate,
@@ -67,6 +91,17 @@ export type {
   SpawnedProcess,
   SpawnOptions,
   AgentMcpServerSpec,
+  // Subagent definitions (ClaudeCodeSettings['agents'] values)
+  AgentDefinition,
+  // Effort levels for the `effort` setting ('low' | 'medium' | 'high' | 'xhigh' | 'max')
+  EffortLevel,
+  // Settings object shape for the `settings`/`managedSettings` options
+  Settings,
+  // Per-tool configuration for built-in tools (`toolConfig` option)
+  ToolConfig,
+  // Session transcript mirroring (alpha `sessionStore` options)
+  SessionStore,
+  SessionStoreFlush,
   // Query interface for mid-stream message injection via streamInput()
   Query,
   // Thinking configuration types

@@ -73,7 +73,7 @@ describe('claudeCodeSettingsSchema', () => {
   });
 
   it('should accept valid effort values', () => {
-    for (const effort of ['low', 'medium', 'high', 'max']) {
+    for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
       const result = claudeCodeSettingsSchema.safeParse({ effort });
       expect(result.success).toBe(true);
     }
@@ -114,6 +114,106 @@ describe('claudeCodeSettingsSchema', () => {
     }
   });
 
+  it('should accept systemPrompt as a string array (cache boundary form)', () => {
+    const settings = {
+      systemPrompt: ['Static instructions.', '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__', 'Dynamic.'],
+    };
+    expect(claudeCodeSettingsSchema.safeParse(settings).success).toBe(true);
+  });
+
+  it('should accept systemPrompt preset with excludeDynamicSections', () => {
+    const settings = {
+      systemPrompt: { type: 'preset', preset: 'claude_code', excludeDynamicSections: true },
+    };
+    expect(claudeCodeSettingsSchema.safeParse(settings).success).toBe(true);
+  });
+
+  it('should accept skills as an array or the literal all', () => {
+    expect(claudeCodeSettingsSchema.safeParse({ skills: ['pdf', 'docx'] }).success).toBe(true);
+    expect(claudeCodeSettingsSchema.safeParse({ skills: 'all' }).success).toBe(true);
+  });
+
+  it('should reject invalid skills values', () => {
+    expect(claudeCodeSettingsSchema.safeParse({ skills: 'some' }).success).toBe(false);
+    expect(claudeCodeSettingsSchema.safeParse({ skills: true }).success).toBe(false);
+  });
+
+  it('should accept settings as a path string or inline object', () => {
+    expect(claudeCodeSettingsSchema.safeParse({ settings: '/path/to/settings.json' }).success).toBe(
+      true
+    );
+    expect(
+      claudeCodeSettingsSchema.safeParse({
+        settings: { permissions: { allow: ['Bash(ls:*)'] } },
+      }).success
+    ).toBe(true);
+  });
+
+  it('should accept managedSettings as an object', () => {
+    const settings = {
+      managedSettings: { sandbox: { network: { allowManagedDomainsOnly: true } } },
+    };
+    expect(claudeCodeSettingsSchema.safeParse(settings).success).toBe(true);
+  });
+
+  it('should accept toolAliases as a record of strings', () => {
+    expect(
+      claudeCodeSettingsSchema.safeParse({ toolAliases: { Bash: 'mcp__workspace__bash' } }).success
+    ).toBe(true);
+    expect(claudeCodeSettingsSchema.safeParse({ toolAliases: { Bash: 1 } }).success).toBe(false);
+  });
+
+  it('should accept toolConfig with askUserQuestion previewFormat', () => {
+    expect(
+      claudeCodeSettingsSchema.safeParse({
+        toolConfig: { askUserQuestion: { previewFormat: 'html' } },
+      }).success
+    ).toBe(true);
+    expect(
+      claudeCodeSettingsSchema.safeParse({
+        toolConfig: { askUserQuestion: { previewFormat: 'plaintext' } },
+      }).success
+    ).toBe(false);
+  });
+
+  it('should accept planModeInstructions and title as strings', () => {
+    expect(
+      claudeCodeSettingsSchema.safeParse({ planModeInstructions: 'Research only.' }).success
+    ).toBe(true);
+    expect(claudeCodeSettingsSchema.safeParse({ title: 'My session' }).success).toBe(true);
+    expect(claudeCodeSettingsSchema.safeParse({ title: 42 }).success).toBe(false);
+  });
+
+  it('should accept the new boolean passthrough options', () => {
+    for (const key of ['forwardSubagentText', 'agentProgressSummaries', 'includeHookEvents']) {
+      expect(claudeCodeSettingsSchema.safeParse({ [key]: true }).success).toBe(true);
+      expect(claudeCodeSettingsSchema.safeParse({ [key]: 'yes' }).success).toBe(false);
+    }
+  });
+
+  it('should accept taskBudget with a positive total', () => {
+    expect(claudeCodeSettingsSchema.safeParse({ taskBudget: { total: 50000 } }).success).toBe(true);
+    expect(claudeCodeSettingsSchema.safeParse({ taskBudget: { total: -1 } }).success).toBe(false);
+    expect(
+      claudeCodeSettingsSchema.safeParse({ taskBudget: { total: 1, extra: true } }).success
+    ).toBe(false);
+  });
+
+  it('should accept sessionStore objects with append() and load()', () => {
+    const sessionStore = { append: async () => undefined, load: async () => null };
+    expect(claudeCodeSettingsSchema.safeParse({ sessionStore }).success).toBe(true);
+    expect(claudeCodeSettingsSchema.safeParse({ sessionStore: {} }).success).toBe(false);
+    expect(claudeCodeSettingsSchema.safeParse({ sessionStore: 'store' }).success).toBe(false);
+  });
+
+  it('should accept sessionStoreFlush and loadTimeoutMs', () => {
+    expect(claudeCodeSettingsSchema.safeParse({ sessionStoreFlush: 'batched' }).success).toBe(true);
+    expect(claudeCodeSettingsSchema.safeParse({ sessionStoreFlush: 'eager' }).success).toBe(true);
+    expect(claudeCodeSettingsSchema.safeParse({ sessionStoreFlush: 'never' }).success).toBe(false);
+    expect(claudeCodeSettingsSchema.safeParse({ loadTimeoutMs: 30000 }).success).toBe(true);
+    expect(claudeCodeSettingsSchema.safeParse({ loadTimeoutMs: -1 }).success).toBe(false);
+  });
+
   it('should accept promptSuggestions as a boolean', () => {
     expect(claudeCodeSettingsSchema.safeParse({ promptSuggestions: true }).success).toBe(true);
     expect(claudeCodeSettingsSchema.safeParse({ promptSuggestions: false }).success).toBe(true);
@@ -121,6 +221,16 @@ describe('claudeCodeSettingsSchema', () => {
 
   it('should reject promptSuggestions when not a boolean', () => {
     expect(claudeCodeSettingsSchema.safeParse({ promptSuggestions: 'yes' }).success).toBe(false);
+  });
+
+  it('should accept onPromptSuggestion as a function', () => {
+    expect(claudeCodeSettingsSchema.safeParse({ onPromptSuggestion: () => {} }).success).toBe(true);
+  });
+
+  it('should reject onPromptSuggestion when not a function', () => {
+    expect(claudeCodeSettingsSchema.safeParse({ onPromptSuggestion: 'callback' }).success).toBe(
+      false
+    );
   });
 
   it('should accept env as a record of strings', () => {
@@ -460,6 +570,70 @@ describe('validateSettings', () => {
     const invalidResult = validateSettings({ persistSession: 'true' as any });
     expect(invalidResult.valid).toBe(false);
     expect(invalidResult.errors[0]).toContain('persistSession');
+  });
+
+  it('should reject sessionStore combined with persistSession: false', () => {
+    const sessionStore = { append: async () => undefined, load: async () => null };
+
+    const conflict = validateSettings({ sessionStore, persistSession: false });
+    expect(conflict.valid).toBe(false);
+    expect(conflict.errors[0]).toContain('sessionStore cannot be combined with persistSession');
+
+    // sessionStore alone (or with persistSession: true) is fine
+    expect(validateSettings({ sessionStore }).valid).toBe(true);
+    expect(validateSettings({ sessionStore, persistSession: true }).valid).toBe(true);
+  });
+
+  it('should accept agents with full model ID strings (SDK 0.3.x AgentDefinition)', () => {
+    const result = validateSettings({
+      agents: {
+        researcher: {
+          description: 'Research assistant',
+          prompt: 'You research things.',
+          model: 'claude-sonnet-4-6',
+          effort: 'high',
+          background: true,
+          initialPrompt: 'Start by reading the README.',
+        },
+      },
+    });
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("should warn (but allow) agent model values that look like typo'd aliases", () => {
+    const result = validateSettings({
+      agents: {
+        researcher: {
+          description: 'Research assistant',
+          prompt: 'You research things.',
+          model: 'sonet',
+        },
+      },
+    });
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(
+      result.warnings.some(
+        (w) => w.includes("Unknown model alias 'sonet'") && w.includes("agent 'researcher'")
+      )
+    ).toBe(true);
+  });
+
+  it('should not warn for known agent model aliases or full model IDs', () => {
+    for (const model of ['sonnet', 'opus', 'haiku', 'inherit', 'claude-sonnet-4-5']) {
+      const result = validateSettings({
+        agents: {
+          worker: {
+            description: 'Worker agent',
+            prompt: 'You work.',
+            model,
+          },
+        },
+      });
+      expect(result.valid).toBe(true);
+      expect(result.warnings.some((w) => w.includes('Unknown model alias'))).toBe(false);
+    }
   });
 
   it('should validate spawnClaudeCodeProcess option', () => {

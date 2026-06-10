@@ -289,15 +289,30 @@ This provider exposes Agent SDK options directly. Key options include:
 | `sessionId`                       | Use a specific session ID for deterministic tracking and correlation (v3.4.0+)                                   |
 | `debug`                           | Enable programmatic debug logging from the SDK (v3.4.0+)                                                         |
 | `debugFile`                       | Path to a file for SDK debug log output (v3.4.0+)                                                                |
-| `effort`                          | Effort level: `'low'`, `'medium'`, `'high'`, or `'max'`                                                          |
+| `effort`                          | Effort level: `'low'`, `'medium'`, `'high'`, `'xhigh'`, or `'max'`                                               |
 | `thinking`                        | Thinking config: `{ type: 'adaptive' }`, `{ type: 'enabled', budgetTokens?: number }`, or `{ type: 'disabled' }` |
 | `promptSuggestions`               | Enable prompt suggestions (`boolean`)                                                                            |
+| `skills`                          | Enable skills for the session: `'all'` or an array of skill names (v3.6.0+)                                      |
+| `settings`                        | Inline `Settings` object or path to a settings JSON file (v3.6.0+)                                               |
+| `managedSettings`                 | Restrictive policy-tier settings enforced on the subprocess (v3.6.0+)                                            |
+| `toolAliases`                     | Map built-in tool names to replacement tools, e.g. `{ Bash: 'mcp__workspace__bash' }` (v3.6.0+)                  |
+| `toolConfig`                      | Per-tool configuration for built-in tools, e.g. `{ askUserQuestion: { previewFormat: 'html' } }` (v3.6.0+)       |
+| `planModeInstructions`            | Custom workflow instructions for plan mode (v3.6.0+)                                                             |
+| `title`                           | Custom title for a new session (v3.6.0+)                                                                         |
+| `forwardSubagentText`             | Forward subagent text/thinking blocks for nested transcripts (v3.6.0+)                                           |
+| `agentProgressSummaries`          | Periodic AI-generated progress summaries for running subagents (v3.6.0+)                                         |
+| `includeHookEvents`               | Include hook lifecycle events in the output stream (v3.6.0+)                                                     |
+| `fallbackModel`                   | Fallback model(s) if the primary is overloaded — accepts a comma-separated list to try in order                  |
 
-**Agent definitions** (`agents`) now support additional fields (v3.2.0+):
+**System prompt** (`systemPrompt`) accepts a string, a string array, or the Claude Code preset object (v3.6.0+ for the array form). In the array form, include the re-exported `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` marker as a standalone element to split the static (cross-session cacheable) prefix from the dynamic suffix. The preset object additionally accepts `excludeDynamicSections: true` to strip per-user dynamic sections (working directory, git status) so the prompt caches across users.
+
+**Agent definitions** (`agents`) use the Agent SDK's `AgentDefinition` type directly (v3.6.0+), which adds `effort`, `permissionMode`, `background`, `memory`, `initialPrompt`, `skills`, `maxTurns`, and full model ID strings on top of the previously supported fields:
 
 - `disallowedTools` - Tools to explicitly disallow for the agent
 - `mcpServers` - MCP servers available to the agent
 - `criticalSystemReminder_EXPERIMENTAL` - Experimental critical reminder
+
+**Alpha options** (v3.6.0+, marked `@alpha` upstream and subject to change): `taskBudget` (`{ total: number }` API-side token budget), `sessionStore` (mirror session transcripts to a custom storage adapter; the provider rejects combining it with `persistSession: false`), `sessionStoreFlush` (`'batched'` or `'eager'`), and `loadTimeoutMs` (resume-load timeout). The SDK's `InMemorySessionStore` reference implementation and the `SessionStore`/`SessionStoreFlush` types are re-exported.
 
 See [`ClaudeCodeSettings`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/blob/main/src/types.ts) for the full list of supported options (e.g., `allowedTools`, `disallowedTools`, `hooks`, `canUseTool`, `env`, `settingSources`).
 
@@ -423,12 +438,26 @@ See [examples/message-injection.ts](examples/message-injection.ts) for complete 
 
 ## Skills Support
 
-Claude Code supports **Skills** - custom tools and capabilities defined in your user or project settings. To enable skills, configure both `settingSources` and `allowedTools`:
+Claude Code supports **Skills** - custom tools and capabilities defined in your user or project settings. The simplest way to enable them (v3.6.0+) is the `skills` option, which removes the need to add `'Skill'` to `allowedTools` yourself:
 
 ```typescript
 import { claudeCode } from 'ai-sdk-provider-claude-code';
 import { streamText } from 'ai';
 
+const result = await streamText({
+  model: claudeCode('sonnet', {
+    settingSources: ['user', 'project'], // still required for filesystem skill discovery
+    skills: 'all', // or ['pdf', 'docx'] to enable only specific skills
+  }),
+  prompt: 'Use my /custom-skill to help with this task',
+});
+```
+
+Note that `skills` is a context filter, not a sandbox: unlisted skills are hidden from the model but their files remain readable on disk.
+
+Alternatively, configure both `settingSources` and `allowedTools` explicitly:
+
+```typescript
 const result = await streamText({
   model: claudeCode('sonnet', {
     settingSources: ['user', 'project'],
@@ -441,7 +470,7 @@ const result = await streamText({
 **Requirements:**
 
 - `settingSources` - Where to load skills from (`'user'`, `'project'`, `'local'`)
-- `allowedTools` must include `'Skill'` to invoke skills
+- `allowedTools` must include `'Skill'` to invoke skills (not needed when using the `skills` option)
 
 **Where to define Skills:**
 
@@ -489,6 +518,64 @@ providerMetadata['claude-code'].parentToolCallId: string | null;
 - Parallel Tasks: Child returns null if parent is ambiguous
 
 This enables UIs to build hierarchical views of nested agent execution.
+
+## Provider Metadata
+
+Each response exposes Claude Code metadata under `providerMetadata['claude-code']` (on the `doGenerate` result, and on the `finish` stream event for `doStream`):
+
+| Field                     | Type     | Description                                                                                                                                                |
+| ------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sessionId`               | `string` | Session ID for multi-turn conversations                                                                                                                    |
+| `costUsd`                 | `number` | Cost of the request in USD                                                                                                                                 |
+| `durationMs`              | `number` | Total request duration in milliseconds                                                                                                                     |
+| `modelUsage`              | `object` | Per-model token usage breakdown                                                                                                                            |
+| `ttftMs`                  | `number` | Time to first token in milliseconds (when reported by the SDK)                                                                                             |
+| `ttftStreamMs`            | `number` | Time to first streamed token in milliseconds (when reported)                                                                                               |
+| `timeToRequestMs`         | `number` | Time until the API request was issued in milliseconds (when reported)                                                                                      |
+| `terminalReason`          | `string` | Why the turn loop terminated (SDK `TerminalReason`, e.g. `'completed'`, `'max_turns'`; re-exported type)                                                   |
+| `apiRetries`              | `number` | Number of API retry attempts observed during the request (only present when > 0)                                                                           |
+| `permissionDenials`       | `array`  | Tools auto-denied without a prompt: `{ toolName, reason? }` (only present when non-empty); each is also warn-logged                                        |
+| `estimatedThinkingTokens` | `number` | Accumulated live thinking-token estimate from the redacted-thinking phase (only present when > 0); approximate, not the authoritative billed output tokens |
+| `truncated`               | `true`   | Present when the response was recovered from a truncated SDK stream                                                                                        |
+| `thinkingTraces`          | `array`  | Thinking blocks extracted in non-streaming mode (`doGenerate` only)                                                                                        |
+
+```ts
+const { providerMetadata } = await generateText({ model, prompt: 'Hello' });
+const meta = providerMetadata?.['claude-code'];
+console.log(meta?.costUsd, meta?.ttftMs, meta?.terminalReason);
+```
+
+### Prompt suggestions (`onPromptSuggestion`)
+
+With `promptSuggestions: true`, the agent predicts the next user prompt after each turn. The SDK delivers it AFTER the `result` message — i.e. after the AI SDK response has already finished — so it cannot be part of `providerMetadata`. Register a callback instead. (In streaming mode the provider briefly drains post-result messages to deliver the suggestion; the drain stops after the first suggestion and is capped at 10 seconds so a lingering CLI process is never held open indefinitely.)
+
+```ts
+const model = claudeCode('sonnet', {
+  promptSuggestions: true,
+  onPromptSuggestion: (suggestion) => {
+    console.log('Suggested next prompt:', suggestion);
+  },
+});
+```
+
+### Context usage (`query.getContextUsage()`)
+
+The provider does not auto-fetch context usage (it would add a round-trip per request). Use the existing `onQueryCreated` callback to capture the `Query` object and ask for it after the response finishes:
+
+```ts
+import type { Query } from 'ai-sdk-provider-claude-code';
+
+let activeQuery: Query | undefined;
+const model = claudeCode('sonnet', {
+  onQueryCreated: (query) => {
+    activeQuery = query;
+  },
+});
+
+const result = await generateText({ model, prompt: 'Hello' });
+const contextUsage = await activeQuery?.getContextUsage();
+console.log(contextUsage); // tokens used / remaining in the session context window
+```
 
 ## Contributing
 

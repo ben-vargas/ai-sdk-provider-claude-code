@@ -17,7 +17,11 @@ import { validateModelId, validatePrompt, validateSessionId } from './validation
 import { getLogger, createVerboseLogger } from './logger.js';
 
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKUserMessage, SDKPartialAssistantMessage } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  SDKMessage,
+  SDKUserMessage,
+  SDKPartialAssistantMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 
 /**
  * Provider version reported to the Agent SDK via CLAUDE_AGENT_SDK_CLIENT_APP.
@@ -206,6 +210,52 @@ const STREAMING_FEATURE_WARNING =
   "Claude Agent SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
 
 const SDK_OPTIONS_BLOCKLIST = new Set(['model', 'abortController', 'prompt', 'outputFormat']);
+
+/**
+ * SDK 0.3.x system-message subtypes that are intentionally informational.
+ * The provider debug-logs and ignores them: they carry host/UI telemetry
+ * with no AI SDK stream-part equivalent.
+ *
+ * - 'notification'           REPL-style text notifications (key/priority/timeout)
+ * - 'status'                 spinner status ('requesting'/'compacting' and compact_result/compact_error)
+ * - 'task_updated'           background-task state patches
+ * - 'session_state_changed'  idle/running/requires_action transitions
+ * - 'commands_changed'       mid-session slash-command list refresh
+ * - 'memory_recall'          surfaced memory files/synthesis
+ * - 'plugin_install'         headless plugin installation progress
+ * - 'mirror_error'           SessionStore transcript-mirror append failures
+ */
+const INFORMATIONAL_SYSTEM_SUBTYPES = new Set<string>([
+  'notification',
+  'status',
+  'task_updated',
+  'session_state_changed',
+  'commands_changed',
+  'memory_recall',
+  'plugin_install',
+  'mirror_error',
+]);
+
+/** Narrowed union of SDK system messages (init, api_retry, permission_denied, ...). */
+type SDKSystemMessageVariant = Extract<SDKMessage, { type: 'system' }>;
+
+/** A tool denial recorded from a `permission_denied` system message. */
+type PermissionDenialRecord = {
+  toolName: string;
+  reason?: string;
+};
+
+/** Mutable per-request counters surfaced in providerMetadata at finish. */
+type RequestMetadataTracking = {
+  apiRetries: number;
+  permissionDenials: PermissionDenialRecord[];
+  /**
+   * Accumulated `thinking_tokens` estimate. The SDK's `estimated_tokens` is a
+   * per-thinking-block running total (not authoritative billed output tokens),
+   * so the per-frame deltas are summed across blocks instead.
+   */
+  estimatedThinkingTokens: number;
+};
 
 type ClaudeToolUse = {
   id: string;
@@ -691,6 +741,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
   private static readonly MAX_TOOL_INPUT_WARN = 102_400; // 100KB warning threshold
   private static readonly MAX_DELTA_CALC_SIZE = 10_000; // 10KB delta computation threshold
 
+  // Upper bound for draining post-result messages (prompt_suggestion) so a
+  // lingering CLI subprocess cannot be held open indefinitely after finish.
+  private static readonly PROMPT_SUGGESTION_DRAIN_TIMEOUT_MS = 10_000;
+
   readonly modelId: ClaudeCodeModelId;
   readonly settings: ClaudeCodeSettings;
 
@@ -1057,6 +1111,49 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     if (this.settings.agents !== undefined) {
       opts.agents = this.settings.agents;
     }
+    if (this.settings.skills !== undefined) {
+      opts.skills = this.settings.skills;
+    }
+    if (this.settings.settings !== undefined) {
+      opts.settings = this.settings.settings;
+    }
+    if (this.settings.managedSettings !== undefined) {
+      opts.managedSettings = this.settings.managedSettings;
+    }
+    if (this.settings.toolAliases !== undefined) {
+      opts.toolAliases = this.settings.toolAliases;
+    }
+    if (this.settings.toolConfig !== undefined) {
+      opts.toolConfig = this.settings.toolConfig;
+    }
+    if (this.settings.planModeInstructions !== undefined) {
+      opts.planModeInstructions = this.settings.planModeInstructions;
+    }
+    if (this.settings.title !== undefined) {
+      opts.title = this.settings.title;
+    }
+    if (this.settings.forwardSubagentText !== undefined) {
+      opts.forwardSubagentText = this.settings.forwardSubagentText;
+    }
+    if (this.settings.agentProgressSummaries !== undefined) {
+      opts.agentProgressSummaries = this.settings.agentProgressSummaries;
+    }
+    if (this.settings.includeHookEvents !== undefined) {
+      opts.includeHookEvents = this.settings.includeHookEvents;
+    }
+    // Alpha Agent SDK options (subject to upstream change)
+    if (this.settings.taskBudget !== undefined) {
+      opts.taskBudget = this.settings.taskBudget;
+    }
+    if (this.settings.sessionStore !== undefined) {
+      opts.sessionStore = this.settings.sessionStore;
+    }
+    if (this.settings.sessionStoreFlush !== undefined) {
+      opts.sessionStoreFlush = this.settings.sessionStoreFlush;
+    }
+    if (this.settings.loadTimeoutMs !== undefined) {
+      opts.loadTimeoutMs = this.settings.loadTimeoutMs;
+    }
     if (this.settings.includePartialMessages !== undefined) {
       opts.includePartialMessages = this.settings.includePartialMessages;
     }
@@ -1332,6 +1429,69 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     this.logger.warn(`[claude-code] MCP servers not connected: ${details}`);
   }
 
+  /**
+   * Handles SDK 0.3.x system messages other than 'init', shared by doGenerate
+   * and doStream:
+   * - 'api_retry' is counted into providerMetadata (`apiRetries`) and debug-logged.
+   * - 'permission_denied' is warn-logged and recorded into providerMetadata
+   *   (`permissionDenials`); without this a denial is invisible until the
+   *   model talks about it.
+   * - 'model_refusal_fallback' is debug-logged (the superseding assistant
+   *   message is handled by the text-dedup guard in the message loops).
+   * - 'thinking_tokens' deltas are accumulated into providerMetadata
+   *   (`estimatedThinkingTokens`); the estimate is explicitly not the
+   *   authoritative billed output tokens, so it is surfaced as metadata
+   *   instead of feeding `usage.outputTokens.reasoning`.
+   * - The subtypes in {@link INFORMATIONAL_SYSTEM_SUBTYPES} are intentionally
+   *   informational and only debug-logged.
+   */
+  private handleSystemMessage(
+    message: SDKSystemMessageVariant,
+    tracking: RequestMetadataTracking
+  ): void {
+    switch (message.subtype) {
+      case 'api_retry':
+        tracking.apiRetries += 1;
+        this.logger.debug(
+          `[claude-code] API retry ${message.attempt}/${message.max_retries} in ${message.retry_delay_ms}ms - Status: ${message.error_status ?? 'unknown'}, Error: ${message.error}`
+        );
+        break;
+      case 'permission_denied': {
+        const reason = message.decision_reason ?? message.message;
+        tracking.permissionDenials.push({
+          toolName: message.tool_name,
+          ...(reason !== undefined && { reason }),
+        });
+        this.logger.warn(
+          `[claude-code] Permission denied - Tool: ${message.tool_name}${reason ? `, Reason: ${reason}` : ''}`
+        );
+        break;
+      }
+      case 'model_refusal_fallback':
+        this.logger.debug(
+          `[claude-code] Model refusal fallback - ${message.original_model} -> ${message.fallback_model} (direction: ${message.direction})`
+        );
+        break;
+      case 'thinking_tokens':
+        // `estimated_tokens` is a running total for the current thinking block
+        // only, so accumulate the per-frame delta to cover multi-block requests.
+        tracking.estimatedThinkingTokens += message.estimated_tokens_delta;
+        this.logger.debug(
+          `[claude-code] Thinking tokens estimate - block total: ${message.estimated_tokens}, delta: ${message.estimated_tokens_delta}, accumulated: ${tracking.estimatedThinkingTokens}`
+        );
+        break;
+      default:
+        if (INFORMATIONAL_SYSTEM_SUBTYPES.has(message.subtype)) {
+          this.logger.debug(
+            `[claude-code] Ignoring informational system message: ${message.subtype}`
+          );
+        } else {
+          this.logger.debug(`[claude-code] Unhandled system message subtype: ${message.subtype}`);
+        }
+        break;
+    }
+  }
+
   async doGenerate(
     options: Parameters<LanguageModelV3['doGenerate']>[0]
   ): Promise<Awaited<ReturnType<LanguageModelV3['doGenerate']>>> {
@@ -1376,7 +1536,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     );
 
     let text = '';
-    const thinkingTraces: string[] = [];
+    // Per-message text and thinking segments so refusal-fallback `supersedes`
+    // retractions can drop already-collected content instead of duplicating it.
+    const textSegments: Array<{ uuid?: string; text: string }> = [];
+    const thinkingSegments: Array<{ uuid?: string; text: string }> = [];
     let structuredOutput: unknown | undefined;
     let usage: LanguageModelV3Usage = createEmptyUsage();
     let finishReason: LanguageModelV3FinishReason = { unified: 'stop', raw: undefined };
@@ -1384,6 +1547,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     let costUsd: number | undefined;
     let durationMs: number | undefined;
     let modelUsage: Record<string, unknown> | undefined;
+    let ttftMs: number | undefined;
+    let ttftStreamMs: number | undefined;
+    let timeToRequestMs: number | undefined;
+    let terminalReason: string | undefined;
+    // SDK 0.3.x informational counters surfaced in providerMetadata
+    const metadataTracking: RequestMetadataTracking = {
+      apiRetries: 0,
+      permissionDenials: [],
+      estimatedThinkingTokens: 0,
+    };
     const warnings: SharedV3Warning[] = this.generateAllWarnings(options, messagesPrompt);
 
     // Add warnings from message conversion
@@ -1455,17 +1628,54 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           if (typeof message.error === 'string') {
             lastAssistantErrorKind = message.error;
           }
+          // Refusal-fallback replacement (SDK 0.3.x): drop retracted segments
+          // (text AND thinking) so superseded content is not duplicated in the
+          // final output.
+          if (message.supersedes && message.supersedes.length > 0) {
+            this.logger.debug(
+              `[claude-code] Assistant message supersedes ${message.supersedes.length} prior message(s)`
+            );
+            const retracted = new Set<string>(message.supersedes);
+            for (const segments of [textSegments, thinkingSegments]) {
+              for (let i = segments.length - 1; i >= 0; i--) {
+                const segmentUuid = segments[i]?.uuid;
+                if (segmentUuid !== undefined && retracted.has(segmentUuid)) {
+                  segments.splice(i, 1);
+                }
+              }
+            }
+          }
           const { text: messageText, thinking: messageThinking } = this.extractTextAndThinking(
             message.message.content
           );
-          text += messageText;
-          thinkingTraces.push(...messageThinking);
+          textSegments.push({
+            ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
+            text: messageText,
+          });
+          text = textSegments.map((segment) => segment.text).join('');
+          for (const trace of messageThinking) {
+            thinkingSegments.push({
+              ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
+              text: trace,
+            });
+          }
         } else if (message.type === 'result') {
           done();
           this.setSessionId(message.session_id);
           costUsd = message.total_cost_usd;
           durationMs = message.duration_ms;
           modelUsage = message.modelUsage;
+          // SDK 0.3.x timing metadata (only present on SDKResultSuccess)
+          if ('ttft_ms' in message) {
+            ttftMs = message.ttft_ms;
+          }
+          if ('ttft_stream_ms' in message) {
+            ttftStreamMs = message.ttft_stream_ms;
+          }
+          if ('time_to_request_ms' in message) {
+            timeToRequestMs = message.time_to_request_ms;
+          }
+          terminalReason = message.terminal_reason;
 
           // Handle is_error flag in result message (e.g., auth failures).
           // SDKResultSuccess carries the error text in `result`; SDKResultError
@@ -1522,6 +1732,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           this.logMcpConnectionIssues(message.mcp_servers);
           this.setSessionId(message.session_id);
           this.logger.info(`[claude-code] Session initialized: ${message.session_id}`);
+        } else if (message.type === 'system') {
+          this.handleSystemMessage(message, metadataTracking);
+        } else if (message.type === 'prompt_suggestion') {
+          // Arrives after the result message when promptSuggestions is enabled.
+          this.logger.debug('[claude-code] Received prompt suggestion');
+          this.settings.onPromptSuggestion?.(message.suggestion);
         }
       }
     } catch (error: unknown) {
@@ -1559,6 +1775,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // Use structured output from SDK if available (native JSON schema support)
     // Otherwise fall back to accumulated text
     const finalText = structuredOutput !== undefined ? JSON.stringify(structuredOutput) : text;
+    const thinkingTraces = thinkingSegments.map((segment) => segment.text);
 
     return {
       content: [
@@ -1585,6 +1802,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           ...(costUsd !== undefined && { costUsd }),
           ...(durationMs !== undefined && { durationMs }),
           ...(modelUsage !== undefined && { modelUsage: modelUsage as unknown as JSONValue }),
+          ...(ttftMs !== undefined && { ttftMs }),
+          ...(ttftStreamMs !== undefined && { ttftStreamMs }),
+          ...(timeToRequestMs !== undefined && { timeToRequestMs }),
+          ...(terminalReason !== undefined && { terminalReason }),
+          ...(metadataTracking.apiRetries > 0 && { apiRetries: metadataTracking.apiRetries }),
+          ...(metadataTracking.permissionDenials.length > 0 && {
+            permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
+          }),
+          ...(metadataTracking.estimatedThinkingTokens > 0 && {
+            estimatedThinkingTokens: metadataTracking.estimatedThinkingTokens,
+          }),
           ...(wasTruncated && { truncated: true }),
           ...(thinkingTraces.length > 0 && { thinkingTraces }),
         },
@@ -1735,12 +1963,21 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
         let usage: LanguageModelV3Usage = createEmptyUsage();
         let accumulatedText = '';
+        // Per-message text segments mirroring `accumulatedText` so refusal-fallback
+        // `supersedes` retractions keep non-retracted text (matches doGenerate).
+        const textSegments: Array<{ uuid?: string; text: string }> = [];
         let textPartId: string | undefined;
         let streamedTextLength = 0; // Track text already emitted via stream_events to avoid duplication
         let hasReceivedStreamEvents = false; // Track if we've received any stream_events
         let hasStreamedJson = false; // Track if JSON has been streamed via input_json_delta
         // SDK 0.3.x structured error kind from assistant messages (e.g. 'overloaded')
         let lastAssistantErrorKind: string | undefined;
+        // SDK 0.3.x informational counters surfaced in providerMetadata at finish
+        const metadataTracking: RequestMetadataTracking = {
+          apiRetries: 0,
+          permissionDenials: [],
+          estimatedThinkingTokens: 0,
+        };
 
         // Content block streaming: Map block indices to tool IDs and accumulated JSON
         const toolBlocksByIndex = new Map<number, string>();
@@ -2152,6 +2389,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 lastAssistantErrorKind = message.error;
               }
 
+              // Refusal-fallback replacement (SDK 0.3.x): this message replaces
+              // previously-delivered messages whose text was already emitted and
+              // cannot be retracted from the stream.
+              const supersedesPriorMessages =
+                Array.isArray(message.supersedes) && message.supersedes.length > 0;
+              if (supersedesPriorMessages) {
+                this.logger.debug(
+                  `[claude-code] Assistant message supersedes ${message.supersedes?.length} prior message(s)`
+                );
+              }
+
               if (!message.message?.content) {
                 this.logger.warn(
                   `[claude-code] Unexpected assistant message structure: missing content field. Message type: ${message.type}. This may indicate an SDK protocol violation.`
@@ -2282,13 +2530,77 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 // When we've received stream_events, assistant messages contain cumulative text
                 // that we've already emitted via stream_event deltas - skip duplicates
                 // When no stream_events received, assistant messages contain incremental text
-                if (hasReceivedStreamEvents) {
+                if (supersedesPriorMessages) {
+                  // Refusal-fallback replacement: retract only the superseded
+                  // segments so kept text from earlier assistant messages
+                  // survives in the accumulators (matches doGenerate).
+                  const retracted = new Set<string>(message.supersedes ?? []);
+                  for (let i = textSegments.length - 1; i >= 0; i--) {
+                    const segmentUuid = textSegments[i]?.uuid;
+                    if (segmentUuid !== undefined && retracted.has(segmentUuid)) {
+                      textSegments.splice(i, 1);
+                    }
+                  }
+                  textSegments.push({
+                    ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
+                    text,
+                  });
+                  accumulatedText = textSegments.map((segment) => segment.text).join('');
+
+                  if (hasReceivedStreamEvents) {
+                    // The replacement text already arrived via stream_event deltas;
+                    // the retracted text was emitted and cannot be un-streamed, so
+                    // re-emitting the replacement here would duplicate output.
+                    streamedTextLength = Math.max(streamedTextLength, text.length);
+                    this.logger.debug(
+                      '[claude-code] Skipping text emission for superseding assistant message (replacement already streamed)'
+                    );
+                  } else if (options.responseFormat?.type !== 'json') {
+                    // Without stream_events the canonical replacement was never
+                    // emitted. The retracted text cannot be un-streamed, so close
+                    // the open text part and deliver the replacement as a NEW
+                    // text part instead of dropping the model's actual answer.
+                    if (textPartId) {
+                      const closedTextId = textPartId;
+                      controller.enqueue({
+                        type: 'text-end',
+                        id: closedTextId,
+                      });
+                      textPartId = undefined;
+                      // Prevent a later content_block_stop from closing the same text part twice.
+                      for (const [idx, blockTextId] of textBlocksByIndex) {
+                        if (blockTextId === closedTextId) {
+                          textBlocksByIndex.delete(idx);
+                          break;
+                        }
+                      }
+                    }
+                    textPartId = generateId();
+                    controller.enqueue({
+                      type: 'text-start',
+                      id: textPartId,
+                    });
+                    controller.enqueue({
+                      type: 'text-delta',
+                      id: textPartId,
+                      delta: text,
+                    });
+                    this.logger.debug(
+                      '[claude-code] Emitted superseding assistant message as a new text part (canonical replacement)'
+                    );
+                  }
+                } else if (hasReceivedStreamEvents) {
                   // Calculate delta: only emit text that wasn't already streamed via stream_events
                   const newTextStart = streamedTextLength;
                   const deltaText = text.length > newTextStart ? text.slice(newTextStart) : '';
 
                   // Always accumulate for final result tracking
                   accumulatedText = text; // Replace with full text (assistant msg contains full content)
+                  textSegments.length = 0;
+                  textSegments.push({
+                    ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
+                    text,
+                  });
 
                   // In JSON mode, we accumulate the text and extract JSON at the end
                   // Otherwise, stream any new text
@@ -2314,6 +2626,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 } else {
                   // No stream_events - assistant messages contain incremental text chunks
                   accumulatedText += text;
+                  textSegments.push({
+                    ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
+                    text,
+                  });
 
                   // In JSON mode, we accumulate the text and extract JSON at the end
                   // Otherwise, stream the text as it comes
@@ -2361,6 +2677,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   }
                 }
                 accumulatedText = '';
+                textSegments.length = 0;
                 streamedTextLength = 0;
                 this.logger.debug('[claude-code] Closed text part due to user message');
               }
@@ -2672,6 +2989,29 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     ...(message.modelUsage !== undefined && {
                       modelUsage: message.modelUsage as unknown as JSONValue,
                     }),
+                    // SDK 0.3.x timing metadata (ttft_* only present on SDKResultSuccess)
+                    ...('ttft_ms' in message &&
+                      message.ttft_ms !== undefined && { ttftMs: message.ttft_ms }),
+                    ...('ttft_stream_ms' in message &&
+                      message.ttft_stream_ms !== undefined && {
+                        ttftStreamMs: message.ttft_stream_ms,
+                      }),
+                    ...('time_to_request_ms' in message &&
+                      message.time_to_request_ms !== undefined && {
+                        timeToRequestMs: message.time_to_request_ms,
+                      }),
+                    ...(message.terminal_reason !== undefined && {
+                      terminalReason: message.terminal_reason,
+                    }),
+                    ...(metadataTracking.apiRetries > 0 && {
+                      apiRetries: metadataTracking.apiRetries,
+                    }),
+                    ...(metadataTracking.permissionDenials.length > 0 && {
+                      permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
+                    }),
+                    ...(metadataTracking.estimatedThinkingTokens > 0 && {
+                      estimatedThinkingTokens: metadataTracking.estimatedThinkingTokens,
+                    }),
                     // JSON validation warnings are collected during streaming and included
                     // in providerMetadata since the AI SDK's finish event doesn't support
                     // a top-level warnings field (unlike stream-start which was already emitted)
@@ -2682,6 +3022,63 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 },
               });
               controller.close();
+
+              // The prompt_suggestion message (promptSuggestions: true) arrives
+              // AFTER the result message, so the AI SDK stream has already
+              // finished above. Drain the remaining SDK messages to deliver it
+              // via the callback; only done when a callback is registered so
+              // everyone else keeps the immediate return-on-result behavior.
+              // The drain is bounded: the SDK emits at most one prompt_suggestion
+              // per turn, so stop once it is delivered, and a timeout closes the
+              // iterator (tearing down the subprocess) if the CLI lingers after
+              // the result without emitting one.
+              if (this.settings.onPromptSuggestion) {
+                const iterator = response[Symbol.asyncIterator]();
+                let drainTimer: ReturnType<typeof setTimeout> | undefined;
+                const drainTimeout = new Promise<'timeout'>((resolve) => {
+                  drainTimer = setTimeout(
+                    () => resolve('timeout'),
+                    ClaudeCodeLanguageModel.PROMPT_SUGGESTION_DRAIN_TIMEOUT_MS
+                  );
+                  (drainTimer as { unref?: () => void }).unref?.();
+                });
+                try {
+                  while (true) {
+                    const winner = await Promise.race([iterator.next(), drainTimeout]);
+                    if (winner === 'timeout') {
+                      this.logger.debug(
+                        '[claude-code] Post-result drain timed out; closing SDK iterator'
+                      );
+                      // Fire-and-forget: return() may not settle while the
+                      // subprocess is wedged, and the stream already finished.
+                      void iterator.return?.().catch(() => {});
+                      break;
+                    }
+                    if (winner.done) {
+                      break;
+                    }
+                    const trailingMessage = winner.value;
+                    this.logger.debug(
+                      `[claude-code] Post-result message type: ${trailingMessage.type}`
+                    );
+                    if (trailingMessage.type === 'prompt_suggestion') {
+                      this.settings.onPromptSuggestion(trailingMessage.suggestion);
+                      // At most one prompt_suggestion per turn (SDK contract).
+                      void iterator.return?.().catch(() => {});
+                      break;
+                    }
+                  }
+                } catch (drainError: unknown) {
+                  // Never fail the (already finished) stream over post-result drain issues.
+                  this.logger.debug(
+                    `[claude-code] Error draining post-result messages: ${drainError instanceof Error ? drainError.message : String(drainError)}`
+                  );
+                } finally {
+                  if (drainTimer !== undefined) {
+                    clearTimeout(drainTimer);
+                  }
+                }
+              }
               return;
             } else if (message.type === 'system' && message.subtype === 'init') {
               this.logMcpConnectionIssues(message.mcp_servers);
@@ -2698,6 +3095,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 timestamp: new Date(),
                 modelId: this.modelId,
               });
+            } else if (message.type === 'system') {
+              this.handleSystemMessage(message, metadataTracking);
+            } else if (message.type === 'prompt_suggestion') {
+              // Defensive: normally arrives after the result message (handled by
+              // the post-finish drain above), but consume it here if it arrives early.
+              this.logger.debug('[claude-code] Received prompt suggestion');
+              this.settings.onPromptSuggestion?.(message.suggestion);
             }
           }
 
@@ -2755,6 +3159,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 'claude-code': {
                   ...(this.sessionId !== undefined && { sessionId: this.sessionId }),
                   truncated: true,
+                  ...(metadataTracking.apiRetries > 0 && {
+                    apiRetries: metadataTracking.apiRetries,
+                  }),
+                  ...(metadataTracking.permissionDenials.length > 0 && {
+                    permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
+                  }),
+                  ...(metadataTracking.estimatedThinkingTokens > 0 && {
+                    estimatedThinkingTokens: metadataTracking.estimatedThinkingTokens,
+                  }),
                   ...(streamWarnings.length > 0 && {
                     warnings: warningsJson as unknown as JSONValue,
                   }),
