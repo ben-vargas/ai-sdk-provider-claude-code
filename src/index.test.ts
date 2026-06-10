@@ -39,6 +39,10 @@ describe('index exports', () => {
     expect(typeof exports.InMemorySessionStore).toBe('function');
 
     // Session lifecycle helpers (SDK passthroughs)
+    expect(exports.listSessions).toBeDefined();
+    expect(typeof exports.listSessions).toBe('function');
+    expect(exports.getSessionMessages).toBeDefined();
+    expect(typeof exports.getSessionMessages).toBe('function');
     expect(exports.forkSession).toBeDefined();
     expect(typeof exports.forkSession).toBe('function');
     expect(exports.getSessionInfo).toBeDefined();

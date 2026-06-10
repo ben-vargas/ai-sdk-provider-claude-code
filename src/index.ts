@@ -59,8 +59,10 @@ export {
  * session-related settings (`sessionId`, `resume`, `forkSession`, ...).
  */
 export {
+  listSessions,
   forkSession,
   getSessionInfo,
+  getSessionMessages,
   deleteSession,
   renameSession,
   tagSession,
@@ -154,9 +156,11 @@ export type {
   SessionStore,
   SessionStoreFlush,
   // Session lifecycle helper option/result types
+  ListSessionsOptions,
   ForkSessionOptions,
   ForkSessionResult,
   GetSessionInfoOptions,
+  GetSessionMessagesOptions,
   GetSubagentMessagesOptions,
   ListSubagentsOptions,
   SessionMutationOptions,
