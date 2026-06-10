@@ -318,6 +318,38 @@ const model = claudeCode('sonnet', {
 });
 ```
 
+## Claude Agent SDK 0.3.x Notes
+
+This provider depends on `@anthropic-ai/claude-agent-sdk@^0.3.170`. The 0.3.x line introduces a few changes worth knowing about:
+
+### New peer dependencies
+
+The Agent SDK now declares two additional peer dependencies alongside `zod`:
+
+- `@anthropic-ai/sdk` (`>=0.93.0`)
+- `@modelcontextprotocol/sdk` (`^1.29.0`)
+
+npm 7+ installs these automatically; if your package manager does not auto-install peers (or you pin versions), add them to your project explicitly.
+
+### Per-platform native binaries
+
+The Agent SDK now distributes the Claude Code runtime as per-platform native binaries via `optionalDependencies` (e.g., `@anthropic-ai/claude-agent-sdk-darwin-arm64`, `-linux-x64`, `-win32-x64`) instead of a single bundled `cli.js`. The right binary for your platform is selected at install time. If you use `pathToClaudeCodeExecutable`, `executable`, or `executableArgs`, re-validate them against your deployment — they primarily apply when pointing at a custom CLI rather than the bundled native binary. Docker/CI images that prune `optionalDependencies` will need to keep them enabled.
+
+### Settings isolation (`settingSources`)
+
+SDK 0.3.x changed the SDK-level default: omitting `settingSources` now loads ALL filesystem settings (user, project, and local — matching CLI behavior). This provider preserves its documented isolation default by explicitly passing `settingSources: []` when you don't set it. Opt in to filesystem settings via `settingSources: ['user', 'project', 'local']` (or override through `sdkOptions.settingSources`).
+
+### Subprocess environment allowlist
+
+SDK 0.3.x treats `Options.env` as a full **replacement** for the subprocess environment (it is no longer merged with `process.env`). The provider always constructs the subprocess environment from a sanitizing allowlist of `process.env`, then applies your `env` setting and `sdkOptions.env` on top (your values win; set a key to `undefined` to remove it). The allowlist is:
+
+- **Platform basics** — POSIX: `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`, `LANG`, `LC_ALL`, `TMPDIR`; Windows: `APPDATA`, `HOMEDRIVE`, `HOMEPATH`, `LOCALAPPDATA`, `PATH`, `PATHEXT`, `SYSTEMDRIVE`, `SYSTEMROOT`, `TEMP`, `TMP`, `USERNAME`, `USERPROFILE`, `WINDIR`
+- **Prefix-matched** — any variable starting with `ANTHROPIC_`, `CLAUDE_`, `AWS_`, or `GOOGLE_` (covers `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`, Bedrock and Vertex credentials, etc.)
+- **Proxy/TLS** — `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (upper- and lowercase), `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`
+- **Cloud extras** — `GCLOUD_PROJECT`, `CLOUD_ML_REGION`
+
+Variables outside this list are not inherited by the subprocess; pass them explicitly via the `env` setting if needed. The provider also sets `CLAUDE_AGENT_SDK_CLIENT_APP` to `ai-sdk-provider-claude-code/<version>` (used in the SDK's User-Agent) unless you already set it via the process environment, the `env` setting, or `sdkOptions.env`.
+
 ## Mid-Session Message Injection
 
 This provider supports **mid-session message injection** for supervisor patterns, allowing you to interrupt, redirect, or provide feedback to an agent during execution.

@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Upgraded `@anthropic-ai/claude-agent-sdk` to `^0.3.170`** (from `^0.2.63`). Notable upstream changes handled by this provider:
+  - **New peer dependencies** - The Agent SDK now requires `@anthropic-ai/sdk` (`>=0.93.0`) and `@modelcontextprotocol/sdk` (`^1.29.0`) as peer dependencies (auto-installed by npm 7+).
+  - **Per-platform native binaries** - The Agent SDK now ships the Claude Code runtime as per-platform native binaries via `optionalDependencies` instead of a single bundled `cli.js`. Keep `optionalDependencies` enabled in Docker/CI installs.
+  - **`settingSources` isolation preserved** - SDK 0.3.x changed the SDK default so that omitting `settingSources` loads ALL filesystem settings. The provider now explicitly passes `settingSources: []` when unset to preserve its documented isolation behavior. Set `settingSources` (or `sdkOptions.settingSources`) to opt in.
+  - **Subprocess env semantics** - SDK 0.3.x treats `Options.env` as a full replacement for the subprocess environment (no longer merged with `process.env`). The provider now always constructs the subprocess environment from an expanded sanitizing allowlist: the existing platform basics plus prefix-matched `ANTHROPIC_*`, `CLAUDE_*`, `AWS_*`, `GOOGLE_*` variables, proxy/TLS variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, lowercase variants, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`), and `GCLOUD_PROJECT`/`CLOUD_ML_REGION`. User-provided `env`/`sdkOptions.env` values still win, and explicit `undefined` removes a variable.
+  - **Workarounds re-validated** - The mid-stream JSON truncation shim and the input-stream-held-open workaround (anthropics/claude-code#4775) were re-validated against SDK 0.3.170 on 2026-06-09 and remain in place as defensive measures.
+
 ### Added
+
+- **`CLAUDE_AGENT_SDK_CLIENT_APP` default** - The provider identifies itself to the Agent SDK (User-Agent) as `ai-sdk-provider-claude-code/<version>` unless the variable is already set via the process environment, the `env` setting, or `sdkOptions.env`.
+- **New error mappings for SDK 0.3.x error kinds** - `overloaded` maps to a retryable `APICallError`, `model_not_found`/`no such model` map to a non-retryable `APICallError` with a clear message, and `oauth_org_not_allowed` maps to the authentication error path (`LoadAPIKeyError`).
 
 ### Security
 

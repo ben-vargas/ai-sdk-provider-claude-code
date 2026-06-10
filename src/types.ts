@@ -239,7 +239,13 @@ export interface ClaudeCodeSettings {
 
   /**
    * Filesystem settings sources to load (CLAUDE.md, settings.json, etc.)
-   * When omitted, the Agent SDK loads no filesystem settings.
+   * When omitted, the provider explicitly passes `[]` to the Agent SDK so that
+   * no filesystem settings are loaded (isolation mode).
+   *
+   * Note: Agent SDK 0.3.x changed the SDK-level default — omitting
+   * `settingSources` now loads ALL filesystem settings (matching CLI behavior).
+   * The provider pins isolation mode unless you set this option (or override
+   * `settingSources` via the `sdkOptions` escape hatch).
    *
    * Required for Skills support - skills are loaded from these sources.
    * @example ['user', 'project']
@@ -310,7 +316,14 @@ export interface ClaudeCodeSettings {
   logger?: Logger | false;
 
   /**
-   * Environment variables to set
+   * Environment variables to set for the Claude Code subprocess.
+   *
+   * The provider always constructs the subprocess environment from a sanitizing
+   * allowlist of `process.env` (HOME, PATH, proxy/TLS vars, `ANTHROPIC_*`,
+   * `CLAUDE_*`, `AWS_*`, `GOOGLE_*`, etc.), then merges these values over it
+   * (set a key to `undefined` to remove it). Agent SDK 0.3.x treats
+   * `Options.env` as a full replacement for the subprocess environment, so
+   * variables outside the allowlist are not inherited unless set here.
    */
   env?: Record<string, string | undefined>;
 

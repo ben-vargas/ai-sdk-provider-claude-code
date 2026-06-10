@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
 import { getErrorMetadata, isAuthenticationError } from './errors.js';
 import type { Logger } from './types.js';
-import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
+import { APICallError, type LanguageModelV3StreamPart } from '@ai-sdk/provider';
 
 // Extend stream part union locally to include provider-specific 'tool-error'
 type ToolErrorPart = {
@@ -315,7 +316,7 @@ describe('ClaudeCodeLanguageModel', () => {
       }
     });
 
-    it('should omit env in SDK options when settings.env is undefined', async () => {
+    it('should always pass an allowlisted env to SDK options when settings.env is undefined', async () => {
       const modelNoEnv = new ClaudeCodeLanguageModel({
         id: 'sonnet',
         settings: {},
@@ -340,7 +341,230 @@ describe('ClaudeCodeLanguageModel', () => {
       const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
       expect(call).toBeDefined();
       expect(call.options).toBeDefined();
-      expect(call.options.env).toBeUndefined();
+      // SDK 0.3.x replaces the subprocess env entirely, so the provider always
+      // constructs the env from the sanitizing allowlist.
+      expect(call.options.env).toBeDefined();
+      if (process.env.PATH !== undefined) {
+        expect(call.options.env.PATH).toBe(process.env.PATH);
+      }
+    });
+
+    it('should inherit prefix-matched env vars (ANTHROPIC_/CLAUDE_/AWS_/GOOGLE_) and exact network vars', async () => {
+      const testKeys = [
+        'ANTHROPIC_TEST_X',
+        'CLAUDE_TEST_X',
+        'AWS_TEST_X',
+        'GOOGLE_TEST_X',
+        'HTTPS_PROXY',
+        'NO_PROXY',
+        'NODE_EXTRA_CA_CERTS',
+        'GCLOUD_PROJECT',
+        'CLOUD_ML_REGION',
+        'NOT_ALLOWLISTED_TEST_X',
+      ] as const;
+      const original: Record<string, string | undefined> = {};
+      for (const key of testKeys) original[key] = process.env[key];
+      try {
+        for (const key of testKeys) process.env[key] = `value-${key}`;
+
+        const modelNoEnv = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: {},
+        });
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 's-prefix-env',
+              usage: { input_tokens: 0, output_tokens: 0 },
+            };
+          },
+        };
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        await modelNoEnv.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+
+        const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        const env = call.options.env;
+        expect(env).toBeDefined();
+        // Prefix-matched inheritance
+        expect(env.ANTHROPIC_TEST_X).toBe('value-ANTHROPIC_TEST_X');
+        expect(env.CLAUDE_TEST_X).toBe('value-CLAUDE_TEST_X');
+        expect(env.AWS_TEST_X).toBe('value-AWS_TEST_X');
+        expect(env.GOOGLE_TEST_X).toBe('value-GOOGLE_TEST_X');
+        // Exact-key network/cloud allowlist
+        expect(env.HTTPS_PROXY).toBe('value-HTTPS_PROXY');
+        expect(env.NO_PROXY).toBe('value-NO_PROXY');
+        expect(env.NODE_EXTRA_CA_CERTS).toBe('value-NODE_EXTRA_CA_CERTS');
+        expect(env.GCLOUD_PROJECT).toBe('value-GCLOUD_PROJECT');
+        expect(env.CLOUD_ML_REGION).toBe('value-CLOUD_ML_REGION');
+        // Non-allowlisted vars are not inherited
+        expect('NOT_ALLOWLISTED_TEST_X' in env).toBe(false);
+      } finally {
+        for (const key of testKeys) {
+          if (original[key] === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = original[key];
+          }
+        }
+      }
+    });
+
+    it('should default CLAUDE_AGENT_SDK_CLIENT_APP and allow overrides', async () => {
+      const originalClientApp = process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
+      try {
+        delete process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
+
+        const mockResponse = () => ({
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 's-client-app',
+              usage: { input_tokens: 0, output_tokens: 0 },
+            };
+          },
+        });
+
+        // Default applied when not set anywhere
+        const modelDefault = new ClaudeCodeLanguageModel({ id: 'sonnet', settings: {} });
+        vi.mocked(mockQuery).mockReturnValue(mockResponse() as any);
+        await modelDefault.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+        let call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        // Sync check: the hardcoded PROVIDER_VERSION constant must match
+        // package.json so the telemetry identifier never reports a stale version.
+        const pkgVersion = JSON.parse(
+          readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+        ).version as string;
+        expect(call.options.env.CLAUDE_AGENT_SDK_CLIENT_APP).toBe(
+          `ai-sdk-provider-claude-code/${pkgVersion}`
+        );
+
+        // settings.env override wins
+        vi.mocked(mockQuery).mockClear();
+        const modelSettingsEnv = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: { env: { CLAUDE_AGENT_SDK_CLIENT_APP: 'my-app/1.0.0' } } as any,
+        });
+        vi.mocked(mockQuery).mockReturnValue(mockResponse() as any);
+        await modelSettingsEnv.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+        call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        expect(call.options.env.CLAUDE_AGENT_SDK_CLIENT_APP).toBe('my-app/1.0.0');
+
+        // process.env value is inherited (CLAUDE_ prefix) and not overwritten
+        vi.mocked(mockQuery).mockClear();
+        process.env.CLAUDE_AGENT_SDK_CLIENT_APP = 'from-process/2.0.0';
+        const modelProcessEnv = new ClaudeCodeLanguageModel({ id: 'sonnet', settings: {} });
+        vi.mocked(mockQuery).mockReturnValue(mockResponse() as any);
+        await modelProcessEnv.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+        call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        expect(call.options.env.CLAUDE_AGENT_SDK_CLIENT_APP).toBe('from-process/2.0.0');
+      } finally {
+        if (originalClientApp === undefined) {
+          delete process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
+        } else {
+          process.env.CLAUDE_AGENT_SDK_CLIENT_APP = originalClientApp;
+        }
+      }
+    });
+
+    it('should pass settingSources: [] to the SDK when unset (isolation mode)', async () => {
+      const modelDefault = new ClaudeCodeLanguageModel({ id: 'sonnet', settings: {} });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-sources-default',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelDefault.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call.options.settingSources).toEqual([]);
+    });
+
+    it('should pass user-provided settingSources through and allow sdkOptions override', async () => {
+      const mockResponse = () => ({
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-sources-user',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      });
+
+      const modelWithSources = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { settingSources: ['user', 'project'] },
+      });
+      vi.mocked(mockQuery).mockReturnValue(mockResponse() as any);
+      await modelWithSources.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+      let call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call.options.settingSources).toEqual(['user', 'project']);
+
+      // sdkOptions escape hatch overrides the pinned default
+      vi.mocked(mockQuery).mockClear();
+      const modelWithSdkOverride = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { sdkOptions: { settingSources: ['local'] } } as any,
+      });
+      vi.mocked(mockQuery).mockReturnValue(mockResponse() as any);
+      await modelWithSdkOverride.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+      call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call.options.settingSources).toEqual(['local']);
+    });
+
+    it('should keep the pinned settingSources: [] when sdkOptions has an explicit undefined', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-sources-undefined',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+
+      // Conditionally-built sdkOptions can carry undefined-valued own properties;
+      // those must not clobber the isolation default (SDK 0.3.x treats an
+      // undefined settingSources as "load ALL filesystem settings").
+      const modelWithUndefinedOverride = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { sdkOptions: { settingSources: undefined } } as any,
+      });
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+      await modelWithUndefinedOverride.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call.options.settingSources).toEqual([]);
     });
 
     it('should pass through Agent SDK options and allow sdkOptions overrides', async () => {
@@ -974,6 +1198,188 @@ describe('ClaudeCodeLanguageModel', () => {
 
       expect(thrownError).toBeDefined();
       expect(isAuthenticationError(thrownError)).toBe(true);
+    });
+
+    it('should detect oauth_org_not_allowed pattern as authentication error', async () => {
+      vi.mocked(mockQuery).mockImplementation(() => {
+        throw new Error('Request failed: oauth_org_not_allowed');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeDefined();
+      expect(isAuthenticationError(thrownError)).toBe(true);
+    });
+
+    it('should map overloaded errors to a retryable APICallError', async () => {
+      vi.mocked(mockQuery).mockImplementation(() => {
+        throw new Error('API error: overloaded');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(true);
+      expect((thrownError as APICallError).message).toContain('overloaded');
+    });
+
+    it('should map model_not_found errors to a non-retryable APICallError', async () => {
+      vi.mocked(mockQuery).mockImplementation(() => {
+        throw new Error('API error: model_not_found');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(false);
+      expect((thrownError as APICallError).message).toContain('model was not found');
+    });
+
+    it("should map 'no such model' errors to a non-retryable APICallError", async () => {
+      vi.mocked(mockQuery).mockImplementation(() => {
+        throw new Error('No such model: claude-nonexistent');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(false);
+      expect((thrownError as APICallError).message).toContain('model was not found');
+    });
+
+    // SDK 0.3.x delivers error kinds structurally: SDKAssistantMessage.error
+    // carries the kind, and SDKResultError has `errors: string[]` (no `result`
+    // field). These tests exercise that delivery path end to end.
+    const structuredErrorResponse = (kind: string, errors: string[]) => ({
+      async *[Symbol.asyncIterator]() {
+        yield {
+          type: 'assistant',
+          error: kind,
+          message: { type: 'message', role: 'assistant', content: [] },
+          session_id: 'structured-error-session',
+        };
+        yield {
+          type: 'result',
+          subtype: 'error_during_execution',
+          is_error: true,
+          errors,
+          session_id: 'structured-error-session',
+          total_cost_usd: 0,
+          duration_ms: 10,
+          usage: { input_tokens: 0, output_tokens: 0 },
+        };
+      },
+    });
+
+    it('should classify structured overloaded result errors as retryable', async () => {
+      vi.mocked(mockQuery).mockReturnValue(
+        structuredErrorResponse('overloaded', ['API request failed']) as any
+      );
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(true);
+      // SDKResultError detail comes from errors[], not the missing result field
+      expect((thrownError as APICallError).message).toContain('API request failed');
+    });
+
+    it('should classify structured model_not_found result errors as non-retryable', async () => {
+      vi.mocked(mockQuery).mockReturnValue(
+        structuredErrorResponse('model_not_found', ['Request failed with status 404']) as any
+      );
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(false);
+      expect((thrownError as APICallError).message).toContain('model was not found');
+    });
+
+    it('should classify structured oauth_org_not_allowed result errors as authentication errors', async () => {
+      vi.mocked(mockQuery).mockReturnValue(
+        structuredErrorResponse('oauth_org_not_allowed', ['Request failed with status 403']) as any
+      );
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeDefined();
+      expect(isAuthenticationError(thrownError)).toBe(true);
+    });
+
+    it('should emit a retryable error chunk for structured overloaded errors in streaming', async () => {
+      vi.mocked(mockQuery).mockReturnValue(
+        structuredErrorResponse('overloaded', ['API request failed']) as any
+      );
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: ExtendedStreamPart[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const errorChunk = chunks.find((chunk) => chunk.type === 'error') as
+        | { type: 'error'; error: unknown }
+        | undefined;
+      expect(errorChunk).toBeDefined();
+      expect(errorChunk!.error).toBeInstanceOf(APICallError);
+      expect((errorChunk!.error as APICallError).isRetryable).toBe(true);
+      expect((errorChunk!.error as APICallError).message).toContain('API request failed');
     });
 
     it('should throw error when result message has is_error flag', async () => {

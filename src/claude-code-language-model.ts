@@ -19,6 +19,13 @@ import { getLogger, createVerboseLogger } from './logger.js';
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage, SDKPartialAssistantMessage } from '@anthropic-ai/claude-agent-sdk';
 
+/**
+ * Provider version reported to the Agent SDK via CLAUDE_AGENT_SDK_CLIENT_APP.
+ * Keep in sync with package.json (kept as a constant to avoid a build step).
+ */
+const PROVIDER_VERSION = '3.4.4';
+const DEFAULT_CLIENT_APP = `ai-sdk-provider-claude-code/${PROVIDER_VERSION}`;
+
 const CLAUDE_CODE_TRUNCATION_WARNING =
   'Claude Code SDK output ended unexpectedly; returning truncated response from buffered text. Await upstream fix to avoid data loss.';
 
@@ -43,6 +50,7 @@ const MIN_TRUNCATION_LENGTH = 512;
  * @param bufferedText - Accumulated assistant text content (measured in UTF-16 code units)
  * @returns true if error indicates SDK truncation; false otherwise
  */
+// Re-validated against SDK 0.3.170 on 2026-06-09: kept as defensive detection.
 function isClaudeCodeTruncationError(error: unknown, bufferedText: string): boolean {
   // Check for SyntaxError by instanceof or by name (for cross-realm errors)
   const isSyntaxError =
@@ -92,6 +100,21 @@ function isClaudeCodeTruncationError(error: unknown, bufferedText: string): bool
   return true;
 }
 
+/**
+ * Extracts the structured error kind attached to errors thrown from result
+ * handling. SDK 0.3.x delivers API failure kinds (SDKAssistantMessageError,
+ * e.g. 'overloaded', 'model_not_found', 'oauth_org_not_allowed') as structured
+ * fields on assistant messages rather than in thrown error text, so
+ * classification must not rely on message substrings alone.
+ */
+function getStructuredErrorKind(error: unknown): string | undefined {
+  if (typeof error === 'object' && error !== null && 'errorKind' in error) {
+    const kind = (error as { errorKind?: unknown }).errorKind;
+    if (typeof kind === 'string') return kind;
+  }
+  return undefined;
+}
+
 function isAbortError(err: unknown): boolean {
   if (err && typeof err === 'object') {
     const e = err as { name?: unknown; code?: unknown };
@@ -105,6 +128,7 @@ const DEFAULT_INHERITED_ENV_VARS =
   process.platform === 'win32'
     ? [
         'APPDATA',
+        'COMSPEC',
         'HOMEDRIVE',
         'HOMEPATH',
         'LOCALAPPDATA',
@@ -122,21 +146,57 @@ const DEFAULT_INHERITED_ENV_VARS =
 
 const CLAUDE_ENV_VARS = ['CLAUDE_CONFIG_DIR'];
 
+// Proxy and TLS configuration needed for the subprocess to reach the API.
+const NETWORK_ENV_VARS = [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+];
+
+// Bedrock/Vertex configuration not covered by the AWS_/GOOGLE_ prefixes.
+const CLOUD_ENV_VARS = ['GCLOUD_PROJECT', 'CLOUD_ML_REGION'];
+
+// Prefix-matched inheritance for auth and cloud-provider configuration
+// (e.g. ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, AWS_PROFILE, GOOGLE_APPLICATION_CREDENTIALS).
+const INHERITED_ENV_PREFIXES = ['ANTHROPIC_', 'CLAUDE_', 'AWS_', 'GOOGLE_'];
+
 function getBaseProcessEnv(): Record<string, string> {
   const env: Record<string, string> = {};
-  const allowedKeys = new Set([...DEFAULT_INHERITED_ENV_VARS, ...CLAUDE_ENV_VARS]);
+  const allowedKeys = new Set([
+    ...DEFAULT_INHERITED_ENV_VARS,
+    ...CLAUDE_ENV_VARS,
+    ...NETWORK_ENV_VARS,
+    ...CLOUD_ENV_VARS,
+  ]);
 
-  for (const key of allowedKeys) {
+  const addIfSafe = (key: string): void => {
     const value = process.env[key];
     if (typeof value !== 'string') {
-      continue;
+      return;
     }
 
+    // Skip exported shell functions (Shellshock-style values).
     if (value.startsWith('()')) {
-      continue;
+      return;
     }
 
     env[key] = value;
+  };
+
+  for (const key of allowedKeys) {
+    addIfSafe(key);
+  }
+
+  for (const key of Object.keys(process.env)) {
+    if (INHERITED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+      addIfSafe(key);
+    }
   }
 
   return env;
@@ -984,6 +1044,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     }
     if (this.settings.settingSources !== undefined) {
       opts.settingSources = this.settings.settingSources;
+    } else {
+      // SDK 0.3.x flipped the default: omitting settingSources now loads ALL
+      // filesystem settings (CLI behavior). Pin to [] to preserve the provider's
+      // documented isolation default. Users can opt in via settings.settingSources
+      // or override through sdkOptions (applied after this block).
+      opts.settingSources = [];
     }
     if (this.settings.additionalDirectories !== undefined) {
       opts.additionalDirectories = this.settings.additionalDirectories;
@@ -1041,7 +1107,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       const rest = { ...sdkOverrides };
       delete rest.env;
       delete rest.stderr;
-      Object.assign(opts, rest);
+      // Skip undefined-valued keys: conditionally-built sdkOptions (e.g.
+      // `{ settingSources: maybeSources }` with maybeSources === undefined) must
+      // not clobber pinned defaults. On SDK 0.3.x an undefined settingSources
+      // loads ALL filesystem settings, silently defeating the isolation default.
+      for (const [key, value] of Object.entries(rest)) {
+        if (value !== undefined) {
+          opts[key] = value;
+        }
+      }
     }
 
     // Wrap stderr callback to also collect data for error reporting
@@ -1053,10 +1127,22 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       };
     }
 
-    if (this.settings.env !== undefined || sdkEnv !== undefined) {
-      const baseEnv = getBaseProcessEnv();
-      opts.env = { ...baseEnv, ...this.settings.env, ...sdkEnv };
+    // SDK 0.3.x: Options.env REPLACES the subprocess environment entirely (0.2.x
+    // effectively merged with process.env). The provider always constructs the full
+    // environment from a sanitizing allowlist so behavior is deterministic.
+    // Merge order: allowlisted process env, then settings.env, then sdkOptions.env
+    // (user values win; explicit `undefined` removes a variable).
+    const mergedEnv: Record<string, string | undefined> = {
+      ...getBaseProcessEnv(),
+      ...this.settings.env,
+      ...sdkEnv,
+    };
+    // Identify this provider to the SDK (User-Agent) unless already set via
+    // process env (inherited above), settings.env, or sdkOptions.env.
+    if (!('CLAUDE_AGENT_SDK_CLIENT_APP' in mergedEnv)) {
+      mergedEnv.CLAUDE_AGENT_SDK_CLIENT_APP = DEFAULT_CLIENT_APP;
     }
+    opts.env = mergedEnv;
 
     // Native structured outputs (SDK 0.1.45+)
     if (responseFormat?.type === 'json' && responseFormat.schema) {
@@ -1102,16 +1188,24 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       'claude auth login',
       '/login', // CLI returns "Please run /login"
       'invalid api key',
+      'oauth_org_not_allowed', // SDK 0.3.x assistant error kind: OAuth org not permitted
     ];
 
     const errorMessage =
       isErrorWithMessage(error) && error.message ? error.message.toLowerCase() : '';
 
+    // Structured kind (SDKAssistantMessageError) propagated from result handling;
+    // preferred over substring matching since SDK error text need not contain it.
+    const errorKind = getStructuredErrorKind(error);
+
     const exitCode =
       isErrorWithCode(error) && typeof error.exitCode === 'number' ? error.exitCode : undefined;
 
     const isAuthError =
-      authErrorPatterns.some((pattern) => errorMessage.includes(pattern)) || exitCode === 401;
+      errorKind === 'authentication_failed' ||
+      errorKind === 'oauth_org_not_allowed' ||
+      authErrorPatterns.some((pattern) => errorMessage.includes(pattern)) ||
+      exitCode === 401;
 
     if (isAuthError) {
       return createAuthenticationError({
@@ -1134,17 +1228,54 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       });
     }
 
+    // Use error.stderr if available from SDK, otherwise use collected stderr
+    const stderrFromError =
+      isErrorWithCode(error) && typeof error.stderr === 'string' ? error.stderr : undefined;
+    const stderr = stderrFromError || collectedStderr || undefined;
+
+    // SDK 0.3.x assistant error kinds: API overload / rate limit — transient, safe to retry.
+    if (
+      errorKind === 'overloaded' ||
+      errorKind === 'rate_limit' ||
+      errorMessage.includes('overloaded')
+    ) {
+      return createAPICallError({
+        message:
+          isErrorWithMessage(error) && error.message
+            ? error.message
+            : 'Anthropic API is overloaded. Please retry.',
+        code: errorCode || undefined,
+        exitCode,
+        stderr,
+        promptExcerpt: messagesPrompt.substring(0, 200),
+        isRetryable: true,
+      });
+    }
+
+    // SDK 0.3.x assistant error kind: requested model does not exist — not retryable.
+    if (
+      errorKind === 'model_not_found' ||
+      errorMessage.includes('model_not_found') ||
+      errorMessage.includes('no such model')
+    ) {
+      const originalMessage =
+        isErrorWithMessage(error) && error.message ? error.message : 'Model not found';
+      return createAPICallError({
+        message: `${originalMessage}. The requested model was not found. Verify the model id passed to the provider (e.g. 'opus', 'sonnet', 'haiku', or a full model name) and that your account has access to it.`,
+        code: errorCode || undefined,
+        exitCode,
+        stderr,
+        promptExcerpt: messagesPrompt.substring(0, 200),
+        isRetryable: false,
+      });
+    }
+
     // Create general API call error with appropriate retry flag
     const isRetryable =
       errorCode === 'ENOENT' ||
       errorCode === 'ECONNREFUSED' ||
       errorCode === 'ETIMEDOUT' ||
       errorCode === 'ECONNRESET';
-
-    // Use error.stderr if available from SDK, otherwise use collected stderr
-    const stderrFromError =
-      isErrorWithCode(error) && typeof error.stderr === 'string' ? error.stderr : undefined;
-    const stderr = stderrFromError || collectedStderr || undefined;
 
     return createAPICallError({
       message: isErrorWithMessage(error) && error.message ? error.message : 'Claude Code SDK error',
@@ -1291,6 +1422,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       }
       // hold input stream open until results
       // see: https://github.com/anthropics/claude-code/issues/4775
+      // Re-validated against SDK 0.3.170 on 2026-06-09: kept as defensive workaround.
       const sdkPrompt = wantsStreamInput
         ? toAsyncIterablePrompt(
             messagesPrompt,
@@ -1314,9 +1446,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       // like mid-stream message injection via query.streamInput()
       this.settings.onQueryCreated?.(response);
 
+      let lastAssistantErrorKind: string | undefined;
       for await (const message of response) {
         this.logger.debug(`[claude-code] Received message type: ${message.type}`);
         if (message.type === 'assistant') {
+          // SDK 0.3.x delivers API error kinds (e.g. 'overloaded',
+          // 'model_not_found') as a structured field on assistant messages.
+          if (typeof message.error === 'string') {
+            lastAssistantErrorKind = message.error;
+          }
           const { text: messageText, thinking: messageThinking } = this.extractTextAndThinking(
             message.message.content
           );
@@ -1329,14 +1467,23 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           durationMs = message.duration_ms;
           modelUsage = message.modelUsage;
 
-          // Handle is_error flag in result message (e.g., auth failures)
-          // The CLI returns successful JSON with is_error: true and error message in result field
+          // Handle is_error flag in result message (e.g., auth failures).
+          // SDKResultSuccess carries the error text in `result`; SDKResultError
+          // has no `result` field and carries details in `errors` instead.
           if ('is_error' in message && message.is_error === true) {
-            const errorMessage =
+            const resultText =
               'result' in message && typeof message.result === 'string'
                 ? message.result
-                : 'Claude Code CLI returned an error';
-            throw Object.assign(new Error(errorMessage), { exitCode: 1 });
+                : undefined;
+            const errorsText =
+              'errors' in message && Array.isArray(message.errors)
+                ? message.errors.filter((e): e is string => typeof e === 'string').join('; ')
+                : '';
+            const errorMessage = resultText ?? (errorsText || 'Claude Code CLI returned an error');
+            throw Object.assign(new Error(errorMessage), {
+              exitCode: 1,
+              errorKind: lastAssistantErrorKind,
+            });
           }
 
           // Handle structured output errors (SDK 0.1.45+)
@@ -1592,6 +1739,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         let streamedTextLength = 0; // Track text already emitted via stream_events to avoid duplication
         let hasReceivedStreamEvents = false; // Track if we've received any stream_events
         let hasStreamedJson = false; // Track if JSON has been streamed via input_json_delta
+        // SDK 0.3.x structured error kind from assistant messages (e.g. 'overloaded')
+        let lastAssistantErrorKind: string | undefined;
 
         // Content block streaming: Map block indices to tool IDs and accumulated JSON
         const toolBlocksByIndex = new Map<number, string>();
@@ -1618,6 +1767,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           }
           // hold input stream open until results
           // see: https://github.com/anthropics/claude-code/issues/4775
+          // Re-validated against SDK 0.3.170 on 2026-06-09: kept as defensive workaround.
           const sdkPrompt = wantsStreamInput
             ? toAsyncIterablePrompt(
                 messagesPrompt,
@@ -1996,6 +2146,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             }
 
             if (message.type === 'assistant') {
+              // SDK 0.3.x delivers API error kinds (e.g. 'overloaded',
+              // 'model_not_found') as a structured field on assistant messages.
+              if (typeof message.error === 'string') {
+                lastAssistantErrorKind = message.error;
+              }
+
               if (!message.message?.content) {
                 this.logger.warn(
                   `[claude-code] Unexpected assistant message structure: missing content field. Message type: ${message.type}. This may indicate an SDK protocol violation.`
@@ -2382,14 +2538,24 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             } else if (message.type === 'result') {
               done();
 
-              // Handle is_error flag in result message (e.g., auth failures)
-              // The CLI returns successful JSON with is_error: true and error message in result field
+              // Handle is_error flag in result message (e.g., auth failures).
+              // SDKResultSuccess carries the error text in `result`; SDKResultError
+              // has no `result` field and carries details in `errors` instead.
               if ('is_error' in message && message.is_error === true) {
-                const errorMessage =
+                const resultText =
                   'result' in message && typeof message.result === 'string'
                     ? message.result
-                    : 'Claude Code CLI returned an error';
-                throw Object.assign(new Error(errorMessage), { exitCode: 1 });
+                    : undefined;
+                const errorsText =
+                  'errors' in message && Array.isArray(message.errors)
+                    ? message.errors.filter((e): e is string => typeof e === 'string').join('; ')
+                    : '';
+                const errorMessage =
+                  resultText ?? (errorsText || 'Claude Code CLI returned an error');
+                throw Object.assign(new Error(errorMessage), {
+                  exitCode: 1,
+                  errorKind: lastAssistantErrorKind,
+                });
               }
 
               // Handle structured output errors (SDK 0.1.45+)
