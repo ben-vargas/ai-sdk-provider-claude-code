@@ -22,27 +22,7 @@
 | 1.x.x            | v5             | `@anthropic-ai/claude-code` (legacy) | `v1-claude-code-sdk` | Legacy | [`v1`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/v1)               |
 | 0.x.x            | v4             | `@anthropic-ai/claude-code` (legacy) | `ai-sdk-v4`          | Legacy | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
 
-### Installing the Right Version
-
-**For AI SDK v6 (recommended):**
-
-```bash
-npm install ai-sdk-provider-claude-code ai@^6.0.0
-# or explicitly: npm install ai-sdk-provider-claude-code@latest
-```
-
-**For AI SDK v5:**
-
-```bash
-npm install ai-sdk-provider-claude-code@ai-sdk-v5 ai@^5.0.0
-```
-
-**For AI SDK v4 (legacy):**
-
-```bash
-npm install ai-sdk-provider-claude-code@ai-sdk-v4 ai@^4.3.16
-# or use specific version: npm install ai-sdk-provider-claude-code@^0.2.2
-```
+Install commands for each line are listed under [Installation](#installation) below.
 
 ## Zod Compatibility
 
@@ -70,12 +50,14 @@ claude auth login
 ```bash
 # For AI SDK v6 (recommended)
 npm install ai-sdk-provider-claude-code ai@^6.0.0
+# or explicitly: npm install ai-sdk-provider-claude-code@latest
 
 # For AI SDK v5
 npm install ai-sdk-provider-claude-code@ai-sdk-v5 ai@^5.0.0
 
 # For AI SDK v4 (legacy)
 npm install ai-sdk-provider-claude-code@ai-sdk-v4 ai@^4.3.16
+# or use a specific version: npm install ai-sdk-provider-claude-code@^0.2.2
 ```
 
 ## Disclaimer
@@ -155,16 +137,18 @@ Key changes:
 - **`sonnet`** - Claude Sonnet (balanced performance)
 - **`haiku`** - Claude Haiku (fastest, most cost-effective)
 
-You can also use full model identifiers directly (e.g., `claude-opus-4-5`, `claude-sonnet-4-5-20250514`).
+You can also use full model identifiers directly (e.g., `claude-sonnet-4-6`, `claude-opus-4-8`).
 
 ## Documentation
 
-- **[Usage Guide](docs/ai-sdk-v5/GUIDE.md)** - Comprehensive examples and configuration
-- **[Breaking Changes](docs/ai-sdk-v5/V5_BREAKING_CHANGES.md)** - v0.x to v1.x migration guide
-- **[Troubleshooting](docs/ai-sdk-v5/TROUBLESHOOTING.md)** - Common issues and solutions
 - **[Session Management](docs/sessions.md)** - Creating, resuming, forking, inspecting, and deleting sessions
 - **[Examples](examples/)** - Sample scripts and patterns
-- **[Tool Streaming Support](docs/ai-sdk-v5/TOOL_STREAMING_SUPPORT.md)** - Event semantics and performance notes
+- **[Usage Guide](docs/ai-sdk-v5/GUIDE.md)** - Comprehensive examples and configuration (written for provider 2.x / AI SDK v5; most patterns still apply)
+- **[Troubleshooting](docs/ai-sdk-v5/TROUBLESHOOTING.md)** - Common issues and solutions (written for provider 2.x / AI SDK v5)
+- **[Tool Streaming Support](docs/ai-sdk-v5/TOOL_STREAMING_SUPPORT.md)** - Event semantics and performance notes (written for provider 2.x / AI SDK v5)
+- **[Breaking Changes](docs/ai-sdk-v5/V5_BREAKING_CHANGES.md)** - v0.x to v1.x migration guide (historical)
+
+The `docs/ai-sdk-v4/` and `docs/ai-sdk-v5/` directories cover legacy provider versions (0.x and 1.x–2.x respectively) and are kept for reference.
 
 ## Migrating to Claude Agent SDK (v2.0.0)
 
@@ -293,29 +277,29 @@ This provider exposes Agent SDK options directly. Key options include:
 | `effort`                          | Effort level: `'low'`, `'medium'`, `'high'`, `'xhigh'`, or `'max'`                                                                                                                                               |
 | `thinking`                        | Thinking config: `{ type: 'adaptive' }`, `{ type: 'enabled', budgetTokens?: number }`, or `{ type: 'disabled' }`                                                                                                 |
 | `promptSuggestions`               | Enable prompt suggestions (`boolean`)                                                                                                                                                                            |
-| `skills`                          | Enable skills for the session: `'all'` or an array of skill names (v3.6.0+)                                                                                                                                      |
-| `settings`                        | Inline `Settings` object or path to a settings JSON file (v3.6.0+)                                                                                                                                               |
-| `managedSettings`                 | Restrictive policy-tier settings enforced on the subprocess (v3.6.0+)                                                                                                                                            |
-| `toolAliases`                     | Map built-in tool names to replacement tools, e.g. `{ Bash: 'mcp__workspace__bash' }` (v3.6.0+)                                                                                                                  |
-| `toolConfig`                      | Per-tool configuration for built-in tools, e.g. `{ askUserQuestion: { previewFormat: 'html' } }` (v3.6.0+)                                                                                                       |
-| `planModeInstructions`            | Custom workflow instructions for plan mode (v3.6.0+)                                                                                                                                                             |
-| `title`                           | Custom title for a new session (v3.6.0+)                                                                                                                                                                         |
-| `forwardSubagentText`             | Forward subagent text/thinking blocks for nested transcripts (v3.6.0+)                                                                                                                                           |
-| `agentProgressSummaries`          | Periodic AI-generated progress summaries for running subagents (v3.6.0+)                                                                                                                                         |
-| `includeHookEvents`               | Include hook lifecycle events in the output stream (v3.6.0+)                                                                                                                                                     |
+| `skills`                          | Enable skills for the session: `'all'` or an array of skill names (v3.5.0+)                                                                                                                                      |
+| `settings`                        | Inline `Settings` object or path to a settings JSON file (v3.5.0+)                                                                                                                                               |
+| `managedSettings`                 | Restrictive policy-tier settings enforced on the subprocess (v3.5.0+)                                                                                                                                            |
+| `toolAliases`                     | Map built-in tool names to replacement tools, e.g. `{ Bash: 'mcp__workspace__bash' }` (v3.5.0+)                                                                                                                  |
+| `toolConfig`                      | Per-tool configuration for built-in tools, e.g. `{ askUserQuestion: { previewFormat: 'html' } }` (v3.5.0+)                                                                                                       |
+| `planModeInstructions`            | Custom workflow instructions for plan mode (v3.5.0+)                                                                                                                                                             |
+| `title`                           | Custom title for a new session (v3.5.0+)                                                                                                                                                                         |
+| `forwardSubagentText`             | Forward subagent text/thinking blocks for nested transcripts (v3.5.0+)                                                                                                                                           |
+| `agentProgressSummaries`          | Periodic AI-generated progress summaries for running subagents (v3.5.0+)                                                                                                                                         |
+| `includeHookEvents`               | Include hook lifecycle events in the output stream (v3.5.0+)                                                                                                                                                     |
 | `fallbackModel`                   | Fallback model(s) if the primary is overloaded — accepts a comma-separated list to try in order                                                                                                                  |
 | `onUserDialog`                    | Callback rendering blocking CLI dialogs (`request_user_dialog`); see **User dialogs** below                                                                                                                      |
 | `supportedDialogKinds`            | Dialog kinds your `onUserDialog` can render; required for dialogs to be emitted at all                                                                                                                           |
 
-**System prompt** (`systemPrompt`) accepts a string, a string array, or the Claude Code preset object (v3.6.0+ for the array form). In the array form, include the re-exported `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` marker as a standalone element to split the static (cross-session cacheable) prefix from the dynamic suffix. The preset object additionally accepts `excludeDynamicSections: true` to strip per-user dynamic sections (working directory, git status) so the prompt caches across users.
+**System prompt** (`systemPrompt`) accepts a string, a string array, or the Claude Code preset object (v3.5.0+ for the array form). In the array form, include the re-exported `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` marker as a standalone element to split the static (cross-session cacheable) prefix from the dynamic suffix. The preset object additionally accepts `excludeDynamicSections: true` to strip per-user dynamic sections (working directory, git status) so the prompt caches across users.
 
-**Agent definitions** (`agents`) use the Agent SDK's `AgentDefinition` type directly (v3.6.0+), which adds `effort`, `permissionMode`, `background`, `memory`, `initialPrompt`, `skills`, `maxTurns`, and full model ID strings on top of the previously supported fields:
+**Agent definitions** (`agents`) use the Agent SDK's `AgentDefinition` type directly (v3.5.0+), which adds `effort`, `permissionMode`, `background`, `memory`, `initialPrompt`, `skills`, `maxTurns`, and full model ID strings on top of the previously supported fields:
 
 - `disallowedTools` - Tools to explicitly disallow for the agent
 - `mcpServers` - MCP servers available to the agent
 - `criticalSystemReminder_EXPERIMENTAL` - Experimental critical reminder
 
-**Alpha options** (v3.6.0+, marked `@alpha` upstream and subject to change): `taskBudget` (`{ total: number }` API-side token budget), `sessionStore` (mirror session transcripts to a custom storage adapter; the provider rejects combining it with `persistSession: false`), `sessionStoreFlush` (`'batched'` or `'eager'`), and `loadTimeoutMs` (resume-load timeout). The SDK's `InMemorySessionStore` reference implementation and the `SessionStore`/`SessionStoreFlush` types are re-exported.
+**Alpha options** (v3.5.0+, marked `@alpha` upstream and subject to change): `taskBudget` (`{ total: number }` API-side token budget), `sessionStore` (mirror session transcripts to a custom storage adapter; the provider rejects combining it with `persistSession: false`), `sessionStoreFlush` (`'batched'` or `'eager'`), and `loadTimeoutMs` (resume-load timeout). The SDK's `InMemorySessionStore` reference implementation and the `SessionStore`/`SessionStoreFlush` types are re-exported.
 
 ### User dialogs (`onUserDialog` / `supportedDialogKinds`)
 
@@ -384,6 +368,19 @@ const model = claudeCode('sonnet', {
 });
 ```
 
+### Not exposed (and why)
+
+A few Agent SDK surfaces are deliberately not wrapped by this provider. A compile-time drift guard (`src/options-coverage.test.ts`) keeps this list exhaustive: every SDK `Options` field is either mapped, provider-managed, or consciously listed below.
+
+**`Options` fields without a `ClaudeCodeSettings` equivalent** (both still reachable via `sdkOptions`):
+
+- `agent` — selects a named agent persona for the _main_ thread, overriding the conversation's system prompt, tools, and model. That conflicts with the AI SDK contract, where the model id and system prompt come from the AI SDK call itself. (Defining subagents via `agents` is fully supported.)
+- `onElicitation` — an interactive host-UI callback for MCP elicitation requests (form fields, URL auth). Headless AI SDK usage has no dialog surface, and the SDK safely auto-declines unhandled requests.
+
+**Provider-managed fields** that are set internally and ignored if passed via `sdkOptions`: `model`, `abortController`, `prompt`, and `outputFormat`.
+
+**Alternate SDK entry points** — the Agent SDK also ships `/browser` (WebSocket browser transport), `/bridge` (remote-control session transport), and `/assistant` (worker/daemon harness) entry points. These are alpha surfaces with their own versioning cadence and are aimed at embedding hosts rather than AI SDK consumers, so this provider does not re-export them. Import them directly from `@anthropic-ai/claude-agent-sdk/<entry>` if you need them, with the usual alpha-stability caveats.
+
 ## Claude Agent SDK 0.3.x Notes
 
 This provider depends on `@anthropic-ai/claude-agent-sdk@^0.3.170`. The 0.3.x line introduces a few changes worth knowing about:
@@ -409,7 +406,7 @@ SDK 0.3.x changed the SDK-level default: omitting `settingSources` now loads ALL
 
 SDK 0.3.x treats `Options.env` as a full **replacement** for the subprocess environment (it is no longer merged with `process.env`). The provider always constructs the subprocess environment from a sanitizing allowlist of `process.env`, then applies your `env` setting and `sdkOptions.env` on top (your values win; set a key to `undefined` to remove it). The allowlist is:
 
-- **Platform basics** — POSIX: `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`, `LANG`, `LC_ALL`, `TMPDIR`; Windows: `APPDATA`, `HOMEDRIVE`, `HOMEPATH`, `LOCALAPPDATA`, `PATH`, `PATHEXT`, `SYSTEMDRIVE`, `SYSTEMROOT`, `TEMP`, `TMP`, `USERNAME`, `USERPROFILE`, `WINDIR`
+- **Platform basics** — POSIX: `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`, `LANG`, `LC_ALL`, `TMPDIR`; Windows: `APPDATA`, `COMSPEC`, `HOMEDRIVE`, `HOMEPATH`, `LOCALAPPDATA`, `PATH`, `PATHEXT`, `SYSTEMDRIVE`, `SYSTEMROOT`, `TEMP`, `TMP`, `USERNAME`, `USERPROFILE`, `WINDIR`
 - **Prefix-matched** — any variable starting with `ANTHROPIC_`, `CLAUDE_`, `AWS_`, or `GOOGLE_` (covers `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`, Bedrock and Vertex credentials, etc.)
 - **Proxy/TLS** — `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (upper- and lowercase), `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`
 - **Cloud extras** — `GCLOUD_PROJECT`, `CLOUD_ML_REGION`
@@ -489,7 +486,7 @@ See [examples/message-injection.ts](examples/message-injection.ts) for complete 
 
 ## Skills Support
 
-Claude Code supports **Skills** - custom tools and capabilities defined in your user or project settings. The simplest way to enable them (v3.6.0+) is the `skills` option, which removes the need to add `'Skill'` to `allowedTools` yourself:
+Claude Code supports **Skills** - custom tools and capabilities defined in your user or project settings. The simplest way to enable them (v3.5.0+) is the `skills` option, which removes the need to add `'Skill'` to `allowedTools` yourself:
 
 ```typescript
 import { claudeCode } from 'ai-sdk-provider-claude-code';
@@ -609,7 +606,7 @@ All requests made through this provider report timing in `providerMetadata['clau
 - Requires Node.js ≥ 18
 - Image inputs require streaming mode with base64/data URLs (remote fetch is not supported)
 - Some AI SDK parameters are unsupported and ignored with an `unsupported` warning: `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, and `maxOutputTokens` (the CLI does not accept an output token cap)
-- AI SDK `tools` and `toolChoice` are not supported: the Claude Code CLI executes its own tools, so AI SDK tool definitions cannot be auto-bridged at the provider layer (both emit an `unsupported` warning). To expose custom tools to the CLI, bridge them with the `createAiSdkMcpServer` helper and pass the result via the `mcpServers` setting (plus `allowedTools`) — see **Using AI SDK Tools** above
+- AI SDK `tools` and `toolChoice` (other than `'auto'`) are not supported: the Claude Code CLI executes its own tools, so AI SDK tool definitions cannot be auto-bridged at the provider layer (both emit an `unsupported` warning). To expose custom tools to the CLI, bridge them with the `createAiSdkMcpServer` helper and pass the result via the `mcpServers` setting (plus `allowedTools`) — see **Using AI SDK Tools** above
 - When replaying conversation history through the prompt, assistant tool calls are serialized as text lines — `[Tool call: Read({"file_path":"/x"})]` (inputs truncated at 1000 characters) — paired with `Tool Result (Read): ...` lines for tool messages
 - `canUseTool` requires streaming input at the SDK level (AsyncIterable prompt). This provider supports it via `streamingInput`: use `'auto'` (default when `canUseTool` is set) or `'always'`. See GUIDE for details.
 

@@ -1,0 +1,112 @@
+name: SDK Canary
+
+# Weekly canary against @anthropic-ai/claude-agent-sdk@latest.
+#
+# A failure here means UPSTREAM SDK DRIFT (a new @latest broke typecheck or
+# tests, including the compile-time Options drift guard in
+# src/options-coverage.test.ts) — NOT a regression in this repository.
+# The pinned-dependency CI workflow (ci.yml) is the repo-health signal.
+
+on:
+  schedule:
+    # Mondays 06:00 UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  upstream-sdk-drift:
+    name: Upstream SDK drift (claude-agent-sdk@latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      matrix:
+        node-version: [20.x]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install pinned dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Install @anthropic-ai/claude-agent-sdk@latest (not saved)
+        run: npm install --no-save --legacy-peer-deps @anthropic-ai/claude-agent-sdk@latest
+
+      - name: Print resolved SDK version
+        run: |
+          echo "Pinned range in package.json:"
+          node -e "console.log(require('./package.json').dependencies['@anthropic-ai/claude-agent-sdk'])"
+          echo "Resolved @latest version under test:"
+          # The SDK does not export ./package.json, so read it from disk.
+          node -e "console.log(require('./node_modules/@anthropic-ai/claude-agent-sdk/package.json').version)"
+
+      - name: Type check against @latest (includes Options drift guard)
+        id: typecheck
+        run: npm run typecheck
+
+      - name: Unit tests against @latest
+        id: tests
+        run: npm run test
+
+      # On failure, file (or update) a tracking issue so drift is logged
+      # actionably instead of vanishing into a notification email.
+      # Gated on the typecheck/test steps so infra failures (npm ci or the
+      # @latest install flaking) are not misreported as upstream SDK drift —
+      # in that case node_modules would still hold the PINNED version.
+      - name: File or update SDK drift issue
+        if: failure() && (steps.typecheck.outcome == 'failure' || steps.tests.outcome == 'failure')
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            let sdkVersion = 'unknown';
+            try {
+              sdkVersion = JSON.parse(
+                fs.readFileSync('node_modules/@anthropic-ai/claude-agent-sdk/package.json', 'utf8')
+              ).version;
+            } catch {}
+            const title = 'SDK canary failing against @anthropic-ai/claude-agent-sdk@latest';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const failedStep =
+              '${{ steps.typecheck.outcome }}' === 'failure' ? 'typecheck' : 'unit tests';
+            const body = [
+              `The weekly canary failed against \`@anthropic-ai/claude-agent-sdk@${sdkVersion}\`.`,
+              '',
+              `- Run: ${runUrl}`,
+              `- Failed step: ${failedStep}`,
+              `- Pinned range: \`${JSON.parse(fs.readFileSync('package.json', 'utf8')).dependencies['@anthropic-ai/claude-agent-sdk']}\``,
+              '',
+              'A failure here means **upstream SDK drift** — typecheck (including the Options',
+              'drift guard in `src/options-coverage.test.ts`, which names any new `Options` key)',
+              'or unit tests broke against `@latest` — not a regression in this repository.',
+              '',
+              'Triage: check the failed step in the run log. A typecheck failure usually means',
+              'a new or changed SDK type (map it or add it to `KnownExcludedKey`); a test',
+              'failure means runtime behavior changed and needs investigation before the next',
+              'dependency bump.',
+            ].join('\n');
+            const { data: open } = await github.rest.issues.listForRepo({
+              ...context.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = open.find((i) => !i.pull_request && i.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: existing.number,
+                body: `Still failing.\n\n${body}`,
+              });
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body });
+            }

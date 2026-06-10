@@ -5,21 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.5.0] - 2026-06-10
 
-### Changed
-
-- **Upgraded `@anthropic-ai/claude-agent-sdk` to `^0.3.170`** (from `^0.2.63`). Notable upstream changes handled by this provider:
-  - **New peer dependencies** - The Agent SDK now requires `@anthropic-ai/sdk` (`>=0.93.0`) and `@modelcontextprotocol/sdk` (`^1.29.0`) as peer dependencies (auto-installed by npm 7+).
-  - **Per-platform native binaries** - The Agent SDK now ships the Claude Code runtime as per-platform native binaries via `optionalDependencies` instead of a single bundled `cli.js`. Keep `optionalDependencies` enabled in Docker/CI installs.
-  - **`settingSources` isolation preserved** - SDK 0.3.x changed the SDK default so that omitting `settingSources` loads ALL filesystem settings. The provider now explicitly passes `settingSources: []` when unset to preserve its documented isolation behavior. Set `settingSources` (or `sdkOptions.settingSources`) to opt in.
-  - **Subprocess env semantics** - SDK 0.3.x treats `Options.env` as a full replacement for the subprocess environment (no longer merged with `process.env`). The provider now always constructs the subprocess environment from an expanded sanitizing allowlist: the existing platform basics plus prefix-matched `ANTHROPIC_*`, `CLAUDE_*`, `AWS_*`, `GOOGLE_*` variables, proxy/TLS variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, lowercase variants, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`), and `GCLOUD_PROJECT`/`CLOUD_ML_REGION`. User-provided `env`/`sdkOptions.env` values still win, and explicit `undefined` removes a variable.
-  - **Workarounds re-validated** - The mid-stream JSON truncation shim and the input-stream-held-open workaround (anthropics/claude-code#4775) were re-validated against SDK 0.3.170 on 2026-06-09 and remain in place as defensive measures.
-- **`effort` now uses the SDK's exported `EffortLevel` type** - Replaces the hand-rolled union and adds the new `'xhigh'` level.
-- **`systemPrompt` widened to the SDK's full shape** - Now also accepts `string[]` (include the re-exported `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` marker as a standalone element to split the static, cross-session-cacheable prefix from the dynamic suffix) and `excludeDynamicSections` on the `claude_code` preset form. The legacy `customSystemPrompt`/`appendSystemPrompt` mapping is unchanged.
-- **`agents` now uses the SDK's `AgentDefinition` type directly** - Replaces the inline re-declaration, picking up `effort`, `permissionMode`, `background`, `memory`, `initialPrompt`, `skills`, `maxTurns`, and full model ID strings (validation now accepts any string `model`, not just `'sonnet' | 'opus' | 'haiku' | 'inherit'`; values that look like neither a known alias nor a full model ID still produce a validation warning to catch typos early).
-- **`fallbackModel` docs** - Now documented as accepting a comma-separated list of fallback models tried in order.
-- **Tool-call history round-trip** - Assistant tool calls in replayed conversation history are now serialized faithfully, one line per call (`[Tool call: Read({"file_path":"/x"})]`, inputs truncated at 1000 characters with a `...[truncated]` suffix), pairing with the existing `Tool Result (name): ...` lines. Previously all tool calls collapsed to a literal `[Tool calls made]` placeholder, losing tool context on multi-turn replay.
+This release upgrades the provider to `@anthropic-ai/claude-agent-sdk` 0.3.x (from 0.2.63) and closes the resulting capability gap in one pass: every non-excluded SDK `Options` field is now reachable as a first-class setting (enforced by a new compile-time drift guard), stream handling understands the new 0.3.x message types (refusal fallbacks, superseded messages, timing metadata), AI SDK conformance is tightened (honest warnings, tool-call history round-trip, an MCP bridge helper for AI SDK tools), and session lifecycle helpers, warm-start re-exports, and user-dialog support are exposed. A weekly canary CI job now tests against `@anthropic-ai/claude-agent-sdk@latest` to catch upstream drift early.
 
 ### Added
 
@@ -45,10 +33,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`PermissionDecisionClassification` re-export and permission docs** - `PermissionResult` (both branches) gained an optional `decisionClassification` (`'user_temporary' | 'user_permanent' | 'user_reject'`), and the `canUseTool` callback now receives optional `title`/`displayName`/`description` fields for rendering permission prompts — both are type-level SDK additions documented in the README (no provider code change needed).
 - **Permission hooks example** - `examples/hooks-permission-denied.ts` (`npm run example:hooks-permissions`) demonstrates a `PreToolUse` hook returning the SDK 0.3.x `permissionDecision: 'defer'` (handing the decision back to the permission system) and a `PermissionDenied` hook observing tools auto-denied without a prompt.
 - **Session lifecycle helper re-exports** - `forkSession`, `getSessionInfo`, `deleteSession`, `renameSession`, `tagSession`, `listSubagents`, `getSubagentMessages`, and the alpha `SessionStore` utilities `foldSessionSummary` and `importSessionToStore`, plus their option/result types (`ForkSessionOptions`, `ForkSessionResult`, `GetSessionInfoOptions`, `GetSubagentMessagesOptions`, `ListSubagentsOptions`, `SessionMutationOptions`, `ImportSessionToStoreOptions`) and related shapes (`SDKSessionInfo`, `SessionMessage`, `SessionKey`, `SessionStoreEntry`, `SessionSummaryEntry`, `SessionCronSummary`). A new [docs/sessions.md](docs/sessions.md) guide ties the session settings (`sessionId`, `resume`, `resumeSessionAt`, `forkSession`, `continue`, `persistSession`, `title`) together with the helpers — including which operate on `~/.claude/projects/` disk storage vs a custom `SessionStore`, and the `title` setting vs `renameSession()` relationship — and a runnable `examples/session-management.ts` (`npm run example:sessions`) walks the create → resume → fork → inspect → delete lifecycle.
+- **Compile-time SDK Options drift guard** - `src/options-coverage.test.ts` partitions `keyof Options` into mapped, provider-managed, and consciously-excluded buckets and fails `typecheck` with the offending key's name whenever a new SDK release adds an `Options` field this provider neither maps nor excludes (and, in reverse, when a listed key is removed upstream).
+- **Weekly SDK canary workflow** - `.github/workflows/canary.yml` installs `@anthropic-ai/claude-agent-sdk@latest` (`--no-save`) every Monday (plus `workflow_dispatch`) and runs typecheck and unit tests, so upstream SDK drift surfaces as a clearly-labeled canary failure instead of a surprise during the next upgrade.
+- **"Not exposed (and why)" README section** - Documents the consciously-unmapped `Options` fields (`agent`, `onElicitation`), the provider-managed fields, and why the SDK's alpha `/browser`, `/bridge`, and `/assistant` entry points are not re-exported. `docs/ai-sdk-v4/` and `docs/ai-sdk-v5/` are now explicitly marked as historical (legacy provider versions).
 
-### Security
+### Changed
 
-### Fixed
+- **Upgraded `@anthropic-ai/claude-agent-sdk` to `^0.3.170`** (from `^0.2.63`). Notable upstream changes handled by this provider:
+  - **New peer dependencies** - The Agent SDK now requires `@anthropic-ai/sdk` (`>=0.93.0`) and `@modelcontextprotocol/sdk` (`^1.29.0`) as peer dependencies (auto-installed by npm 7+).
+  - **Per-platform native binaries** - The Agent SDK now ships the Claude Code runtime as per-platform native binaries via `optionalDependencies` instead of a single bundled `cli.js`. Keep `optionalDependencies` enabled in Docker/CI installs.
+  - **`settingSources` isolation preserved** - SDK 0.3.x changed the SDK default so that omitting `settingSources` loads ALL filesystem settings. The provider now explicitly passes `settingSources: []` when unset to preserve its documented isolation behavior. Set `settingSources` (or `sdkOptions.settingSources`) to opt in.
+  - **Subprocess env semantics** - SDK 0.3.x treats `Options.env` as a full replacement for the subprocess environment (no longer merged with `process.env`). The provider now always constructs the subprocess environment from an expanded sanitizing allowlist: the existing platform basics plus prefix-matched `ANTHROPIC_*`, `CLAUDE_*`, `AWS_*`, `GOOGLE_*` variables, proxy/TLS variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, lowercase variants, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`), and `GCLOUD_PROJECT`/`CLOUD_ML_REGION`. User-provided `env`/`sdkOptions.env` values still win, and explicit `undefined` removes a variable.
+  - **Workarounds re-validated** - The mid-stream JSON truncation shim and the input-stream-held-open workaround (anthropics/claude-code#4775) were re-validated against SDK 0.3.170 on 2026-06-09 and remain in place as defensive measures.
+- **`effort` now uses the SDK's exported `EffortLevel` type** - Replaces the hand-rolled union and adds the new `'xhigh'` level.
+- **`systemPrompt` widened to the SDK's full shape** - Now also accepts `string[]` (include the re-exported `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` marker as a standalone element to split the static, cross-session-cacheable prefix from the dynamic suffix) and `excludeDynamicSections` on the `claude_code` preset form. The legacy `customSystemPrompt`/`appendSystemPrompt` mapping is unchanged.
+- **`agents` now uses the SDK's `AgentDefinition` type directly** - Replaces the inline re-declaration, picking up `effort`, `permissionMode`, `background`, `memory`, `initialPrompt`, `skills`, `maxTurns`, and full model ID strings (validation now accepts any string `model`, not just `'sonnet' | 'opus' | 'haiku' | 'inherit'`; values that look like neither a known alias nor a full model ID still produce a validation warning to catch typos early).
+- **`fallbackModel` docs** - Now documented as accepting a comma-separated list of fallback models tried in order.
+- **Tool-call history round-trip** - Assistant tool calls in replayed conversation history are now serialized faithfully, one line per call (`[Tool call: Read({"file_path":"/x"})]`, inputs truncated at 1000 characters with a `...[truncated]` suffix), pairing with the existing `Tool Result (name): ...` lines. Previously all tool calls collapsed to a literal `[Tool calls made]` placeholder, losing tool context on multi-turn replay.
+
+### Planned for 4.0.0
+
+Deferred breaking cleanups, collected here for visibility:
+
+- Remove the deprecated `customSystemPrompt` and `appendSystemPrompt` settings (superseded by the `systemPrompt` union).
+- Remove the deprecated `maxThinkingTokens` setting (superseded by `thinking`).
+- Possibly remove `executable`/`executableArgs` if the SDK's per-platform native binaries make them effective no-ops for the bundled runtime.
 
 ## [3.4.4] - 2026-03-10
 

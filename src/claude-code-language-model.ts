@@ -27,7 +27,7 @@ import type {
  * Provider version reported to the Agent SDK via CLAUDE_AGENT_SDK_CLIENT_APP.
  * Keep in sync with package.json (kept as a constant to avoid a build step).
  */
-const PROVIDER_VERSION = '3.4.4';
+const PROVIDER_VERSION = '3.5.0';
 const DEFAULT_CLIENT_APP = `ai-sdk-provider-claude-code/${PROVIDER_VERSION}`;
 
 const CLAUDE_CODE_TRUNCATION_WARNING =
@@ -1089,7 +1089,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       cwd: this.settings.cwd,
       executable: this.settings.executable,
       executableArgs: this.settings.executableArgs,
-      permissionMode: this.settings.permissionMode,
+      // 'delegate' was dropped from the SDK's PermissionMode type in 0.3.x but
+      // is still accepted at runtime; forward it through for backward compatibility.
+      permissionMode: this.settings.permissionMode as Options['permissionMode'],
       permissionPromptToolName: this.settings.permissionPromptToolName,
       continue: this.settings.continue,
       allowedTools: this.settings.allowedTools,

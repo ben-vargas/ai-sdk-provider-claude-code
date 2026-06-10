@@ -1,5 +1,7 @@
 # Usage Guide (AI SDK v5)
 
+> **Historical:** Covers legacy provider versions 1.x–2.x (AI SDK v5). Much still applies to 3.x; new features are documented in the [main README](../../README.md).
+
 ## Essential Examples
 
 ### Streaming Responses

@@ -357,6 +357,20 @@ npx tsx examples/hooks-permission-denied.ts
 
 **Key concepts**: PreToolUse `'defer'` decision (hand the decision back to the permission system), PermissionDenied hook, `disallowedTools`, `providerMetadata['claude-code'].permissionDenials`
 
+## AI SDK Tool Bridging
+
+### 30. AI SDK Tools (`ai-sdk-tools.ts`)
+
+**Purpose**: Bridge AI SDK `tool()` definitions into an in-process MCP server with `createAiSdkMcpServer`.
+
+```bash
+npx tsx examples/ai-sdk-tools.ts
+```
+
+**Key concepts**: `createAiSdkMcpServer`, `mcpServers` setting, `allowedTools` with `mcp__<serverName>__<toolName>` naming, provider-executed dynamic tool parts
+
+**What you'll see**: AI SDK tools (Zod schemas, `execute` functions) running in-process via `generateText` and `streamText`, with tool calls/results surfacing as provider-executed dynamic tool parts.
+
 ## Common Patterns
 
 ### Object Generation
@@ -500,7 +514,9 @@ const result4 = streamText({
 | hooks-callbacks             | Event handling        | Lifecycle hooks         |
 | hooks-permission-denied     | Permission control    | 'defer' + denial hooks  |
 | sdk-tools-callbacks         | Custom tools          | In-process MCP tools    |
+| ai-sdk-tools                | AI SDK tool bridging  | createAiSdkMcpServer    |
 | skills-management           | Skills configuration  | settingSources setup    |
+| session-management          | Session lifecycle     | Resume, fork, inspect   |
 | long-running-tasks          | Complex reasoning     | Timeout handling        |
 | generate-object             | Object generation     | Core patterns & nesting |
 | generate-object-constraints | Validation            | Regex, ranges, enums    |
@@ -514,7 +530,7 @@ const result4 = streamText({
 2. **Images & Tools**: `images.ts` → `tool-streaming.ts` to understand multimodal inputs and tool events
 3. **Logging**: `logging-default.ts` → `logging-verbose.ts` → `logging-custom-logger.ts` → `logging-disabled.ts`
 4. **Object Generation**: `generate-object.ts` → `generate-object-constraints.ts` → `stream-object.ts`
-5. **Advanced**: `custom-config.ts` → `tool-management.ts` → `skills-management.ts` → `hooks-callbacks.ts` → `sdk-tools-callbacks.ts` → `long-running-tasks.ts`
+5. **Advanced**: `custom-config.ts` → `tool-management.ts` → `skills-management.ts` → `hooks-callbacks.ts` → `sdk-tools-callbacks.ts` → `ai-sdk-tools.ts` → `session-management.ts` → `long-running-tasks.ts`
 6. **Testing/Troubleshooting**: Run `integration-test.ts`, then `structured-output-repro.ts` and `limitations.ts` if behavior seems off
 
 For more details, see the main [README](../README.md).

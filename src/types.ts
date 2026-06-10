@@ -167,10 +167,14 @@ export interface ClaudeCodeSettings {
   executableArgs?: string[];
 
   /**
-   * Permission mode for tool usage
+   * Permission mode for tool usage.
+   *
+   * `'delegate'` was dropped from the SDK's `PermissionMode` type in 0.3.x
+   * but is still accepted at runtime, so it remains assignable here for
+   * backward compatibility.
    * @default 'default'
    */
-  permissionMode?: PermissionMode;
+  permissionMode?: PermissionMode | 'delegate';
 
   /**
    * Custom tool name for permission prompts

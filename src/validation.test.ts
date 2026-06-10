@@ -6,6 +6,7 @@ import {
   validatePrompt,
   validateSessionId,
 } from './validation.js';
+import type { ClaudeCodeSettings } from './types.js';
 import * as fs from 'fs';
 
 // Mock fs module
