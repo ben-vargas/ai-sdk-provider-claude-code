@@ -160,7 +160,7 @@ async function main() {
   // subprocess with close(). (WarmQuery is also AsyncDisposable, so
   // `await using warm = await startup(...)` works on newer runtimes.)
   console.log('\n4️⃣  Discarding an unused warm handle with close()...');
-  const unused = await startup({ options: { model: 'haiku' } });
+  const unused = await startup({ options: { model: 'haiku', settingSources: [] } });
   unused.close();
   console.log('✅ Unused WarmQuery closed without sending a prompt');
 }
