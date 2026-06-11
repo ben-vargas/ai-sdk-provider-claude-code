@@ -6,6 +6,7 @@
  */
 
 import { copyFile, mkdtemp, rm } from 'node:fs/promises';
+import { rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateText } from 'ai';
@@ -197,6 +198,10 @@ async function testSessionLifecycle() {
   // in-process session helpers read it at call time.
   const realConfigDir = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
   const tempConfigDir = await mkdtemp(join(tmpdir(), 'claude-it-sessions-'));
+  // The global timeout exits via process.exit(1), which skips finally blocks;
+  // register the dir for the synchronous exit handler so a copied
+  // .credentials.json can never be left behind in /tmp.
+  tempDirsToCleanUp.add(tempConfigDir);
 
   // A custom config dir has its own credential store, so keep the CLI
   // authenticated two ways (both best-effort, covering the common setups):
@@ -278,6 +283,7 @@ async function testSessionLifecycle() {
       process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR = previousSecureStorageDir;
     }
     await rm(tempConfigDir, { recursive: true, force: true });
+    tempDirsToCleanUp.delete(tempConfigDir);
   }
 }
 
@@ -326,6 +332,19 @@ async function runAllTests() {
     process.exit(1);
   }
 }
+
+// Temp dirs that may hold copied credentials; cleaned both in finally blocks
+// and synchronously at process exit (process.exit(1) skips finally).
+const tempDirsToCleanUp = new Set<string>();
+process.on('exit', () => {
+  for (const dir of tempDirsToCleanUp) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // best-effort: nothing actionable at exit time
+    }
+  }
+});
 
 // Add configurable global timeout (default 3 minutes)
 const TIMEOUT_MS = Number(process.env.CLAUDE_IT_TIMEOUT_MS ?? '180000');

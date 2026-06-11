@@ -364,9 +364,21 @@ export function validateSettings(settings: unknown): {
     // Additional validation warnings
     const validSettings = result.data;
 
+    // sdkOptions escape-hatch values are merged over explicit settings at
+    // query time (undefined-valued keys are skipped by the merge), so every
+    // cross-option SDK-constraint check below must inspect the EFFECTIVE
+    // value - the sdkOptions override when defined, the first-class setting
+    // otherwise - on BOTH sides of each constraint.
+    const sdkOptionsRecord = validSettings.sdkOptions as Record<string, unknown> | undefined;
+    const effective = (key: string): unknown => {
+      const override = sdkOptionsRecord?.[key];
+      return override !== undefined ? override : (validSettings as Record<string, unknown>)[key];
+    };
+    const effSessionStore = effective('sessionStore');
+
     // SDK constraint: sessionStore mirroring requires local session writes,
     // so it cannot be combined with persistSession: false.
-    if (validSettings.sessionStore !== undefined && validSettings.persistSession === false) {
+    if (effSessionStore !== undefined && effective('persistSession') === false) {
       errors.push(
         'sessionStore cannot be combined with persistSession: false. Transcript mirroring requires local session writes; remove persistSession: false or drop sessionStore.'
       );
@@ -376,29 +388,21 @@ export function validateSettings(settings: unknown): {
     // SDK constraint: checkpoint backup blobs are not mirrored to a sessionStore,
     // so rewindFiles() would fail after a store-backed resume. The SDK throws at
     // query time; reject early here instead.
-    if (
-      validSettings.sessionStore !== undefined &&
-      validSettings.enableFileCheckpointing === true
-    ) {
+    if (effSessionStore !== undefined && effective('enableFileCheckpointing') === true) {
       errors.push(
         'sessionStore cannot be combined with enableFileCheckpointing: true. Checkpoint backup blobs are not mirrored to the store (rewindFiles() fails after a store-backed resume); remove enableFileCheckpointing or drop sessionStore.'
       );
       return { valid: false, warnings, errors };
     }
 
-    // sdkOptions escape-hatch values participate in the cross-option checks
-    // below (they are merged over explicit settings at query time).
-    const sdkOptionsRecord = validSettings.sdkOptions as Record<string, unknown> | undefined;
-
     // SDK constraint: continue with a sessionStore needs store.listSessions()
     // to discover the most recent session (unless a resume id is given).
     // The SDK throws at query time; reject early here instead.
     if (
-      validSettings.continue === true &&
-      validSettings.sessionStore !== undefined &&
-      validSettings.resume === undefined &&
-      sdkOptionsRecord?.resume === undefined &&
-      typeof (validSettings.sessionStore as { listSessions?: unknown }).listSessions !== 'function'
+      effective('continue') === true &&
+      effSessionStore !== undefined &&
+      effective('resume') === undefined &&
+      typeof (effSessionStore as { listSessions?: unknown }).listSessions !== 'function'
     ) {
       errors.push(
         'continue: true with sessionStore requires the store to implement listSessions() (used to discover the most recent session). Implement listSessions(), pass resume with an explicit session ID, or drop continue.'
@@ -409,12 +413,11 @@ export function validateSettings(settings: unknown): {
     // SDK constraint: the sandbox option cannot be combined with a settings
     // FILE PATH (inline Settings objects are fine - the SDK serializes them
     // to inline JSON). The SDK throws at query time; reject early here instead.
+    const effSettingsOption = effective('settings');
     if (
-      validSettings.sandbox !== undefined &&
-      typeof validSettings.settings === 'string' &&
-      !(
-        validSettings.settings.trim().startsWith('{') && validSettings.settings.trim().endsWith('}')
-      )
+      effective('sandbox') !== undefined &&
+      typeof effSettingsOption === 'string' &&
+      !(effSettingsOption.trim().startsWith('{') && effSettingsOption.trim().endsWith('}'))
     ) {
       errors.push(
         'sandbox cannot be combined with a settings file path. Pass settings as an inline Settings object, or move the sandbox configuration into the settings file and drop the sandbox option.'
@@ -426,15 +429,10 @@ export function validateSettings(settings: unknown): {
     // --resume unless --fork-session is also set (to name the forked
     // session's ID). The CLI rejects the flags at argv parsing; reject early
     // here instead.
-    const forkSessionEnabled =
-      validSettings.forkSession === true || sdkOptionsRecord?.forkSession === true;
-    const continueEnabled = validSettings.continue === true || sdkOptionsRecord?.continue === true;
-    const hasResumeTarget =
-      validSettings.resume !== undefined || sdkOptionsRecord?.resume !== undefined;
     if (
-      validSettings.sessionId !== undefined &&
-      !forkSessionEnabled &&
-      (continueEnabled || hasResumeTarget)
+      effective('sessionId') !== undefined &&
+      effective('forkSession') !== true &&
+      (effective('continue') === true || effective('resume') !== undefined)
     ) {
       errors.push(
         "sessionId cannot be combined with continue or resume unless forkSession: true is also set (it then names the forked session's ID). Remove sessionId, remove continue/resume, or add forkSession: true."
@@ -481,22 +479,21 @@ export function validateSettings(settings: unknown): {
       validateToolNames(validSettings.disallowedTools, 'disallowed');
     }
 
-    // supportedDialogKinds is only meaningful alongside onUserDialog; the SDK
-    // throws at option intake when a non-empty list is passed without the
-    // callback, so surface the mistake early as a validation warning.
-    // An empty list does not throw, and onUserDialog may be supplied via the
-    // sdkOptions escape hatch (merged after settings), so neither case warns.
-    const sdkOptionsOnUserDialog = (validSettings.sdkOptions as Record<string, unknown> | undefined)
-      ?.onUserDialog;
+    // SDK constraint: a non-empty supportedDialogKinds without an onUserDialog
+    // handler throws at option intake ("declaring dialog kinds without a
+    // handler would park dialogs nothing can answer"), so reject it instead
+    // of warning - the query would fail at startup anyway. An empty list does
+    // not throw, and onUserDialog may arrive via the sdkOptions escape hatch.
+    const effDialogKinds = effective('supportedDialogKinds');
     if (
-      validSettings.supportedDialogKinds !== undefined &&
-      validSettings.supportedDialogKinds.length > 0 &&
-      validSettings.onUserDialog == null &&
-      sdkOptionsOnUserDialog == null
+      Array.isArray(effDialogKinds) &&
+      effDialogKinds.length > 0 &&
+      effective('onUserDialog') == null
     ) {
-      warnings.push(
-        'supportedDialogKinds is set without onUserDialog. The SDK requires the onUserDialog callback to render declared dialog kinds and throws when a non-empty list is passed without it.'
+      errors.push(
+        'supportedDialogKinds is set without onUserDialog. The SDK requires the onUserDialog callback to render declared dialog kinds and throws when a non-empty list is passed without it; provide onUserDialog or remove supportedDialogKinds.'
       );
+      return { valid: false, warnings, errors };
     }
 
     // Warn about Skills configuration issues

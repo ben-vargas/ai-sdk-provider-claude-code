@@ -3423,12 +3423,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     break;
                   }
                 }
-                accumulatedText = '';
-                textSegments.length = 0;
-                streamedTextLength = 0;
-                emittedTextSinceLastAssistant = '';
                 this.logger.debug('[claude-code] Closed text part due to user message');
               }
+              // Reset the accumulators unconditionally: in JSON mode no text
+              // part is ever opened (textPartId stays undefined), but prose
+              // accumulated before a tool call must still be discarded so the
+              // final-object extraction (and the missing-structured_output
+              // recovery) parse only the last assistant turn's text.
+              accumulatedText = '';
+              textSegments.length = 0;
+              streamedTextLength = 0;
+              emittedTextSinceLastAssistant = '';
 
               // Extract parent_tool_use_id from SDK message for late-arriving tool results
               const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string })

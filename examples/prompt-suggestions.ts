@@ -36,6 +36,19 @@ function waitFor<T>(promise: Promise<T>, ms: number): Promise<T | null> {
 async function suggestionsEnabled(): Promise<{ answer: string; suggestion: string | null }> {
   console.log('1️⃣ promptSuggestions: true — suggestion delivered post-finish\n');
 
+  // The CLI suppresses prompt suggestions on the FIRST turn of a fresh
+  // session, so seed a session with an ordinary request first and then ask
+  // for suggestions on the resumed second turn.
+  const seed = await generateText({
+    model: claudeCode('haiku'),
+    prompt:
+      'I am writing a two-line poem about the ocean. ' +
+      'Give me ONLY the first line for now. I will ask for the second line next.',
+  });
+  const sessionId = (seed.providerMetadata?.['claude-code'] as { sessionId?: string } | undefined)
+    ?.sessionId;
+  console.log('Seeded session:', sessionId ?? '(no session id?)');
+
   // The callback fires after the result message, so capture it via a promise.
   let resolveSuggestion!: (s: string) => void;
   const suggestionPromise = new Promise<string>((resolve) => {
@@ -43,19 +56,18 @@ async function suggestionsEnabled(): Promise<{ answer: string; suggestion: strin
   });
 
   const model = claudeCode('haiku', {
+    resume: sessionId,
     promptSuggestions: true,
     onPromptSuggestion: (suggestion) => {
       resolveSuggestion(suggestion);
     },
   });
 
-  // A conversation-shaped first step of a two-step task, so the predicted
-  // next prompt ("now do step two") is plausible.
+  // Second turn of the two-step task, so the predicted next prompt
+  // ("now do step two" / "ask for the second line") is plausible.
   const result = await generateText({
     model,
-    prompt:
-      'I am writing a two-line poem about the ocean. ' +
-      'Give me ONLY the first line for now. I will ask for the second line next.',
+    prompt: 'Nice. Now remind me: what should I ask you for next?',
   });
 
   // The answer prints first; the suggestion arrives after the result message.
@@ -66,7 +78,11 @@ async function suggestionsEnabled(): Promise<{ answer: string; suggestion: strin
   if (suggestion) {
     console.log('Suggested next prompt (arrived after finish):', suggestion);
   } else {
-    console.log('No suggestion delivered within the drain window.');
+    console.log(
+      'No suggestion delivered within the drain window.\n' +
+        '(Delivery depends on CLI-side heuristics and may not occur on every\n' +
+        'turn; the feedback-loop demo below will use a simulated suggestion.)'
+    );
   }
   return { answer: result.text.trim(), suggestion };
 }
@@ -126,9 +142,13 @@ async function main() {
   try {
     const { answer, suggestion } = await suggestionsEnabled();
     await suggestionsDisabled();
-    if (suggestion) {
-      await feedSuggestionBack(answer, suggestion);
+    // Demonstrate the feedback loop either way: with the real suggestion
+    // when one was delivered, otherwise with a clearly-labeled simulated one
+    // (what the CLI typically predicts for this two-step task).
+    if (!suggestion) {
+      console.log('\n(Using a simulated suggestion for the loop demo below.)');
     }
+    await feedSuggestionBack(answer, suggestion ?? 'Now give me the second line of the poem.');
   } catch (error) {
     console.error('Error:', error);
     console.log('\nTroubleshooting:');

@@ -7623,6 +7623,54 @@ describe('structured output hardening', () => {
       });
     });
 
+    it('recovers the final object when prose preceded a tool call in streaming JSON mode', async () => {
+      // Prose accumulated before a tool call must be discarded at the
+      // user/tool-result boundary even though JSON mode never opens a text
+      // part (textPartId stays undefined) - otherwise the recovery parses
+      // "prose + JSON" and fails.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                { type: 'text', text: 'Let me look that up first.' },
+                { type: 'tool_use', id: 'toolu_json_1', name: 'Read', input: { file: 'x' } },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                { type: 'tool_result', tool_use_id: 'toolu_json_1', content: 'data', is_error: false },
+              ],
+            },
+          };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: '{"name":"Dave"}' }] },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const chunks = await readAll(result.stream);
+
+      expect(chunks.some((c) => c.type === 'error')).toBe(false);
+      const streamedText = chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join('');
+      expect(JSON.parse(streamedText)).toEqual({ name: 'Dave' });
+    });
+
     it('emits a descriptive non-retryable error when the prose is not JSON', async () => {
       const mockResponse = {
         async *[Symbol.asyncIterator]() {

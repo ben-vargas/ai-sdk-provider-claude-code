@@ -875,15 +875,13 @@ describe('validateSettings', () => {
       expect(result.errors[0]).toContain('onUserDialog must be a function');
     });
 
-    it('should warn when supportedDialogKinds is set without onUserDialog', () => {
+    it('should reject supportedDialogKinds set without onUserDialog (SDK throws)', () => {
       const result = validateSettings({
         supportedDialogKinds: ['refusal_fallback_prompt'],
       });
 
-      expect(result.valid).toBe(true);
-      expect(
-        result.warnings.some((w) => w.includes('supportedDialogKinds is set without onUserDialog'))
-      ).toBe(true);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('supportedDialogKinds is set without onUserDialog');
     });
 
     it('should not warn for an empty supportedDialogKinds array without onUserDialog', () => {
@@ -896,9 +894,9 @@ describe('validateSettings', () => {
       expect(result.warnings.filter((w) => w.includes('supportedDialogKinds'))).toHaveLength(0);
     });
 
-    it('should not warn when onUserDialog is supplied via sdkOptions', () => {
+    it('should accept supportedDialogKinds when onUserDialog is supplied via sdkOptions', () => {
       // sdkOptions is merged after the settings block, so this combination is
-      // valid at runtime and must not draw the warning.
+      // valid at runtime and must not be rejected.
       const result = validateSettings({
         supportedDialogKinds: ['refusal_fallback_prompt'],
         sdkOptions: {
@@ -908,6 +906,59 @@ describe('validateSettings', () => {
 
       expect(result.valid).toBe(true);
       expect(result.warnings.filter((w) => w.includes('supportedDialogKinds'))).toHaveLength(0);
+    });
+
+    it('applies cross-option SDK constraints to the merged sdkOptions overlay', () => {
+      const sessionStore = { append: async () => undefined, load: async () => null };
+
+      // sessionStore arriving via sdkOptions still conflicts with persistSession: false
+      const storeViaSdkOptions = validateSettings({
+        persistSession: false,
+        sdkOptions: { sessionStore },
+      });
+      expect(storeViaSdkOptions.valid).toBe(false);
+      expect(storeViaSdkOptions.errors[0]).toContain(
+        'sessionStore cannot be combined with persistSession'
+      );
+
+      // continue arriving via sdkOptions still requires listSessions() on the store
+      const continueViaSdkOptions = validateSettings({
+        sessionStore,
+        sdkOptions: { continue: true },
+      });
+      expect(continueViaSdkOptions.valid).toBe(false);
+      expect(continueViaSdkOptions.errors[0]).toContain('listSessions()');
+
+      // enableFileCheckpointing via sdkOptions conflicts with first-class sessionStore
+      const checkpointViaSdkOptions = validateSettings({
+        sessionStore,
+        sdkOptions: { enableFileCheckpointing: true },
+      });
+      expect(checkpointViaSdkOptions.valid).toBe(false);
+      expect(checkpointViaSdkOptions.errors[0]).toContain('enableFileCheckpointing');
+
+      // sandbox via sdkOptions conflicts with a first-class settings file path
+      const sandboxViaSdkOptions = validateSettings({
+        settings: '/etc/claude/settings.json',
+        sdkOptions: { sandbox: { enabled: true } },
+      });
+      expect(sandboxViaSdkOptions.valid).toBe(false);
+      expect(sandboxViaSdkOptions.errors[0]).toContain('sandbox cannot be combined');
+
+      // an sdkOptions override can also RESOLVE a first-class conflict
+      const resolvedConflict = validateSettings({
+        sessionStore,
+        persistSession: false,
+        sdkOptions: { persistSession: true },
+      });
+      expect(resolvedConflict.valid).toBe(true);
+
+      // supportedDialogKinds via sdkOptions without a handler is rejected too
+      const kindsViaSdkOptions = validateSettings({
+        sdkOptions: { supportedDialogKinds: ['refusal_fallback_prompt'] },
+      });
+      expect(kindsViaSdkOptions.valid).toBe(false);
+      expect(kindsViaSdkOptions.errors[0]).toContain('supportedDialogKinds');
     });
   });
 });
