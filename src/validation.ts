@@ -296,7 +296,7 @@ export const claudeCodeSettingsSchema = z
         message: 'onStreamStart must be a function',
       })
       .optional(),
-    // Callback invoked with the predicted next user prompt (requires promptSuggestions: true)
+    // Callback invoked with the predicted next user prompt (active unless promptSuggestions: false)
     onPromptSuggestion: z
       .any()
       .refine((val) => val === undefined || typeof val === 'function', {

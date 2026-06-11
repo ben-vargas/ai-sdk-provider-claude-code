@@ -651,7 +651,14 @@ export interface ClaudeCodeSettings {
 
   /**
    * Callback invoked when the agent emits a prompt suggestion (a predicted
-   * next user prompt). Requires `promptSuggestions: true`.
+   * next user prompt). Suggestions are enabled when `promptSuggestions` is
+   * `true` OR left unset (the SDK enables them when the option is absent or
+   * true and disables them only when explicitly `false`). When the callback
+   * is set and `promptSuggestions !== false`, the provider drains post-result
+   * messages to deliver the suggestion. Delivery is still subject to CLI
+   * heuristics — suppressed on the first turn, after API errors, in plan
+   * mode, and by `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false` — so it may not
+   * fire on every turn.
    *
    * The SDK emits at most one `prompt_suggestion` message per turn, and it
    * arrives AFTER the `result` message — i.e. after the AI SDK response has

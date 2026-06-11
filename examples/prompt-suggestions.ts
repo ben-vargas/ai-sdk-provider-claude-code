@@ -1,9 +1,12 @@
 /**
  * Prompt suggestions example for Claude Code AI SDK Provider
  *
- * Demonstrates the onPromptSuggestion callback (requires promptSuggestions: true).
- * When enabled, the Claude Agent SDK predicts the user's likely next prompt and
- * emits it as a `prompt_suggestion` message.
+ * Demonstrates the onPromptSuggestion callback. The Claude Agent SDK predicts
+ * the user's likely next prompt and emits it as a `prompt_suggestion` message.
+ * Suggestions are ENABLED when `promptSuggestions` is true OR left unset, and
+ * DISABLED only when explicitly `false`. Delivery is also subject to CLI
+ * heuristics (suppressed on the first turn, after errors, in plan mode), so it
+ * does not fire on every turn even when enabled.
  *
  * Why a callback instead of providerMetadata? The suggestion arrives AFTER the
  * `result` message — i.e. after the AI SDK response has already finished — so it
@@ -91,11 +94,14 @@ async function suggestionsEnabled(): Promise<{
 }
 
 async function suggestionsDisabled(): Promise<void> {
-  console.log('\n2️⃣ promptSuggestions unset — callback never fires\n');
+  console.log('\n2️⃣ promptSuggestions: false — suggestions disabled\n');
 
   let fired = false;
   const model = claudeCode('haiku', {
-    // promptSuggestions intentionally NOT set
+    // Explicitly disabled. (Leaving promptSuggestions UNSET would ENABLE them
+    // per the SDK — absent or true enables, only false disables — so the
+    // disabled case must set it to false.)
+    promptSuggestions: false,
     onPromptSuggestion: () => {
       fired = true;
     },
@@ -107,13 +113,14 @@ async function suggestionsDisabled(): Promise<void> {
   });
   console.log('Answer:', result.text.trim());
 
-  // Short grace period: without promptSuggestions: true the CLI never emits
-  // a prompt_suggestion message, so the callback stays silent.
-  await new Promise((resolve) => setTimeout(resolve, 3_000));
+  // With promptSuggestions: false the CLI never emits a prompt_suggestion, and
+  // the provider skips the post-result drain entirely, so the callback stays
+  // silent. (A brief grace period to make the absence observable.)
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
   console.log(
     fired
-      ? 'Unexpected: suggestion callback fired without promptSuggestions: true'
-      : 'No suggestion delivered (as expected without promptSuggestions: true)'
+      ? 'Unexpected: suggestion callback fired with promptSuggestions: false'
+      : 'No suggestion delivered (as expected with promptSuggestions: false)'
   );
 }
 

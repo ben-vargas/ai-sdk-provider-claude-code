@@ -675,7 +675,7 @@ console.log(meta?.costUsd, meta?.ttftMs, meta?.terminalReason);
 
 ### Prompt suggestions (`onPromptSuggestion`)
 
-With `promptSuggestions: true`, the agent predicts the next user prompt after each turn. The SDK delivers it AFTER the `result` message — i.e. after the AI SDK response has already finished — so it cannot be part of `providerMetadata`. Register a callback instead. (In streaming mode the provider briefly drains post-result messages to deliver the suggestion; the drain stops after the first suggestion and is capped at 10 seconds so a lingering CLI process is never held open indefinitely.)
+When `promptSuggestions` is `true` or left unset (the SDK enables suggestions when the option is absent or true, disabling them only when explicitly `false`), the agent predicts the next user prompt after each turn. Delivery is subject to CLI heuristics (suppressed on the first turn, after API errors, in plan mode, or via `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`), so it may not fire on every turn. The SDK delivers it AFTER the `result` message — i.e. after the AI SDK response has already finished — so it cannot be part of `providerMetadata`. Register a callback instead. (In streaming mode the provider briefly drains post-result messages to deliver the suggestion; the drain stops after the first suggestion and is capped at 10 seconds so a lingering CLI process is never held open indefinitely.)
 
 ```ts
 const model = claudeCode('sonnet', {
