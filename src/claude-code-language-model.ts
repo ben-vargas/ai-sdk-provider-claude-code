@@ -1846,6 +1846,62 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     }
   }
 
+  /**
+   * Bounded post-result drain for the `prompt_suggestion` message
+   * (promptSuggestions: true), shared by doGenerate and doStream. The
+   * suggestion arrives AFTER the result message; the SDK emits at most one
+   * per turn, so stop once it is delivered, and a timeout closes the
+   * iterator (tearing down the subprocess) if the CLI lingers after the
+   * result without emitting one. Advances the response's own generator, so
+   * the caller's surrounding loop resumes to a finished iterator.
+   */
+  private async drainPromptSuggestion(
+    response: AsyncIterable<SDKMessage>,
+    onPromptSuggestion: (suggestion: string) => void
+  ): Promise<void> {
+    const iterator = response[Symbol.asyncIterator]();
+    let drainTimer: ReturnType<typeof setTimeout> | undefined;
+    const drainTimeout = new Promise<'timeout'>((resolve) => {
+      drainTimer = setTimeout(
+        () => resolve('timeout'),
+        ClaudeCodeLanguageModel.PROMPT_SUGGESTION_DRAIN_TIMEOUT_MS
+      );
+      (drainTimer as { unref?: () => void }).unref?.();
+    });
+    try {
+      while (true) {
+        const winner = await Promise.race([iterator.next(), drainTimeout]);
+        if (winner === 'timeout') {
+          this.logger.debug('[claude-code] Post-result drain timed out; closing SDK iterator');
+          // Fire-and-forget: return() may not settle while the subprocess is
+          // wedged, and the response has already been produced.
+          void iterator.return?.().catch(() => {});
+          break;
+        }
+        if (winner.done) {
+          break;
+        }
+        const trailingMessage = winner.value;
+        this.logger.debug(`[claude-code] Post-result message type: ${trailingMessage.type}`);
+        if (trailingMessage.type === 'prompt_suggestion') {
+          onPromptSuggestion(trailingMessage.suggestion);
+          // At most one prompt_suggestion per turn (SDK contract).
+          void iterator.return?.().catch(() => {});
+          break;
+        }
+      }
+    } catch (drainError: unknown) {
+      // Never fail the (already produced) response over post-result drain issues.
+      this.logger.debug(
+        `[claude-code] Error draining post-result messages: ${drainError instanceof Error ? drainError.message : String(drainError)}`
+      );
+    } finally {
+      if (drainTimer !== undefined) {
+        clearTimeout(drainTimer);
+      }
+    }
+  }
+
   async doGenerate(
     options: Parameters<LanguageModelV3['doGenerate']>[0]
   ): Promise<Awaited<ReturnType<LanguageModelV3['doGenerate']>>> {
@@ -2021,7 +2077,22 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       this.settings.onQueryCreated?.(response);
 
       let lastAssistantErrorKind: string | undefined;
-      for await (const message of response) {
+      // for-await's implicit cleanup AWAITS iterator.return(), which never
+      // settles when the CLI is wedged mid-await after the result (the exact
+      // case the bounded prompt-suggestion drain exists for). Iterate via a
+      // wrapper whose return() detaches fire-and-forget so `break` can never
+      // block generateText on a lingering subprocess.
+      const sdkIterator = response[Symbol.asyncIterator]();
+      const detachableResponse: AsyncIterable<SDKMessage> = {
+        [Symbol.asyncIterator]: () => ({
+          next: () => sdkIterator.next(),
+          return: () => {
+            void sdkIterator.return?.().catch(() => {});
+            return Promise.resolve({ done: true as const, value: undefined });
+          },
+        }),
+      };
+      for await (const message of detachableResponse) {
         this.logger.debug(`[claude-code] Received message type: ${message.type}`);
         if (message.type === 'assistant') {
           // SDK 0.3.x delivers API error kinds (e.g. 'overloaded',
@@ -2323,16 +2394,22 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               : undefined;
           finishReason = mapClaudeCodeFinishReason(message.subtype, stopReason);
           this.logger.debug(`[claude-code] Finish reason: ${finishReason.unified}`);
+
+          // The result message is terminal. Mirror doStream: when a
+          // prompt_suggestion callback is registered, drain for it with the
+          // shared bounded drain (10s timeout, stops at the first suggestion);
+          // otherwise stop iterating immediately so a lingering CLI cannot
+          // block generateText after the result is already available.
+          if (this.settings.onPromptSuggestion) {
+            await this.drainPromptSuggestion(response, this.settings.onPromptSuggestion);
+          }
+          break;
         } else if (message.type === 'system' && message.subtype === 'init') {
           this.logMcpConnectionIssues(message.mcp_servers);
           this.setSessionId(message.session_id);
           this.logger.info(`[claude-code] Session initialized: ${message.session_id}`);
         } else if (message.type === 'system') {
           this.handleSystemMessage(message, metadataTracking);
-        } else if (message.type === 'prompt_suggestion') {
-          // Arrives after the result message when promptSuggestions is enabled.
-          this.logger.debug('[claude-code] Received prompt suggestion');
-          this.settings.onPromptSuggestion?.(message.suggestion);
         }
       }
     } catch (error: unknown) {
@@ -3695,51 +3772,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               // iterator (tearing down the subprocess) if the CLI lingers after
               // the result without emitting one.
               if (this.settings.onPromptSuggestion) {
-                const iterator = response[Symbol.asyncIterator]();
-                let drainTimer: ReturnType<typeof setTimeout> | undefined;
-                const drainTimeout = new Promise<'timeout'>((resolve) => {
-                  drainTimer = setTimeout(
-                    () => resolve('timeout'),
-                    ClaudeCodeLanguageModel.PROMPT_SUGGESTION_DRAIN_TIMEOUT_MS
-                  );
-                  (drainTimer as { unref?: () => void }).unref?.();
-                });
-                try {
-                  while (true) {
-                    const winner = await Promise.race([iterator.next(), drainTimeout]);
-                    if (winner === 'timeout') {
-                      this.logger.debug(
-                        '[claude-code] Post-result drain timed out; closing SDK iterator'
-                      );
-                      // Fire-and-forget: return() may not settle while the
-                      // subprocess is wedged, and the stream already finished.
-                      void iterator.return?.().catch(() => {});
-                      break;
-                    }
-                    if (winner.done) {
-                      break;
-                    }
-                    const trailingMessage = winner.value;
-                    this.logger.debug(
-                      `[claude-code] Post-result message type: ${trailingMessage.type}`
-                    );
-                    if (trailingMessage.type === 'prompt_suggestion') {
-                      this.settings.onPromptSuggestion(trailingMessage.suggestion);
-                      // At most one prompt_suggestion per turn (SDK contract).
-                      void iterator.return?.().catch(() => {});
-                      break;
-                    }
-                  }
-                } catch (drainError: unknown) {
-                  // Never fail the (already finished) stream over post-result drain issues.
-                  this.logger.debug(
-                    `[claude-code] Error draining post-result messages: ${drainError instanceof Error ? drainError.message : String(drainError)}`
-                  );
-                } finally {
-                  if (drainTimer !== undefined) {
-                    clearTimeout(drainTimer);
-                  }
-                }
+                await this.drainPromptSuggestion(response, this.settings.onPromptSuggestion);
               }
               return;
             } else if (message.type === 'system' && message.subtype === 'init') {

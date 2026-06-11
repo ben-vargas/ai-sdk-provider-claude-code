@@ -7030,6 +7030,96 @@ describe('ClaudeCodeLanguageModel', () => {
         vi.useRealTimers();
       }
     });
+
+    it('should time out the doGenerate post-result drain when no prompt_suggestion arrives', async () => {
+      const debug = vi.fn();
+      const logger: Logger = { debug, info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const onPromptSuggestion = vi.fn();
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion, logger, verbose: true } as any,
+      });
+
+      const mockResponse = (async function* () {
+        yield {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'Done' }] },
+        };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'gen-drain-timeout-session',
+          usage: { input_tokens: 10, output_tokens: 5 },
+          total_cost_usd: 0.001,
+          duration_ms: 500,
+        };
+        // Lingering CLI: never emits a prompt_suggestion and never exits.
+        await new Promise(() => {});
+      })();
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      vi.useFakeTimers();
+      try {
+        const resultPromise = modelWithCallback.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        } as any);
+
+        // Let doGenerate's microtask chain reach the drain and register its
+        // timeout timer before advancing the fake clock.
+        for (let i = 0; i < 50 && vi.getTimerCount() === 0; i++) {
+          await Promise.resolve();
+        }
+        expect(vi.getTimerCount()).toBeGreaterThan(0);
+        await vi.advanceTimersByTimeAsync(10_000);
+        const result = await resultPromise;
+
+        // generateText is unblocked by the bounded drain despite the wedged CLI.
+        expect(result.content).toContainEqual(
+          expect.objectContaining({ type: 'text', text: 'Done' })
+        );
+        expect(onPromptSuggestion).not.toHaveBeenCalled();
+        expect(debug).toHaveBeenCalledWith(
+          expect.stringContaining('Post-result drain timed out; closing SDK iterator')
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('should return doGenerate immediately at result when no suggestion callback is set', async () => {
+      let generatorClosed = false;
+      const mockResponse = (async function* () {
+        try {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Done' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'gen-no-drain-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+          };
+          // Lingering CLI after the result: must NOT block doGenerate.
+          await new Promise(() => {});
+        } finally {
+          generatorClosed = true;
+        }
+      })();
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      // No fake timers: this resolves immediately via break, or the test times out.
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      expect(result.content).toContainEqual(
+        expect.objectContaining({ type: 'text', text: 'Done' })
+      );
+      await vi.waitFor(() => expect(generatorClosed).toBe(true));
+    });
   });
 
   describe('unsupported call option warnings', () => {
