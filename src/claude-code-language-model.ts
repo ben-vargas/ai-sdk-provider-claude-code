@@ -502,6 +502,8 @@ type ToolStreamState = {
   inputClosed: boolean;
   callEmitted: boolean;
   parentToolCallId?: string | null;
+  /** Uuid of the assistant message this tool belongs to (for supersede retraction). */
+  messageUuid?: string;
 };
 
 /**
@@ -2904,16 +2906,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 // Create tool state if not exists
                 let state = toolStates.get(toolId);
                 if (!state) {
-                  // Use timing-based inference for parent (Task tools are top-level)
+                  // The partial-message envelope carries the authoritative
+                  // subagent parent (SDKPartialAssistantMessage.parent_tool_use_id).
+                  // These parts are emitted immediately - before the final
+                  // assistant message could retro-update state - so relying on
+                  // timing inference alone would permanently mis-parent (or
+                  // null-parent) nested subagent tools.
+                  const partialParentId = (message as { parent_tool_use_id?: string | null })
+                    .parent_tool_use_id;
                   const currentParentId = isSubagentToolName(toolName)
                     ? null
-                    : getFallbackParentId();
+                    : (partialParentId ?? getFallbackParentId());
+                  const envelopeUuid = (message as { uuid?: unknown }).uuid;
                   state = {
                     name: toolName,
                     inputStarted: false,
                     inputClosed: false,
                     callEmitted: false,
                     parentToolCallId: currentParentId,
+                    ...(typeof envelopeUuid === 'string' && { messageUuid: envelopeUuid }),
                   };
                   toolStates.set(toolId, state);
                 }
@@ -3141,6 +3152,34 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   }
                 }
                 accumulatedText = textSegments.map((segment) => segment.text).join('');
+
+                // Retract tool state from superseded messages too. Already-
+                // emitted tool-calls cannot be un-streamed (their states stay
+                // so late results still pair), but they must stop influencing
+                // fallback parenting. Pending states (no tool-call emitted
+                // yet) are dropped entirely so finalizeToolCalls() does not
+                // emit retracted calls at the end of the stream; their open
+                // input parts are closed and the stream-event bookkeeping is
+                // cleaned so a late content_block_stop cannot resurrect them.
+                for (const [toolId, state] of [...toolStates]) {
+                  if (state.messageUuid === undefined || !retracted.has(state.messageUuid)) {
+                    continue;
+                  }
+                  activeTaskTools.delete(toolId);
+                  if (!state.callEmitted) {
+                    closeToolInput(toolId, state);
+                    toolStates.delete(toolId);
+                    toolInputAccumulators.delete(toolId);
+                    for (const [blockIndex, mappedId] of toolBlocksByIndex) {
+                      if (mappedId === toolId) {
+                        toolBlocksByIndex.delete(blockIndex);
+                      }
+                    }
+                    this.logger.debug(
+                      `[claude-code] Retracted pending tool call from superseded message - ID: ${toolId}`
+                    );
+                  }
+                }
               }
 
               if (!message.message?.content) {
@@ -3193,6 +3232,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     inputClosed: false,
                     callEmitted: false,
                     parentToolCallId: currentParentId,
+                    ...(typeof message.uuid === 'string' && { messageUuid: message.uuid }),
                   };
                   toolStates.set(toolId, state);
                   this.logger.debug(

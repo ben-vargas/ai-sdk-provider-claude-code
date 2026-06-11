@@ -6612,6 +6612,175 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
     });
 
+    it('uses the partial-message envelope parent_tool_use_id for stream-event tool parts', async () => {
+      // Stream-event tool parts are emitted immediately, before the final
+      // assistant message could retroactively fix parents - the envelope's
+      // parent_tool_use_id is the authoritative source at that moment.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'stream_event',
+            parent_tool_use_id: 'toolu_subagent_parent',
+            uuid: 'uuid-partial-1',
+            event: {
+              type: 'content_block_start',
+              index: 0,
+              content_block: { type: 'tool_use', id: 'toolu_nested', name: 'Bash', input: {} },
+            },
+          };
+          yield {
+            type: 'stream_event',
+            parent_tool_use_id: 'toolu_subagent_parent',
+            uuid: 'uuid-partial-1',
+            event: { type: 'content_block_stop', index: 0 },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'partial-parent-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const inputStart = chunks.find((c) => c.type === 'tool-input-start');
+      const toolCall = chunks.find((c) => c.type === 'tool-call');
+      expect(inputStart?.providerMetadata?.['claude-code']?.parentToolCallId).toBe(
+        'toolu_subagent_parent'
+      );
+      expect(toolCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBe(
+        'toolu_subagent_parent'
+      );
+    });
+
+    it('retracts pending stream-event tool calls from superseded messages', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          // Tool input started via stream events (no content_block_stop) on
+          // the message that gets refused...
+          yield {
+            type: 'stream_event',
+            parent_tool_use_id: null,
+            uuid: 'uuid-refused',
+            event: {
+              type: 'content_block_start',
+              index: 0,
+              content_block: { type: 'tool_use', id: 'toolu_retracted', name: 'Bash', input: {} },
+            },
+          };
+          // ...then the canonical replacement supersedes it.
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'retract-tool-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // The open input part is closed, but the retracted call is NOT emitted
+      // by finalizeToolCalls at stream end.
+      expect(chunks.some((c) => c.type === 'tool-input-end' && c.id === 'toolu_retracted')).toBe(
+        true
+      );
+      expect(chunks.some((c) => c.type === 'tool-call' && c.toolCallId === 'toolu_retracted')).toBe(
+        false
+      );
+      const textDeltas = chunks.filter((c) => c.type === 'text-delta').map((c) => c.delta);
+      expect(textDeltas).toEqual(['Replacement answer']);
+    });
+
+    it('removes retracted Task tools from stream fallback-parent inference', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          // A Task tool starts streaming on the refused message...
+          yield {
+            type: 'stream_event',
+            parent_tool_use_id: null,
+            uuid: 'uuid-refused',
+            event: {
+              type: 'content_block_start',
+              index: 0,
+              content_block: { type: 'tool_use', id: 'toolu_stale_task', name: 'Task', input: {} },
+            },
+          };
+          // ...gets superseded...
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement' }] },
+          };
+          // ...and a later top-level tool must NOT be parented to the stale Task.
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-later',
+            message: {
+              content: [
+                { type: 'tool_use', id: 'toolu_later', name: 'Read', input: { file: 'x' } },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'stale-task-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const laterCall = chunks.find(
+        (c) => c.type === 'tool-call' && c.toolCallId === 'toolu_later'
+      );
+      expect(laterCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBeNull();
+      expect(
+        chunks.some((c) => c.type === 'tool-call' && c.toolCallId === 'toolu_stale_task')
+      ).toBe(false);
+    });
+
     it('should drop superseded thinking traces in doGenerate', async () => {
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
@@ -7643,7 +7812,12 @@ describe('structured output hardening', () => {
             type: 'user',
             message: {
               content: [
-                { type: 'tool_result', tool_use_id: 'toolu_json_1', content: 'data', is_error: false },
+                {
+                  type: 'tool_result',
+                  tool_use_id: 'toolu_json_1',
+                  content: 'data',
+                  is_error: false,
+                },
               ],
             },
           };
