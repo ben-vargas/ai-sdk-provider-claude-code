@@ -6,6 +6,17 @@ import { existsSync } from 'fs';
  * Uses Zod for type-safe validation following AI SDK patterns.
  */
 
+/**
+ * The SDK/CLI treats a blank or whitespace-only resume id as absent (there is
+ * no session to resume). This is the single source of truth for that rule so
+ * the "blank means no resume" predicate lives in exactly one place, shared by
+ * both query-time resolution (claude-code-language-model.ts) and
+ * construction-time validation (effectiveResumeId below).
+ */
+export function isBlankResume(value: unknown): boolean {
+  return typeof value === 'string' && value.trim() === '';
+}
+
 // Helper for Zod v3/v4 compatibility
 // Use a simple z.any() for functions to work with both versions
 const loggerFunctionSchema = z.object({
@@ -379,7 +390,7 @@ export function validateSettings(settings: unknown): {
     // resume), so normalize it for the cross-option checks below.
     const effectiveResumeId = (): string | undefined => {
       const r = effective('resume');
-      return typeof r === 'string' && r.trim() !== '' ? r : undefined;
+      return typeof r === 'string' && !isBlankResume(r) ? r : undefined;
     };
 
     // SDK constraint: sessionStore mirroring requires local session writes,

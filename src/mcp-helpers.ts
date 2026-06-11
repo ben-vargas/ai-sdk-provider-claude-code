@@ -99,6 +99,74 @@ export type MinimalCallToolResult = {
   [key: string]: unknown;
 };
 
+/**
+ * Builds an `isError: true` MCP tool result carrying a single text content
+ * item. Centralizes the {@link MinimalCallToolResult} error shape so the
+ * handler's several error paths (invalid arguments, serialization failure,
+ * thrown/rejected execute) all produce an identical structure.
+ */
+function buildIsErrorResult(text: string): MinimalCallToolResult {
+  return {
+    isError: true,
+    content: [{ type: 'text', text }],
+  };
+}
+
+/**
+ * Converts a value returned by an AI SDK tool's `execute` into MCP text.
+ *
+ * Owns the two accreted concerns of result handling:
+ * 1. AsyncIterable draining: `execute` may return an async iterator that
+ *    yields partial outputs and a final value; the SDK uses the last *yielded*
+ *    value (a generator's `return` is not yielded). Drain it to that final
+ *    value instead of stringifying the iterator object to `{}`.
+ * 2. Serialization: strings pass through unchanged; everything else is
+ *    `JSON.stringify`'d. `JSON.stringify(undefined)` returns `undefined`
+ *    (not a string), so the literal `'undefined'` fallback is preserved.
+ *    A serialization failure (e.g. circular reference) yields a descriptive
+ *    `isError` result rather than throwing.
+ *
+ * The drain runs OUTSIDE the serialization `try/catch` on purpose: a throw
+ * while draining must propagate to the handler's outer `catch` (becoming a
+ * generic `isError` from the error message), not be misreported as a
+ * serialization failure.
+ *
+ * @returns `{ text }` on success, or `{ isError }` carrying a ready-made
+ *   serialization-failure result.
+ */
+async function normalizeToolResultToText(
+  toolName: string,
+  result: unknown
+): Promise<{ text: string } | { isError: MinimalCallToolResult }> {
+  // Drain an AsyncIterable to its final yielded value (outside the
+  // serialization try/catch — see doc comment).
+  if (
+    result != null &&
+    typeof (result as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === 'function'
+  ) {
+    let last: unknown;
+    for await (const chunk of result as AsyncIterable<unknown>) {
+      last = chunk;
+    }
+    result = last;
+  }
+
+  if (typeof result === 'string') {
+    return { text: result };
+  }
+  try {
+    return { text: JSON.stringify(result) ?? 'undefined' };
+  } catch (serializationError) {
+    const reason =
+      serializationError instanceof Error ? serializationError.message : String(serializationError);
+    return {
+      isError: buildIsErrorResult(
+        `Tool "${toolName}" succeeded but its result could not be serialized to JSON: ${reason}`
+      ),
+    };
+  }
+}
+
 export function createCustomMcpServer<
   Tools extends Record<
     string,
@@ -298,66 +366,25 @@ export function createAiSdkMcpServer(
           // the sync parser.
           const parsed = await zodSchema.safeParseAsync(args);
           if (!parsed.success) {
-            return {
-              isError: true,
-              content: [
-                {
-                  type: 'text',
-                  text: `Invalid arguments for tool "${toolName}": ${parsed.error.message}`,
-                },
-              ],
-            };
+            return buildIsErrorResult(
+              `Invalid arguments for tool "${toolName}": ${parsed.error.message}`
+            );
           }
           const extraInfo = (extra ?? {}) as { signal?: AbortSignal; requestId?: string | number };
-          let result: unknown = await execute.call(def, parsed.data as never, {
+          // Preserve `this === def` so tools that read off their own object
+          // continue to work; forward the MCP request id as `toolCallId`
+          // (only when present — never coerce undefined to 'undefined').
+          const result: unknown = await execute.call(def, parsed.data as never, {
             toolCallId: extraInfo.requestId !== undefined ? String(extraInfo.requestId) : undefined,
             abortSignal: extraInfo.signal,
           });
-          // AI SDK execute() may return an AsyncIterable that yields partial
-          // outputs and a final value (the SDK consumes it and uses the last
-          // yield). Drain it to the final value here instead of stringifying
-          // the iterator object to `{}`.
-          if (
-            result != null &&
-            typeof (result as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] ===
-              'function'
-          ) {
-            let last: unknown;
-            for await (const chunk of result as AsyncIterable<unknown>) {
-              last = chunk;
-            }
-            result = last;
+          const normalized = await normalizeToolResultToText(toolName, result);
+          if ('isError' in normalized) {
+            return normalized.isError;
           }
-          let text: string;
-          if (typeof result === 'string') {
-            text = result;
-          } else {
-            try {
-              text = JSON.stringify(result) ?? 'undefined';
-            } catch (serializationError) {
-              const reason =
-                serializationError instanceof Error
-                  ? serializationError.message
-                  : String(serializationError);
-              return {
-                isError: true,
-                content: [
-                  {
-                    type: 'text',
-                    text: `Tool "${toolName}" succeeded but its result could not be serialized to JSON: ${reason}`,
-                  },
-                ],
-              };
-            }
-          }
-          return { content: [{ type: 'text', text }] };
+          return { content: [{ type: 'text', text: normalized.text }] };
         } catch (error) {
-          return {
-            isError: true,
-            content: [
-              { type: 'text', text: error instanceof Error ? error.message : String(error) },
-            ],
-          };
+          return buildIsErrorResult(error instanceof Error ? error.message : String(error));
         }
       }
     );

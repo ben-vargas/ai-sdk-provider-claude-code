@@ -16,7 +16,7 @@ import type { ClaudeCodeSettings, Logger, MessageInjector } from './types.js';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
 import { createAPICallError, createAuthenticationError, createTimeoutError } from './errors.js';
 import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
-import { validateModelId, validatePrompt, validateSessionId } from './validation.js';
+import { validateModelId, validatePrompt, validateSessionId, isBlankResume } from './validation.js';
 import { sanitizeJsonSchemaForOutputFormat } from './sanitize-json-schema.js';
 import { getLogger, createVerboseLogger } from './logger.js';
 
@@ -302,6 +302,119 @@ function resolveToolParentId(
   if (messageLevel !== undefined) return messageLevel;
   if (typeof blockLevel === 'string') return blockLevel;
   return inferFallback();
+}
+
+/* ---------------------------------------------------------------------------
+ * Refusal-fallback retraction policy (shared by doGenerate + doStream)
+ *
+ * SDK 0.3.x can RETRACT content the model already produced when a refusal
+ * fallback swaps the answering model mid-turn. Two retraction signals feed the
+ * SAME eviction routine, and the policy below is IDENTICAL in both loops:
+ *
+ *  (P1) Two signals compose idempotently:
+ *         - an assistant message's `supersedes[]` (named on the replacement,
+ *           applied on arrival), and
+ *         - the end-of-turn `model_refusal_fallback` notice's
+ *           `retracted_message_uuids` (the SDK's complete, resolution-time
+ *           eviction record for the turn).
+ *       Re-evicting an already-removed uuid is a no-op, so replaying both is safe.
+ *  (P2) A retracted uuid evicts: text/reasoning segments tagged with it;
+ *       tool-CALL segments tagged with it (and TRANSITIVELY their
+ *       tool-result/tool-error); AND tool-result/tool-error frames tagged with
+ *       THEIR OWN frame uuid even when the originating tool_use was not retracted.
+ *  (P3) A retracted tool-call id becomes a TOMBSTONE so LATE tool_result/
+ *       tool_error frames for that id are DROPPED (not re-synthesized into an
+ *       orphan tool-call), preventing AI SDK asContent() 'Tool call not found.'
+ *  (P4) Retracted Task/subagent tools are removed from activeTaskTools so
+ *       fallback-parent inference is not polluted by a dangling parent.
+ *  (P5) Retraction must NOT depend on the superseding message carrying text of
+ *       its own.
+ *
+ * The MECHANISM differs and is intentionally NOT unified (see evictBuffered /
+ * evictLive at the two call sites):
+ *  - doGenerate buffers a uniform, ordered `contentSegments` array and can
+ *    splice retracted entries out, restoring exact document order; its tool-id
+ *    set is derived from tool-CALL own-uuid AND tool-result/error own-uuid
+ *    membership (a result frame may be named directly).
+ *  - doStream operates on already-emitted wire parts + live toolStates + index
+ *    maps and can only DROP pending (not-yet-callEmitted) state; its tool-id set
+ *    is derived from toolState.messageUuid (results are not buffered as segments).
+ *
+ * The shareable unit is the POLICY (which uuids retract which tool ids), not the
+ * mechanism. {@link computeRetractedToolCallIds} expresses that policy over a
+ * uniform `{ toolCallId, uuid }` descriptor stream so BOTH call sites derive the
+ * tombstone set identically while applying removal in their own structure.
+ * ------------------------------------------------------------------------- */
+
+/** A retraction candidate: a tool id paired with the frame uuid that owns it. */
+type RetractionToolDescriptor = { toolCallId: string; uuid: string | undefined };
+
+/**
+ * Policy (P2/P3): given the retracted uuid set and the tool descriptors a path
+ * exposes, return the set of tool-call ids that must be tombstoned. A descriptor
+ * retracts its tool id iff its own uuid is in the retracted set. doGenerate feeds
+ * tool-call AND tool-result/error descriptors (so a directly-named result frame
+ * tombstones its call); doStream feeds one descriptor per live toolState keyed on
+ * messageUuid. Callers then perform structure-specific removal + activeTaskTools
+ * cleanup (P4).
+ */
+function computeRetractedToolCallIds(
+  retracted: Set<string>,
+  descriptors: Iterable<RetractionToolDescriptor>
+): Set<string> {
+  const ids = new Set<string>();
+  for (const { toolCallId, uuid } of descriptors) {
+    if (uuid !== undefined && retracted.has(uuid)) {
+      ids.add(toolCallId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Policy (P1/P5): the supersede-on-arrival trigger, shared by both loops. When a
+ * superseding assistant message names prior messages in `supersedes[]`, debug-log
+ * and replay them through the path's eviction routine. Returns whether a
+ * supersede was applied (the stream path branches its text-emission on this).
+ * Deliberately does NOT inspect the message's own text — retraction must not
+ * depend on the replacement carrying text (P5).
+ */
+function applySupersede(
+  message: { supersedes?: string[] },
+  evict: (retracted: Set<string>) => void,
+  logger: Logger,
+  // The two loops historically guarded this branch differently for malformed
+  // (out-of-contract) `supersedes` values, and that divergence is preserved
+  // deliberately. doGenerate used a truthiness check
+  // (`message.supersedes && message.supersedes.length > 0`); doStream used an
+  // Array.isArray check. For well-formed `string[] | undefined` SDK values the
+  // two modes are identical — they only diverge on non-array truthy inputs.
+  guard: 'truthy' | 'array' = 'array'
+): boolean {
+  const supersedes = message.supersedes;
+  const triggered =
+    guard === 'truthy'
+      ? Boolean(supersedes && supersedes.length > 0)
+      : Array.isArray(supersedes) && supersedes.length > 0;
+  if (!triggered) {
+    return false;
+  }
+  logger.debug(`[claude-code] Assistant message supersedes ${supersedes!.length} prior message(s)`);
+  evict(new Set<string>(supersedes!));
+  return true;
+}
+
+/**
+ * Policy (P1): build the `onRetractedUuids` thunk handed to handleSystemMessage.
+ * Both loops pass an identical `(uuids) => evict(new Set(uuids))`, replaying the
+ * end-of-turn model_refusal_fallback notice's retracted_message_uuids through the
+ * SAME eviction routine that supersedes uses. Defined once so the "compose the
+ * two retraction signals" contract lives in one place.
+ */
+function buildRetractionEvictor(
+  evict: (retracted: Set<string>) => void
+): (uuids: string[]) => void {
+  return (uuids) => evict(new Set(uuids));
 }
 
 /**
@@ -939,11 +1052,85 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // rather than letting one shadow a real later candidate or reach the CLI
     // as `--resume ''`.
     for (const candidate of [sdkOptions?.resume, this.settings.resume, this.sessionId]) {
-      if (typeof candidate === 'string' && candidate.trim() !== '') {
+      if (typeof candidate === 'string' && !isBlankResume(candidate)) {
         return candidate;
       }
     }
     return undefined;
+  }
+
+  /**
+   * Single source of truth for the CLI's `--session-id` exclusivity rule.
+   *
+   * The CLI rejects `--session-id` together with `--resume`/`--continue`
+   * unless `--fork-session` is also set (forkSession then names the forked
+   * session's own ID). This predicate captures "there IS a resume/continue
+   * target AND we are not forking", i.e. the case where a session id must NOT
+   * coexist. It is referenced by both:
+   *   - the pre-merge forwarding guard (via its inverse), which decides whether
+   *     to forward `settings.sessionId` onto the base options, and
+   *   - the post-merge exclusivity drop, which removes any session id that the
+   *     generic sdkOptions overlay (or the auto-resume turn) re-introduced.
+   *
+   * Keeping one definition guarantees both sites agree on what "conflicts with
+   * a session id" means. The mirror in validation.ts (construction-time)
+   * intentionally stays separate: it reads settings+sdkOptions, not a built
+   * opts object.
+   */
+  private static sessionIdConflictsWithResumeOrContinue(args: {
+    resumePresent: boolean;
+    continue: boolean;
+    forkSession: boolean;
+  }): boolean {
+    return (args.resumePresent || args.continue) && !args.forkSession;
+  }
+
+  /**
+   * Owns ALL session-id / resume cross-option resolution on the FINAL merged
+   * options, in the single correct order. Called once, immediately after the
+   * generic sdkOptions overlay in createQueryOptions.
+   *
+   * Two concerns, in this exact order (order matters: step 1 can change whether
+   * step 2 sees a resume target):
+   *
+   *  1. Blank-resume restoration. The overlay copies the raw `sdkOptions.resume`
+   *     verbatim, which can re-introduce a blank/whitespace value over the
+   *     base `resume` that getEffectiveResume already normalized. The SDK treats
+   *     a blank resume as absent, so a blank must NOT clobber the computed
+   *     fallback — restore `effectiveResume` (already blank-stripped; may itself
+   *     be undefined for a genuinely new session) rather than leaving '' or
+   *     forcing undefined, which would erase a real settings.resume / captured
+   *     session id.
+   *
+   *  2. Session-id exclusivity. Drop `opts.sessionId` whenever it conflicts with
+   *     a resume/continue target (see sessionIdConflictsWithResumeOrContinue).
+   *     This runs on the merged opts so it catches a sessionId re-added by the
+   *     sdkOptions overlay AND the auto-resumed second turn (where resume was
+   *     populated from the captured session id). It complements — does not
+   *     replace — the pre-merge forwarding guard, which governs whether
+   *     settings.sessionId was forwarded BEFORE the overlay could mutate
+   *     forkSession/continue/resume.
+   */
+  private applySessionResolution(
+    opts: Partial<Options> & Record<string, unknown>,
+    effectiveResume?: string
+  ): void {
+    // Step 1: restore blank-stripped resume (see doc comment).
+    if (isBlankResume(opts.resume)) {
+      opts.resume = effectiveResume;
+    }
+
+    // Step 2: enforce --session-id exclusivity on the merged opts.
+    if (
+      opts.sessionId !== undefined &&
+      ClaudeCodeLanguageModel.sessionIdConflictsWithResumeOrContinue({
+        resumePresent: opts.resume !== undefined,
+        continue: opts.continue === true,
+        forkSession: opts.forkSession === true,
+      })
+    ) {
+      opts.sessionId = undefined;
+    }
   }
 
   private extractToolUses(content: unknown): ClaudeToolUse[] {
@@ -1246,6 +1433,28 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     };
   }
 
+  /**
+   * Policy (P3): late-frame drop guard, shared by all four tool_result/tool_error
+   * sites (doGenerate result+error, doStream result+error). When a frame's tool
+   * id is tombstoned (its tool-call was retracted by a supersede/refusal-fallback
+   * signal), the frame must be DROPPED rather than re-synthesized into an orphan
+   * tool-call. Centralizing the predicate + debug message keeps the four sites in
+   * lockstep so a future tombstone change can't be applied to only some of them.
+   */
+  private isRetractedToolFrame(
+    id: string,
+    tombstone: Set<string>,
+    frameKind: 'result' | 'error'
+  ): boolean {
+    if (!tombstone.has(id)) {
+      return false;
+    }
+    this.logger.debug(
+      `[claude-code] Dropping tool ${frameKind} for retracted (superseded) tool ID: ${id}`
+    );
+    return true;
+  }
+
   private generateAllWarnings(
     options:
       | Parameters<LanguageModelV3['doGenerate']>[0]
@@ -1501,11 +1710,21 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // hatch (merged below, after this decision), so honor the effective
     // values here. (opts.resume already reflects sdkOptions.resume via
     // effectiveResume.)
+    // Read the EFFECTIVE fork/continue values (sdkOptions override settings via
+    // `??`, so an explicit `sdkOptions.forkSession: false` correctly overrides
+    // `settings.forkSession: true`). opts.resume already reflects sdkOptions via
+    // effectiveResume. Forward settings.sessionId only when it would NOT conflict
+    // with a resume/continue target — i.e. the inverse of the same exclusivity
+    // predicate the post-merge drop uses, so the rule has one textual home.
     const effectiveForkSession = sdkOptions?.forkSession ?? this.settings.forkSession;
     const effectiveContinue = sdkOptions?.continue ?? this.settings.continue;
     if (
       this.settings.sessionId !== undefined &&
-      ((opts.resume === undefined && effectiveContinue !== true) || effectiveForkSession === true)
+      !ClaudeCodeLanguageModel.sessionIdConflictsWithResumeOrContinue({
+        resumePresent: opts.resume !== undefined,
+        continue: effectiveContinue === true,
+        forkSession: effectiveForkSession === true,
+      })
     ) {
       opts.sessionId = this.settings.sessionId;
     }
@@ -1542,30 +1761,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       }
     }
 
-    // The generic merge above can re-introduce a blank `sdkOptions.resume`
-    // (the base resume was normalized via getEffectiveResume, but the merge
-    // copies the raw value). The SDK treats a blank/whitespace resume as
-    // absent, so a blank `sdkOptions.resume` must NOT clobber the normalized
-    // fallback — restore the computed effectiveResume (already blank-stripped)
-    // rather than clearing to undefined, which would erase a real
-    // settings.resume / captured session id and start a new session.
-    if (typeof opts.resume === 'string' && opts.resume.trim() === '') {
-      opts.resume = effectiveResume;
-    }
-
-    // Enforce the CLI's --session-id exclusivity on the FINAL merged options.
-    // The pre-merge guard above only governs settings.sessionId; the generic
-    // sdkOptions merge can re-add sessionId afterward. The CLI rejects
-    // --session-id together with --resume/--continue unless --fork-session is
-    // set, so drop sessionId here whenever that rule is violated (covers the
-    // auto-resume second turn of a `sdkOptions: { sessionId }` config).
-    if (
-      opts.sessionId !== undefined &&
-      opts.forkSession !== true &&
-      (opts.resume !== undefined || opts.continue === true)
-    ) {
-      opts.sessionId = undefined;
-    }
+    // Resolve all session-id / resume cross-option rules on the FINAL merged
+    // options: blank-resume restoration then --session-id exclusivity, in that
+    // order. See applySessionResolution for the full rationale.
+    this.applySessionResolution(opts, effectiveResume);
 
     // SDK constraint: fallbackModel must differ from the main model (the SDK
     // throws while building CLI args at query time). Reject early with
@@ -2056,33 +2255,34 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // would create an orphan that makes AI SDK core's asContent() throw
     // ('Tool call ${id} not found.').
     const retractedToolIds = new Set<string>();
-    // Evict every segment named by a retraction signal (an assistant message's
-    // `supersedes` on arrival, or the end-of-turn model_refusal_fallback
-    // notice's `retracted_message_uuids`, which the SDK documents as the
-    // complete eviction record for the turn). Idempotent: re-evicting an
-    // already-removed uuid is a no-op, so the two signals compose safely.
-    const evictRetractedUuids = (retracted: Set<string>): void => {
+    // evictBuffered: the doGenerate half of the shared retraction policy (P1-P5,
+    // see computeRetractedToolCallIds). MECHANISM = splice an ordered, uniform
+    // contentSegments array, so retracted entries are removed entirely and the
+    // surviving order is exact. Its parallel is doStream's evictLive, which can
+    // only drop pending live state. Idempotent: re-evicting an already-removed
+    // uuid is a no-op, so supersedes + model_refusal_fallback compose safely (P1).
+    const evictBuffered = (retracted: Set<string>): void => {
       if (retracted.size === 0) return;
-      const retractedToolCallIds = new Set<string>(
+      // P2/P3 policy: derive tombstoned tool ids from tool-CALL own-uuid AND
+      // tool-result/error OWN-uuid membership (a result frame may be named
+      // directly even when its tool_use was not retracted).
+      const retractedToolCallIds = computeRetractedToolCallIds(
+        retracted,
         contentSegments
           .filter(
             (segment) =>
-              // tool-CALL retracted by its message uuid...
-              (segment.kind === 'tool-call' &&
-                segment.uuid !== undefined &&
-                retracted.has(segment.uuid)) ||
-              // ...or a tool-RESULT/ERROR retracted by ITS OWN message uuid
-              // (the SDK may name a tombstoned tool_result frame directly).
-              ((segment.kind === 'tool-result' || segment.kind === 'tool-error') &&
-                segment.uuid !== undefined &&
-                retracted.has(segment.uuid))
+              segment.kind === 'tool-call' ||
+              segment.kind === 'tool-result' ||
+              segment.kind === 'tool-error'
           )
-          .map((segment) => (segment as { toolCallId: string }).toolCallId)
+          .map((segment) => ({
+            toolCallId: (segment as { toolCallId: string }).toolCallId,
+            uuid: segment.uuid,
+          }))
       );
-      // Clean up tool bookkeeping for retracted calls: a retracted Task must
-      // not remain "active" (it would pollute getFallbackParentId with a
-      // dangling parent reference), and late results for retracted IDs must be
-      // dropped rather than re-paired.
+      // P3/P4: a retracted Task must not remain "active" (it would pollute
+      // getFallbackParentId with a dangling parent), and late results for
+      // retracted IDs must be dropped (tombstone) rather than re-paired.
       for (const toolCallId of retractedToolCallIds) {
         retractedToolIds.add(toolCallId);
         knownTools.delete(toolCallId);
@@ -2221,13 +2421,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           // Refusal-fallback replacement (SDK 0.3.x): drop retracted segments
           // (text, thinking, AND tool calls) so superseded content is not
           // duplicated in the final output. Tool results/errors whose call was
-          // retracted are dropped too so they don't survive as orphans.
-          if (message.supersedes && message.supersedes.length > 0) {
-            this.logger.debug(
-              `[claude-code] Assistant message supersedes ${message.supersedes.length} prior message(s)`
-            );
-            evictRetractedUuids(new Set<string>(message.supersedes));
-          }
+          // retracted are dropped too so they don't survive as orphans. (P5: the
+          // trigger ignores this message's own text — see applySupersede.)
+          // doGenerate uses the 'truthy' guard to match af38c07's original
+          // `message.supersedes && message.supersedes.length > 0` semantics.
+          applySupersede(message, evictBuffered, this.logger, 'truthy');
 
           const messageUuid = typeof message.uuid === 'string' ? message.uuid : undefined;
           // Extract parent_tool_use_id from SDK message - this is the authoritative source
@@ -2264,7 +2462,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 // Task tools never have a parent (they're top-level)
                 const parentToolCallId = isSubagentToolName(tool.name)
                   ? null
-                  : resolveToolParentId(sdkParentToolUseId, tool.parentToolUseId, getFallbackParentId);
+                  : resolveToolParentId(
+                      sdkParentToolUseId,
+                      tool.parentToolUseId,
+                      getFallbackParentId
+                    );
                 this.logger.debug(
                   `[claude-code] Tool use detected - Tool: ${tool.name}, ID: ${tool.id}, SDK parent: ${sdkParentToolUseId}, resolved parent: ${parentToolCallId}`
                 );
@@ -2311,10 +2513,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
           const content = message.message.content;
           for (const result of this.extractToolResults(content)) {
-            if (retractedToolIds.has(result.id)) {
-              this.logger.debug(
-                `[claude-code] Dropping tool result for retracted (superseded) tool ID: ${result.id}`
-              );
+            if (this.isRetractedToolFrame(result.id, retractedToolIds, 'result')) {
               continue;
             }
             const known = knownTools.get(result.id);
@@ -2367,10 +2566,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           }
           // Handle tool errors
           for (const error of this.extractToolErrors(content)) {
-            if (retractedToolIds.has(error.id)) {
-              this.logger.debug(
-                `[claude-code] Dropping tool error for retracted (superseded) tool ID: ${error.id}`
-              );
+            if (this.isRetractedToolFrame(error.id, retractedToolIds, 'error')) {
               continue;
             }
             const known = knownTools.get(error.id);
@@ -2513,8 +2709,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           this.setSessionId(message.session_id);
           this.logger.info(`[claude-code] Session initialized: ${message.session_id}`);
         } else if (message.type === 'system') {
-          this.handleSystemMessage(message, metadataTracking, (uuids) =>
-            evictRetractedUuids(new Set(uuids))
+          this.handleSystemMessage(
+            message,
+            metadataTracking,
+            buildRetractionEvictor(evictBuffered)
           );
         }
       }
@@ -2842,14 +3040,20 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         const reasoningBlocksByIndex = new Map<number, string>();
         let currentReasoningPartId: string | undefined;
 
-        // Evict every stream segment named by a retraction signal (an assistant
-        // message's `supersedes` on arrival, or the end-of-turn
-        // model_refusal_fallback notice's `retracted_message_uuids`, the SDK's
-        // complete eviction record for the turn). Already-emitted text/tool
-        // parts cannot be un-streamed, but they stop influencing the final
-        // accumulators and fallback parenting; pending tool calls are dropped
-        // and tombstoned. Idempotent, so the two signals compose safely.
-        const evictRetractedUuids = (retracted: Set<string>): void => {
+        // evictLive: the doStream half of the shared retraction policy (P1-P5,
+        // see computeRetractedToolCallIds). MECHANISM = drop live state, since
+        // already-emitted text/tool parts CANNOT be un-streamed. Its parallel is
+        // doGenerate's evictBuffered, which splices ordered buffered segments.
+        // Differences from evictBuffered (intentional, see policy block):
+        //  - text: surviving textSegments are kept and accumulatedText is
+        //    recomputed from them (P2 over text) so JSON-mode/final tracking
+        //    excludes retracted text — but the wire deltas already sent stay sent.
+        //  - tools: the tombstone set is derived from toolState.messageUuid (P2;
+        //    results aren't buffered as segments here, unlike evictBuffered), and
+        //    only PENDING (not-yet-callEmitted) calls can be dropped + tombstoned
+        //    (P3); activeTaskTools is always cleaned (P4).
+        // Idempotent, so supersedes + model_refusal_fallback compose safely (P1).
+        const evictLive = (retracted: Set<string>): void => {
           if (retracted.size === 0) return;
           for (let i = textSegments.length - 1; i >= 0; i--) {
             const segmentUuid = textSegments[i]?.uuid;
@@ -2857,14 +3061,27 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               textSegments.splice(i, 1);
             }
           }
+          // Recompute alongside every textSegments mutation so JSON-mode final
+          // extraction never sees retracted text (kept in lockstep with the
+          // other textSegments writers below).
           accumulatedText = textSegments.map((segment) => segment.text).join('');
 
-          for (const [toolId, state] of [...toolStates]) {
-            if (state.messageUuid === undefined || !retracted.has(state.messageUuid)) {
-              continue;
-            }
-            activeTaskTools.delete(toolId);
+          // P2/P3 policy: derive tombstoned tool ids from each live toolState's
+          // owning messageUuid (the doStream descriptor shape).
+          const retractedToolCallIds = computeRetractedToolCallIds(
+            retracted,
+            [...toolStates].map(([toolId, state]) => ({
+              toolCallId: toolId,
+              uuid: state.messageUuid,
+            }))
+          );
+          for (const toolId of retractedToolCallIds) {
+            const state = toolStates.get(toolId);
+            if (!state) continue;
+            activeTaskTools.delete(toolId); // P4
             if (!state.callEmitted) {
+              // P3: only pending calls can be dropped + tombstoned; an
+              // already-emitted tool-call is on the wire and cannot be retracted.
               closeToolInput(toolId, state);
               toolStates.delete(toolId);
               retractedStreamToolIds.add(toolId);
@@ -3285,19 +3502,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
               // Refusal-fallback replacement (SDK 0.3.x): this message replaces
               // previously-delivered messages whose text was already emitted and
-              // cannot be retracted from the stream.
-              const supersedesPriorMessages =
-                Array.isArray(message.supersedes) && message.supersedes.length > 0;
-              if (supersedesPriorMessages) {
-                this.logger.debug(
-                  `[claude-code] Assistant message supersedes ${message.supersedes?.length} prior message(s)`
-                );
-                // Evict retracted segments on arrival (matches doGenerate).
-                // The SDK does not guarantee the canonical replacement carries
-                // text blocks, so retraction must not depend on this message
-                // having text of its own.
-                evictRetractedUuids(new Set<string>(message.supersedes ?? []));
-              }
+              // cannot be retracted from the stream. Evict retracted segments on
+              // arrival (matches doGenerate); the trigger does not depend on this
+              // message carrying text of its own (P5). The boolean drives the
+              // replacement-text emission sub-cases below.
+              const supersedesPriorMessages = applySupersede(message, evictLive, this.logger);
 
               if (!message.message?.content) {
                 this.logger.warn(
@@ -3342,7 +3551,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   // Task tools never have a parent (they're top-level)
                   const currentParentId = isSubagentToolName(tool.name)
                     ? null
-                    : resolveToolParentId(sdkParentToolUseId, tool.parentToolUseId, getFallbackParentId);
+                    : resolveToolParentId(
+                        sdkParentToolUseId,
+                        tool.parentToolUseId,
+                        getFallbackParentId
+                      );
                   state = {
                     name: tool.name,
                     inputStarted: false,
@@ -3621,15 +3834,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               emittedTextSinceLastAssistant = '';
 
               // Extract parent_tool_use_id from SDK message for late-arriving tool results
-              const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string | null })
-                .parent_tool_use_id;
+              const sdkParentToolUseIdForResults = (
+                message as { parent_tool_use_id?: string | null }
+              ).parent_tool_use_id;
 
               const content = message.message.content;
               for (const result of this.extractToolResults(content)) {
-                if (retractedStreamToolIds.has(result.id)) {
-                  this.logger.debug(
-                    `[claude-code] Dropping tool result for retracted (superseded) tool ID: ${result.id}`
-                  );
+                if (this.isRetractedToolFrame(result.id, retractedStreamToolIds, 'result')) {
                   continue;
                 }
                 let state = toolStates.get(result.id);
@@ -3647,7 +3858,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   // Use SDK parent if available, otherwise fall back to timing-based inference
                   const resolvedParentId = isSubagentToolName(toolName)
                     ? null
-                    : resolveToolParentId(sdkParentToolUseIdForResults, undefined, getFallbackParentId);
+                    : resolveToolParentId(
+                        sdkParentToolUseIdForResults,
+                        undefined,
+                        getFallbackParentId
+                      );
                   state = {
                     name: toolName,
                     inputStarted: false,
@@ -3701,10 +3916,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               }
               // Handle tool errors
               for (const error of this.extractToolErrors(content)) {
-                if (retractedStreamToolIds.has(error.id)) {
-                  this.logger.debug(
-                    `[claude-code] Dropping tool error for retracted (superseded) tool ID: ${error.id}`
-                  );
+                if (this.isRetractedToolFrame(error.id, retractedStreamToolIds, 'error')) {
                   continue;
                 }
                 let state = toolStates.get(error.id);
@@ -3722,7 +3934,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   // Use SDK parent if available, otherwise fall back to timing-based inference
                   const errorResolvedParentId = isSubagentToolName(toolName)
                     ? null
-                    : resolveToolParentId(sdkParentToolUseIdForResults, undefined, getFallbackParentId);
+                    : resolveToolParentId(
+                        sdkParentToolUseIdForResults,
+                        undefined,
+                        getFallbackParentId
+                      );
                   state = {
                     name: toolName,
                     inputStarted: true,
@@ -3999,8 +4215,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 modelId: this.modelId,
               });
             } else if (message.type === 'system') {
-              this.handleSystemMessage(message, metadataTracking, (uuids) =>
-                evictRetractedUuids(new Set(uuids))
+              this.handleSystemMessage(
+                message,
+                metadataTracking,
+                buildRetractionEvictor(evictLive)
               );
             } else if (message.type === 'prompt_suggestion') {
               // Defensive: normally arrives after the result message (handled by
