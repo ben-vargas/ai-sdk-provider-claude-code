@@ -10,7 +10,10 @@
  * in-process SDK MCP server. Wire it via `mcpServers` and allow the tools
  * with `allowedTools` using the mcp__<serverName>__<toolName> naming.
  *
- * Tool calls/results surface as provider-executed dynamic tool parts.
+ * Tool calls/results surface as provider-executed dynamic tool parts on the
+ * streaming path (streamText fullStream). Note: doGenerate currently returns
+ * only text/reasoning content, so generateText steps do not contain tool
+ * parts — the bridged execute() still runs in-process either way.
  */
 
 import { z } from 'zod';
@@ -33,6 +36,9 @@ const tools = {
       b: z.number(),
     }),
     execute: async ({ operation, a, b }) => {
+      // Log so the generateText example below visibly shows the bridged
+      // tool running in-process.
+      console.log(`🔧 calculator executed in-process: ${operation}(${a}, ${b})`);
       switch (operation) {
         case 'add':
           return { result: a + b };
@@ -65,20 +71,15 @@ async function main() {
     },
   });
 
-  // 1. generateText - tool calls/results appear in the steps content
+  // 1. generateText - the bridged execute() runs in-process and the answer
+  //    reflects its result. (Tool-call/tool-result content parts are
+  //    currently only emitted on the streaming path — see streamText below.)
   console.log('1️⃣  generateText with bridged AI SDK tools\n');
   const result = await generateText({
     model: provider('sonnet'),
     prompt: 'Use the calculator tool to multiply 12 by 34. Reply with just the number.',
   });
 
-  for (const part of result.steps.flatMap((step) => step.content)) {
-    if (part.type === 'tool-call') {
-      console.log(`🚀 tool-call → ${part.toolName}`, JSON.stringify(part.input));
-    } else if (part.type === 'tool-result') {
-      console.log(`📄 tool-result ← ${part.toolName}`, JSON.stringify(part.output));
-    }
-  }
   console.log('Response:', result.text.trim());
 
   // 2. streamText - tool calls/results arrive as dynamic tool parts
@@ -106,6 +107,7 @@ async function main() {
   console.log('- createAiSdkMcpServer runs your execute functions in-process via MCP');
   console.log('- Only Zod object schemas are supported (no jsonSchema() tools)');
   console.log('- Allow the tools explicitly: mcp__<serverName>__<toolName>');
+  console.log('- Tool-call/tool-result parts surface when streaming (not in generateText steps)');
 }
 
 main().catch((err) => {

@@ -349,13 +349,13 @@ npx tsx examples/session-management.ts
 
 ### 29. Permission Hooks (`hooks-permission-denied.ts`)
 
-**Purpose**: Use the SDK 0.3.x permission vocabulary in hooks - a PreToolUse hook that returns `permissionDecision: 'defer'` and a PermissionDenied hook observing auto-denied tools.
+**Purpose**: Use the SDK 0.3.x permission vocabulary in hooks - a PreToolUse hook that allows known-safe tools (and makes no decision for the rest, handing them to the permission system), a `canUseTool` callback that denies Bash at call time, and the denial surfacing in provider metadata.
 
 ```bash
 npx tsx examples/hooks-permission-denied.ts
 ```
 
-**Key concepts**: PreToolUse `'defer'` decision (hand the decision back to the permission system), PermissionDenied hook, `disallowedTools`, `providerMetadata['claude-code'].permissionDenials`
+**Key concepts**: PreToolUse `'allow'` decision vs. no decision (hand the call to the permission system), `canUseTool` call-time deny (note: `disallowedTools` and blanket deny rules remove the tool up front, so no denial would ever fire; an explicit PreToolUse `'defer'` currently breaks canUseTool routing in CLI 2.1.x), PermissionDenied hook (fires only for CLI-internal auto-denials, e.g. the `permissionMode: 'auto'` classifier), `providerMetadata['claude-code'].permissionDenials`
 
 ## AI SDK Tool Bridging
 
@@ -369,7 +369,7 @@ npx tsx examples/ai-sdk-tools.ts
 
 **Key concepts**: `createAiSdkMcpServer`, `mcpServers` setting, `allowedTools` with `mcp__<serverName>__<toolName>` naming, provider-executed dynamic tool parts
 
-**What you'll see**: AI SDK tools (Zod schemas, `execute` functions) running in-process via `generateText` and `streamText`, with tool calls/results surfacing as provider-executed dynamic tool parts.
+**What you'll see**: AI SDK tools (Zod schemas, `execute` functions) running in-process via `generateText` and `streamText`. Tool calls/results surface as provider-executed dynamic tool parts in the `streamText` fullStream; `generateText` runs the bridged tool in-process too, but its steps content currently contains only text/reasoning parts (no tool parts).
 
 ## Common Patterns
 
@@ -512,7 +512,7 @@ const result4 = streamText({
 | custom-config               | Enterprise setup      | Configuration options   |
 | tool-management             | Security              | Access control          |
 | hooks-callbacks             | Event handling        | Lifecycle hooks         |
-| hooks-permission-denied     | Permission control    | 'defer' + denial hooks  |
+| hooks-permission-denied     | Permission control    | canUseTool deny + hooks |
 | sdk-tools-callbacks         | Custom tools          | In-process MCP tools    |
 | ai-sdk-tools                | AI SDK tool bridging  | createAiSdkMcpServer    |
 | skills-management           | Skills configuration  | settingSources setup    |

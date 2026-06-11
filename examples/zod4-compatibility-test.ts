@@ -11,6 +11,12 @@
  * - Better type inference
  * - Improved error messages
  * - New validation features
+ *
+ * NOTE: Format-producing validators (.datetime(), .email(), .url(), .uuid())
+ * are avoided here. Their JSON Schema output includes `format` keywords
+ * (e.g. "date-time"), which make the Claude Code CLI silently drop native
+ * structured-output enforcement (structured_output comes back undefined),
+ * causing AI_NoObjectGeneratedError. Use z.string().describe(...) instead.
  */
 
 import { createClaudeCode } from '../dist/index.js';
@@ -46,8 +52,9 @@ async function test1_basicSchemas() {
     tags: z.array(z.string()),
     // Enums
     role: z.enum(['admin', 'user', 'guest']),
-    // Dates
-    createdAt: z.string().datetime(),
+    // Dates (avoid .datetime(): its `format: "date-time"` JSON Schema keyword
+    // breaks CLI structured-output enforcement — see note at top of file)
+    createdAt: z.string().describe('ISO 8601 datetime string'),
   });
 
   const { object } = await generateObject({
@@ -98,7 +105,7 @@ async function test3_nestedObjects() {
         firstName: z.string(),
         lastName: z.string(),
         contact: z.object({
-          email: z.string().email(),
+          email: z.string().describe('email address'),
           phone: z.string().optional(),
         }),
       }),
@@ -138,7 +145,7 @@ async function test4_arraysAndUnions() {
         assignee: z
           .object({
             name: z.string(),
-            email: z.string().email(),
+            email: z.string().describe('email address'),
           })
           .optional(),
       })
@@ -160,10 +167,12 @@ async function test4_arraysAndUnions() {
 async function test5_stringValidations() {
   console.log('5️⃣  String Validations\n');
 
+  // Length-based validations pass through fine; format-producing validators
+  // (.email()/.url()/.uuid()) are replaced with .describe() — see note at top.
   const schema = z.object({
-    email: z.string().email(),
-    url: z.string().url(),
-    uuid: z.string().uuid(),
+    email: z.string().describe('email address'),
+    url: z.string().describe('https URL'),
+    uuid: z.string().length(36).describe('UUID v4'),
     username: z.string().min(3).max(20),
     description: z.string().max(200),
   });

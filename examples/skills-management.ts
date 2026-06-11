@@ -86,14 +86,18 @@ async function demonstrateSkills() {
   console.log('   - This will trigger a validation warning!');
   console.log('   - Skills cannot load without settingSources');
 
-  // This configuration will emit a warning:
-  // "allowedTools includes 'Skill' but settingSources is not set"
-  const misconfiguredModel = claudeCode('sonnet', {
-    allowedTools: ['Skill', 'Read'], // Skill added, but...
-    // settingSources not set! Skills won't actually load.
+  // Provider-level defaultSettings are validated immediately, so the warning
+  // "allowedTools includes 'Skill' but settingSources is not set" logs below.
+  // (Model-level settings like claudeCode('sonnet', {...}) are validated too,
+  // but their warnings only surface when the model is actually used.)
+  const misconfiguredProvider = createClaudeCode({
+    defaultSettings: {
+      allowedTools: ['Skill', 'Read'], // Skill added, but...
+      // settingSources not set! Skills won't actually load.
+    },
   });
 
-  console.log('   (Check console for validation warning)\n');
+  console.log('   (The validation warning printed above)\n');
 
   // ============================================
   // Usage Example with Streaming
