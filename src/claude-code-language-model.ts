@@ -429,7 +429,6 @@ function buildRetractionEvictor(
  * - 'commands_changed'       mid-session slash-command list refresh
  * - 'memory_recall'          surfaced memory files/synthesis
  * - 'plugin_install'         headless plugin installation progress
- * - 'mirror_error'           SessionStore transcript-mirror append failures
  */
 const INFORMATIONAL_SYSTEM_SUBTYPES = new Set<string>([
   'notification',
@@ -439,7 +438,6 @@ const INFORMATIONAL_SYSTEM_SUBTYPES = new Set<string>([
   'commands_changed',
   'memory_recall',
   'plugin_install',
-  'mirror_error',
 ]);
 
 /** Narrowed union of SDK system messages (init, api_retry, permission_denied, ...). */
@@ -461,6 +459,13 @@ type PermissionDenialRecord = {
 type RequestMetadataTracking = {
   apiRetries: number;
   permissionDenials: PermissionDenialRecord[];
+  /**
+   * SessionStore transcript-mirror append failures (`mirror_error`). Each is a
+   * DROPPED transcript batch after retries — surfaced (warn-logged + here) so
+   * `sessionStore` consumers aren't told the mirror is intact when it lost
+   * entries. `{ error, sessionId }` per occurrence.
+   */
+  mirrorErrors: Array<{ error: string; sessionId: string }>;
   /**
    * Accumulated `thinking_tokens` estimate. The SDK's `estimated_tokens` is a
    * per-thinking-block running total (not authoritative billed output tokens),
@@ -2050,6 +2055,22 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         );
         break;
       }
+      case 'mirror_error': {
+        // SessionStore.append() failed after retries and the transcript batch
+        // was DROPPED. Not informational: the response still succeeds, so warn
+        // and record it in providerMetadata so sessionStore consumers can
+        // detect the gap instead of trusting a silently-incomplete mirror.
+        const mirrorError = (message as { error?: string }).error ?? 'unknown error';
+        const mirrorSessionId =
+          (message as { key?: { sessionId?: string } }).key?.sessionId ??
+          (message as { session_id?: string }).session_id ??
+          'unknown';
+        tracking.mirrorErrors.push({ error: mirrorError, sessionId: mirrorSessionId });
+        this.logger.warn(
+          `[claude-code] SessionStore mirror error (transcript batch dropped) - Session: ${mirrorSessionId}, Error: ${mirrorError}`
+        );
+        break;
+      }
       case 'model_refusal_fallback': {
         this.logger.debug(
           `[claude-code] Model refusal fallback - ${message.original_model} -> ${message.fallback_model} (direction: ${message.direction})`
@@ -2330,6 +2351,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     const metadataTracking: RequestMetadataTracking = {
       apiRetries: 0,
       permissionDenials: [],
+      mirrorErrors: [],
       estimatedThinkingTokens: 0,
     };
     const warnings: SharedV3Warning[] = this.generateAllWarnings(options, messagesPrompt);
@@ -2848,6 +2870,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           ...(metadataTracking.permissionDenials.length > 0 && {
             permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
           }),
+          ...(metadataTracking.mirrorErrors.length > 0 && {
+            mirrorErrors: metadataTracking.mirrorErrors as unknown as JSONValue,
+          }),
           ...(metadataTracking.estimatedThinkingTokens > 0 && {
             estimatedThinkingTokens: metadataTracking.estimatedThinkingTokens,
           }),
@@ -3023,6 +3048,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         const metadataTracking: RequestMetadataTracking = {
           apiRetries: 0,
           permissionDenials: [],
+          mirrorErrors: [],
           estimatedThinkingTokens: 0,
         };
 
@@ -4166,6 +4192,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     ...(metadataTracking.permissionDenials.length > 0 && {
                       permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
                     }),
+                    ...(metadataTracking.mirrorErrors.length > 0 && {
+                      mirrorErrors: metadataTracking.mirrorErrors as unknown as JSONValue,
+                    }),
                     ...(metadataTracking.estimatedThinkingTokens > 0 && {
                       estimatedThinkingTokens: metadataTracking.estimatedThinkingTokens,
                     }),
@@ -4287,6 +4316,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   }),
                   ...(metadataTracking.permissionDenials.length > 0 && {
                     permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
+                  }),
+                  ...(metadataTracking.mirrorErrors.length > 0 && {
+                    mirrorErrors: metadataTracking.mirrorErrors as unknown as JSONValue,
                   }),
                   ...(metadataTracking.estimatedThinkingTokens > 0 && {
                     estimatedThinkingTokens: metadataTracking.estimatedThinkingTokens,

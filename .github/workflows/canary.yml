@@ -29,6 +29,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # The job has issues:write. Do NOT persist the token into git config —
+          # a lifecycle script in the unpinned @latest SDK (or a transitive dep)
+          # installed below could otherwise read it and abuse the write scope.
+          # The issue-filing step uses the Actions-provided GITHUB_TOKEN, not the
+          # git-persisted credential, so it still works.
+          persist-credentials: false
 
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v6
@@ -40,7 +47,9 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Install @anthropic-ai/claude-agent-sdk@latest (not saved)
-        run: npm install --no-save --legacy-peer-deps @anthropic-ai/claude-agent-sdk@latest
+        # --ignore-scripts: do not run lifecycle scripts from the unpinned
+        # @latest package or its transitive deps in a job that holds issues:write.
+        run: npm install --no-save --ignore-scripts --legacy-peer-deps @anthropic-ai/claude-agent-sdk@latest
 
       - name: Print resolved SDK version
         run: |

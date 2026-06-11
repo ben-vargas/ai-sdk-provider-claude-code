@@ -277,10 +277,20 @@ function isZodObjectSchema(schema: unknown): schema is ZodObject<ZodRawShape> {
  * Zod layout), it returns false rather than throwing on a valid plain schema.
  */
 function hasNonDefaultUnknownKeyMode(schema: ZodObject<ZodRawShape>): boolean {
-  const def =
-    (schema as { _zod?: { def?: { catchall?: unknown } }; _def?: { catchall?: unknown } })._zod
-      ?.def ?? (schema as { _def?: { catchall?: unknown } })._def;
-  return def != null && def.catchall !== undefined;
+  const v4 = (schema as { _zod?: { def?: { catchall?: unknown } } })._zod?.def;
+  if (v4) {
+    // Zod v4: a plain object has NO `catchall`; .strict()/.passthrough()/
+    // .catchall() set one. (Do NOT use this for v3 — v3 plain objects always
+    // carry a ZodNever catchall, which would false-reject them.)
+    return v4.catchall !== undefined;
+  }
+  const v3 = (schema as { _def?: { unknownKeys?: unknown } })._def;
+  if (v3 && typeof v3.unknownKeys === 'string') {
+    // Zod v3: the mode lives in `unknownKeys` ('strip' is the default).
+    return v3.unknownKeys !== 'strip';
+  }
+  // Unrecognized layout: do NOT throw on a possibly-valid plain schema.
+  return false;
 }
 
 /**
@@ -409,7 +419,11 @@ export function createAiSdkMcpServer(
           // Preserve `this === def` so tools that read off their own object
           // continue to work; forward the MCP request id as `toolCallId`
           // (only when present — never coerce undefined to 'undefined').
-          const result: unknown = await execute.call(def, parsed.data as never, {
+          // Discard parsed.data: the SDK already ran field transforms when it
+          // parsed `args` against the shape (InferShape = each field's _output),
+          // so passing parsed.data would transform a SECOND time. The re-parse
+          // above is only a validation gate for object-level refinements.
+          const result: unknown = await execute.call(def, args as never, {
             toolCallId: extraInfo.requestId !== undefined ? String(extraInfo.requestId) : undefined,
             abortSignal: extraInfo.signal,
           });

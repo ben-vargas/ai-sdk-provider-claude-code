@@ -216,18 +216,25 @@ describe('createAiSdkMcpServer', () => {
     expect(result).toEqual({ content: [{ type: 'text', text: '{"partial":2}' }] });
   });
 
-  it('passes the parsed (transformed) value to execute', async () => {
+  it('does NOT re-transform args (the SDK already applied field transforms)', async () => {
+    // The Agent SDK parses args against the shape before calling the handler,
+    // so field transforms have already run (InferShape = each field's _output).
+    // The bridge must pass those args straight through, NOT re-parse into a
+    // second transform — { name: z.string().transform(v => v + '!') } given
+    // model output "a!" (already transformed once) must reach execute as "a!",
+    // not "a!!". In this unit harness no SDK runs, so execute sees args as-is.
     const execute = vi.fn(async () => 'ok');
     const config = createAiSdkMcpServer('myTools', {
-      trimmed: {
-        inputSchema: z.object({ name: z.string().transform((v) => v.trim()) }),
+      bang: {
+        inputSchema: z.object({ name: z.string().transform((v) => `${v}!`) }),
         execute,
       },
     });
 
-    const [trimmed] = getToolDefs(config);
-    await trimmed!.handler({ name: '  Ada  ' }, undefined);
-    expect(execute).toHaveBeenCalledWith({ name: 'Ada' }, expect.anything());
+    const [bang] = getToolDefs(config);
+    await bang!.handler({ name: 'already-once!' }, undefined);
+    // Passed through unchanged — the transform is NOT applied a second time.
+    expect(execute).toHaveBeenCalledWith({ name: 'already-once!' }, expect.anything());
   });
 
   it('should pass toolCallId and abortSignal from the MCP extra to execute', async () => {

@@ -7472,11 +7472,6 @@ describe('ClaudeCodeLanguageModel', () => {
         { subtype: 'commands_changed', commands: [] },
         { subtype: 'memory_recall', mode: 'select', memories: [] },
         { subtype: 'plugin_install', status: 'started' },
-        {
-          subtype: 'mirror_error',
-          error: 'append failed',
-          key: { projectKey: 'p', sessionId: 's' },
-        },
       ];
 
       const mockResponse = {
@@ -7528,6 +7523,53 @@ describe('ClaudeCodeLanguageModel', () => {
           expect.stringContaining(`Ignoring informational system message: ${informational.subtype}`)
         );
       }
+    });
+
+    it('surfaces mirror_error (dropped transcript batch) as a warning and in providerMetadata', async () => {
+      const warn = vi.fn();
+      const logger: Logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+      const modelWithLogger = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { logger },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'mirror_error',
+            error: 'append failed after retries',
+            key: { projectKey: 'p', sessionId: 'mirror-sess' },
+            session_id: 'mirror-sess',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'mirror-sess',
+            usage: { input_tokens: 5, output_tokens: 2 },
+            total_cost_usd: 0.001,
+            duration_ms: 100,
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await modelWithLogger.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('SessionStore mirror error'));
+      const finish = chunks.find((c) => c.type === 'finish');
+      expect(finish.providerMetadata['claude-code'].mirrorErrors).toEqual([
+        { error: 'append failed after retries', sessionId: 'mirror-sess' },
+      ]);
     });
 
     it('should accumulate thinking_tokens deltas into estimatedThinkingTokens in doStream finish metadata', async () => {
