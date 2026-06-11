@@ -242,7 +242,7 @@ console.log(result.object); // Matches the schema above
 
 > **Note:** A schema is required for JSON output. Using `responseFormat: { type: 'json' }` without a schema is not supported by Claude Code (matching Anthropic's official provider behavior). An `unsupported-setting` warning will be emitted and the call will be treated as plain text.
 >
-> **Current CLI limitation:** Some JSON Schema features can cause the Claude Code CLI to silently fall back to prose (no `structured_output`). This includes `format` constraints (e.g., `email`, `uri`) and complex regex patterns (lookaheads/backreferences). Workaround: keep the generation schema simple, then validate with a stricter schema client-side. See `examples/structured-output-repro.ts` and `examples/limitations.ts`.
+> **Current CLI limitation:** Some JSON Schema features can cause the Claude Code CLI to silently fall back to prose (no `structured_output`). The provider mitigates the most common case: `format` keywords (`date-time`, `email`, `uri`, `uuid`, ... — produced by Zod's `.datetime()`, `.email()`, `.url()`, `.uuid()`) are stripped client-side before the schema is sent, with the hint folded into the field's `description` (e.g. `(expected format: email)`). Server-side enforcement of `format` still does not exist in the CLI, but `generateObject`/`streamObject` validate against your original Zod schema client-side, so nothing is lost. Complex regex `pattern`s (lookaheads/backreferences) remain unmitigated — `pattern` is passed through untouched because the CLI genuinely enforces simple patterns. If the CLI still falls back to prose, the provider first tries to parse the prose as JSON (graceful recovery, with a warning) and otherwise fails fast with a descriptive error instead of letting an opaque `AI_NoObjectGeneratedError` surface downstream. See `examples/structured-output-repro.ts` and `examples/limitations.ts`.
 
 ## Core Features
 
@@ -348,6 +348,11 @@ const model = claudeCode('sonnet', {
   },
 });
 ```
+
+> **Upstream CLI caveats (verified on CLI 2.1.172):**
+>
+> - A `PreToolUse` hook returning `permissionDecision: 'defer'` combined with a `canUseTool` callback fails the tool call **before** `canUseTool` is ever consulted. When `canUseTool` should handle the call, have the hook return no decision (or `'allow'`) instead of `'defer'`.
+> - The `PermissionDenied` hook only fires for CLI-internal auto-mode classifier denials (e.g. `permissionMode: 'auto'`). Denials issued by `canUseTool` do **not** trigger it — they surface via the result message's `permission_denials`, which the provider merges into `providerMetadata['claude-code'].permissionDenials`.
 
 See [`ClaudeCodeSettings`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/blob/main/src/types.ts) for the full list of supported options (e.g., `allowedTools`, `disallowedTools`, `hooks`, `canUseTool`, `env`, `settingSources`).
 

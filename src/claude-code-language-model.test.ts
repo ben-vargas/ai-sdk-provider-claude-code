@@ -2217,6 +2217,619 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(result.content[0]).toEqual({ type: 'text', text: 'Just text, no thinking.' });
       expect(result.providerMetadata?.['claude-code']?.thinkingTraces).toBeUndefined();
     });
+
+    describe('provider-executed tool content parts', () => {
+      it('emits ordered tool-call and tool-result content parts interleaved with text', async () => {
+        const toolUseId = 'toolu_gen_calc';
+        const toolName = 'mcp__myTools__calculator';
+        const toolInput = { operation: 'multiply', a: 12, b: 34 };
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  { type: 'text', text: 'Let me calculate that. ' },
+                  { type: 'tool_use', id: toolUseId, name: toolName, input: toolInput },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: toolUseId,
+                    name: toolName,
+                    content: '{"result":408}',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text: 'The answer is 408.' }] },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-tool-session',
+              usage: { input_tokens: 5, output_tokens: 3 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Multiply 12 by 34' }] }],
+        } as any);
+
+        expect(result.content.map((part: any) => part.type)).toEqual([
+          'text',
+          'tool-call',
+          'tool-result',
+          'text',
+        ]);
+        expect(result.content[0]).toEqual({ type: 'text', text: 'Let me calculate that. ' });
+        expect(result.content[1]).toEqual({
+          type: 'tool-call',
+          toolCallId: toolUseId,
+          toolName,
+          input: JSON.stringify(toolInput),
+          providerExecuted: true,
+          dynamic: true,
+          providerMetadata: {
+            'claude-code': {
+              rawInput: JSON.stringify(toolInput),
+              parentToolCallId: null,
+            },
+          },
+        });
+        expect(result.content[2]).toEqual({
+          type: 'tool-result',
+          toolCallId: toolUseId,
+          toolName,
+          // JSON string results are normalized to objects (matches doStream)
+          result: { result: 408 },
+          isError: false,
+          providerExecuted: true,
+          dynamic: true,
+          providerMetadata: {
+            'claude-code': {
+              rawResult: '{"result":408}',
+              rawResultTruncated: false,
+              parentToolCallId: null,
+            },
+          },
+        });
+        expect(result.content[3]).toEqual({ type: 'text', text: 'The answer is 408.' });
+        expect(result.finishReason.unified).toBe('stop');
+      });
+
+      it('truncates long tool results in doGenerate content at maxToolResultSize', async () => {
+        const maxToolResultSize = 100;
+        const modelWithLimit = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: { maxToolResultSize },
+        });
+        const toolUseId = 'toolu_gen_truncate';
+        const toolName = 'Read';
+        const longText = 'x'.repeat(maxToolResultSize + 15);
+        const truncatedText = `${longText.slice(0, maxToolResultSize)}\n...[truncated ${
+          longText.length - maxToolResultSize
+        } chars]`;
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: toolUseId,
+                    name: toolName,
+                    input: { file_path: '/tmp/example.txt' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: toolUseId,
+                    name: toolName,
+                    content: longText,
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-tool-truncate-session',
+              usage: { input_tokens: 4, output_tokens: 2 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await modelWithLimit.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read file' }] }],
+        } as any);
+
+        const toolResult = result.content.find((part: any) => part.type === 'tool-result') as any;
+        expect(toolResult).toBeDefined();
+        expect(toolResult.result).toBe(truncatedText);
+        expect(toolResult.providerMetadata?.['claude-code']).toEqual({
+          rawResult: truncatedText,
+          rawResultTruncated: true,
+          parentToolCallId: null,
+        });
+      });
+
+      it('maps tool_error blocks to isError tool-result content parts (V3 union member, survives asContent)', async () => {
+        const toolUseId = 'toolu_gen_error';
+        const toolName = 'Read';
+        const errorMessage = 'File not found: /nonexistent.txt';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: toolUseId,
+                    name: toolName,
+                    input: { file_path: '/nonexistent.txt' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_error',
+                    tool_use_id: toolUseId,
+                    name: toolName,
+                    error: errorMessage,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-tool-error-session',
+              usage: { input_tokens: 10, output_tokens: 0 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read missing file' }] }],
+        } as any);
+
+        // The V3 content union has no 'tool-error' member and AI SDK core's
+        // asContent() silently drops unknown content part types, so doGenerate
+        // maps tool_error blocks to tool-result parts with isError: true —
+        // asContent converts those into proper tool-error content parts.
+        const partTypes = result.content.map((part: any) => part.type);
+        expect(partTypes).not.toContain('tool-error');
+        expect(partTypes.indexOf('tool-result')).toBeGreaterThan(partTypes.indexOf('tool-call'));
+        const toolError = result.content.find((part: any) => part.type === 'tool-result') as any;
+        expect(toolError).toEqual({
+          type: 'tool-result',
+          toolCallId: toolUseId,
+          toolName,
+          result: errorMessage,
+          isError: true,
+          providerExecuted: true,
+          dynamic: true,
+          providerMetadata: {
+            'claude-code': {
+              rawError: errorMessage,
+              parentToolCallId: null,
+            },
+          },
+        });
+      });
+
+      it('emits result: "" for tool_result blocks with no content field (NonNullable contract)', async () => {
+        const noContentToolId = 'toolu_gen_nocontent';
+        const nullStringToolId = 'toolu_gen_nullstring';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: noContentToolId,
+                    name: 'Bash',
+                    input: { command: 'true' },
+                  },
+                  { type: 'tool_use', id: nullStringToolId, name: 'Bash', input: { command: 'x' } },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  // No `content` field at all (optional per the SDK types)
+                  { type: 'tool_result', tool_use_id: noContentToolId, name: 'Bash' },
+                  // String "null" normalizes to JSON null, which must not
+                  // violate NonNullable<JSONValue> either
+                  {
+                    type: 'tool_result',
+                    tool_use_id: nullStringToolId,
+                    name: 'Bash',
+                    content: 'null',
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-empty-result-session',
+              usage: { input_tokens: 2, output_tokens: 1 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Run it' }] }],
+        } as any);
+
+        const toolResults = result.content.filter(
+          (part: any) => part.type === 'tool-result'
+        ) as any[];
+        expect(toolResults).toHaveLength(2);
+        const noContentResult = toolResults.find((part) => part.toolCallId === noContentToolId);
+        expect(noContentResult?.result).toBe('');
+        expect(noContentResult?.providerMetadata?.['claude-code']?.rawResult).toBe('');
+        const nullStringResult = toolResults.find((part) => part.toolCallId === nullStringToolId);
+        expect(nullStringResult?.result).toBe('');
+        // rawResult preserves the original string the tool returned
+        expect(nullStringResult?.providerMetadata?.['claude-code']?.rawResult).toBe('null');
+      });
+
+      it('infers parentToolCallId from a single active Task tool', async () => {
+        const taskToolId = 'toolu_gen_task';
+        const childToolId = 'toolu_gen_child';
+        const childToolName = 'Bash';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: taskToolId,
+                    name: 'Task',
+                    input: { objective: 'Run command' },
+                  },
+                  {
+                    type: 'tool_use',
+                    id: childToolId,
+                    name: childToolName,
+                    input: { command: 'ls' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: childToolId,
+                    name: childToolName,
+                    content: 'done',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-task-parent-session',
+              usage: { input_tokens: 2, output_tokens: 1 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Do work' }] }],
+        } as any);
+
+        const toolCalls = result.content.filter((part: any) => part.type === 'tool-call') as any[];
+        expect(toolCalls).toHaveLength(2);
+        const taskCall = toolCalls.find((part) => part.toolCallId === taskToolId);
+        const childCall = toolCalls.find((part) => part.toolCallId === childToolId);
+        // Task tools are top-level (never have a parent)
+        expect(taskCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBeNull();
+        expect(childCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBe(taskToolId);
+        const childResult = result.content.find(
+          (part: any) => part.type === 'tool-result' && part.toolCallId === childToolId
+        ) as any;
+        expect(childResult?.providerMetadata?.['claude-code']?.parentToolCallId).toBe(taskToolId);
+      });
+
+      it("infers parentToolCallId for subagents launched via the 'Agent' tool name", async () => {
+        // Upstream Agent SDK docs name the subagent tool 'Agent' ('Task' is
+        // the backwards-compatible alias used by the currently-pinned CLI);
+        // parent tracking must recognize both.
+        const agentToolId = 'toolu_gen_agent';
+        const childToolId = 'toolu_gen_agent_child';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: agentToolId,
+                    name: 'Agent',
+                    input: { description: 'Run command', prompt: 'ls' },
+                  },
+                  {
+                    type: 'tool_use',
+                    id: childToolId,
+                    name: 'Bash',
+                    input: { command: 'ls' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-agent-parent-session',
+              usage: { input_tokens: 2, output_tokens: 1 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Do work' }] }],
+        } as any);
+
+        const toolCalls = result.content.filter((part: any) => part.type === 'tool-call') as any[];
+        const agentCall = toolCalls.find((part) => part.toolCallId === agentToolId);
+        const childCall = toolCalls.find((part) => part.toolCallId === childToolId);
+        // 'Agent' tools are top-level subagent launchers (never have a parent)
+        expect(agentCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBeNull();
+        // ...and act as the fallback parent for nested tools, same as 'Task'
+        expect(childCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBe(agentToolId);
+      });
+
+      it('retracts tool parts from superseded assistant messages', async () => {
+        const refusedToolId = 'toolu_gen_refused';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-refused',
+              message: {
+                content: [
+                  { type: 'text', text: 'Refused partial answer' },
+                  {
+                    type: 'tool_use',
+                    id: refusedToolId,
+                    name: 'Bash',
+                    input: { command: 'echo refused' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: refusedToolId,
+                    name: 'Bash',
+                    content: 'refused',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-replacement',
+              supersedes: ['uuid-refused'],
+              message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-supersede-tools-session',
+              usage: { input_tokens: 10, output_tokens: 5 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        } as any);
+
+        // The retracted tool-call AND its already-arrived tool-result are
+        // dropped along with the refused text; only the replacement survives.
+        expect(result.content).toEqual([{ type: 'text', text: 'Replacement answer' }]);
+      });
+
+      it('removes retracted Task tools from fallback-parent inference', async () => {
+        const retractedTaskId = 'toolu_gen_retracted_task';
+        const laterToolId = 'toolu_gen_later_tool';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // Refused message contains a Task tool whose result never arrives
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-refused-task',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: retractedTaskId,
+                    name: 'Task',
+                    input: { objective: 'refused work' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-replacement',
+              supersedes: ['uuid-refused-task'],
+              message: { content: [{ type: 'text', text: 'Replacement' }] },
+            };
+            // A later top-level tool with no parent info must NOT be
+            // attributed to the retracted (never-emitted) Task.
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-later',
+              message: {
+                content: [
+                  { type: 'tool_use', id: laterToolId, name: 'Bash', input: { command: 'ls' } },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: laterToolId,
+                    name: 'Bash',
+                    content: 'ok',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-retracted-task-session',
+              usage: { input_tokens: 5, output_tokens: 3 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        } as any);
+
+        const toolCalls = result.content.filter((part: any) => part.type === 'tool-call') as any[];
+        expect(toolCalls.map((part) => part.toolCallId)).toEqual([laterToolId]);
+        // No dangling parent reference to the retracted Task
+        expect(toolCalls[0]?.providerMetadata?.['claude-code']?.parentToolCallId).toBeNull();
+        const toolResult = result.content.find((part: any) => part.type === 'tool-result') as any;
+        expect(toolResult?.providerMetadata?.['claude-code']?.parentToolCallId).toBeNull();
+      });
+
+      it('drops late tool results for retracted tool calls instead of emitting orphans', async () => {
+        const retractedToolId = 'toolu_gen_late_result';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-refused-call',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: retractedToolId,
+                    name: 'Bash',
+                    input: { command: 'echo refused' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-replacement',
+              supersedes: ['uuid-refused-call'],
+              message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+            };
+            // tool_result arrives AFTER the supersede: it must be dropped,
+            // not paired with a synthesized call or left as an orphan
+            // (AI SDK core's asContent throws on unpaired tool-results).
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: retractedToolId,
+                    name: 'Bash',
+                    content: 'late result',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-late-result-session',
+              usage: { input_tokens: 5, output_tokens: 3 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        } as any);
+
+        expect(result.content).toEqual([{ type: 'text', text: 'Replacement answer' }]);
+      });
+    });
   });
 
   describe('doStream', () => {
@@ -6584,6 +7197,429 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(warnings).toContainEqual(
         expect.objectContaining({ type: 'unsupported', feature: 'maxOutputTokens' })
       );
+    });
+  });
+});
+
+describe('structured output hardening', () => {
+  let model: ClaudeCodeLanguageModel;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    model = new ClaudeCodeLanguageModel({
+      id: 'sonnet',
+      settings: { logger: false },
+    });
+  });
+
+  const successResult = (overrides: Record<string, unknown> = {}) => ({
+    type: 'result',
+    subtype: 'success',
+    session_id: 'structured-hardening-session',
+    usage: { input_tokens: 10, output_tokens: 5 },
+    total_cost_usd: 0.001,
+    duration_ms: 100,
+    ...overrides,
+  });
+
+  describe('outputFormat schema sanitization', () => {
+    it('strips format keywords and folds descriptions before passing the schema to query()', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield successResult({ structured_output: { email: 'a@b.co', createdAt: 'now' } });
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const schema = {
+        type: 'object',
+        properties: {
+          email: { type: 'string', format: 'email' },
+          createdAt: {
+            type: 'string',
+            format: 'date-time',
+            description: 'Creation timestamp',
+          },
+          nested: {
+            type: 'object',
+            properties: {
+              link: { type: 'string', format: 'uri' },
+            },
+          },
+          code: { type: 'string', pattern: '^[A-Z]+$' },
+        },
+        required: ['email'],
+      };
+
+      await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema },
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as {
+        options: { outputFormat?: { type: string; schema: Record<string, any> } };
+      };
+      expect(call.options?.outputFormat?.type).toBe('json_schema');
+      const sentSchema = call.options!.outputFormat!.schema;
+      expect(sentSchema.properties.email).toEqual({
+        type: 'string',
+        description: 'Expected format: email',
+      });
+      expect(sentSchema.properties.createdAt).toEqual({
+        type: 'string',
+        description: 'Creation timestamp (expected format: date-time)',
+      });
+      expect(sentSchema.properties.nested.properties.link).toEqual({
+        type: 'string',
+        description: 'Expected format: uri',
+      });
+      // pattern is real enforcement and must be passed through untouched
+      expect(sentSchema.properties.code).toEqual({ type: 'string', pattern: '^[A-Z]+$' });
+      expect(sentSchema.required).toEqual(['email']);
+      // The user's schema object is not mutated
+      expect(schema.properties.email).toEqual({ type: 'string', format: 'email' });
+    });
+
+    it('passes a format-free schema through by reference', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield successResult({ structured_output: { name: 'x' } });
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+      };
+
+      await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema },
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as {
+        options: { outputFormat?: { schema: unknown } };
+      };
+      expect(call.options?.outputFormat?.schema).toBe(schema);
+    });
+  });
+
+  describe('doGenerate missing structured_output handling', () => {
+    it('recovers by parsing prose JSON when the result lacks structured_output', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: '{"name":"Alice","age":30}' }] },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const textPart = result.content.find((part) => part.type === 'text') as
+        | { type: 'text'; text: string }
+        | undefined;
+      expect(textPart).toBeDefined();
+      expect(JSON.parse(textPart!.text)).toEqual({ name: 'Alice', age: 30 });
+      expect(result.finishReason.unified).toBe('stop');
+    });
+
+    it('recovers JSON from a fenced code block in the prose', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'text',
+                  text: 'Here is the result:\n```json\n{"name":"Bob"}\n```\nDone.',
+                },
+              ],
+            },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const textPart = result.content.find((part) => part.type === 'text') as
+        | { type: 'text'; text: string }
+        | undefined;
+      expect(textPart).toBeDefined();
+      expect(JSON.parse(textPart!.text)).toEqual({ name: 'Bob' });
+    });
+
+    it('treats scalar JSON prose (null, numbers) as unrecoverable and fails loudly', async () => {
+      // 'null' parses as JSON but is not an object/array; letting it through
+      // would just fail downstream with the opaque AI_NoObjectGeneratedError
+      // this path exists to eliminate.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'null' }] },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const promise = model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      await expect(promise).rejects.toThrow(/structured_output/);
+      await promise.catch((error: unknown) => {
+        expect(APICallError.isInstance(error)).toBe(true);
+        expect((error as APICallError).isRetryable).toBe(false);
+      });
+    });
+
+    it('recovers JSON from the final assistant turn in multi-turn tool runs', async () => {
+      // Earlier-turn chatter ('Let me check...') concatenated with the final
+      // JSON does not parse as a whole; the final turn alone must be tried
+      // (mirrors doStream, which resets its accumulator on user messages).
+      const toolUseId = 'toolu_recovery_multiturn';
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                { type: 'text', text: 'Let me check the data first.' },
+                { type: 'tool_use', id: toolUseId, name: 'Read', input: { file_path: '/x' } },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                { type: 'tool_result', tool_use_id: toolUseId, name: 'Read', content: 'data' },
+              ],
+            },
+          };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: '{"name":"Eve"}' }] },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const textPart = result.content.find((part) => part.type === 'text') as
+        | { type: 'text'; text: string }
+        | undefined;
+      expect(textPart).toBeDefined();
+      expect(JSON.parse(textPart!.text)).toEqual({ name: 'Eve' });
+    });
+
+    it('throws a descriptive non-retryable APICallError when the prose is not JSON', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: 'Sorry, I can only answer in plain language.' }],
+            },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const promise = model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      await expect(promise).rejects.toThrow(/structured_output/);
+      await promise.catch((error: unknown) => {
+        expect(APICallError.isInstance(error)).toBe(true);
+        expect((error as APICallError).isRetryable).toBe(false);
+        expect((error as APICallError).message).toContain('schema');
+        expect((error as APICallError).message).toContain('README');
+      });
+    });
+
+    it('does not throw for non-stop finish reasons (preserves max-turns behavior)', async () => {
+      const proseText = 'Partial answer before hitting the turn limit';
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: proseText }] },
+          };
+          yield successResult({ subtype: 'error_max_turns' });
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      expect(result.finishReason.unified).toBe('length');
+      const textPart = result.content.find((part) => part.type === 'text') as
+        | { type: 'text'; text: string }
+        | undefined;
+      expect(textPart?.text).toBe(proseText);
+    });
+  });
+
+  describe('doStream missing structured_output handling', () => {
+    const readAll = async (stream: ReadableStream<unknown>) => {
+      const chunks: any[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      return chunks;
+    };
+
+    it('recovers by parsing accumulated prose JSON when the result lacks structured_output', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: 'Sure:\n```json\n{"name":"Carol"}\n```' }],
+            },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const chunks = await readAll(result.stream);
+
+      expect(chunks.some((c) => c.type === 'error')).toBe(false);
+      const streamedText = chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join('');
+      expect(JSON.parse(streamedText)).toEqual({ name: 'Carol' });
+      expect(chunks.find((c) => c.type === 'finish')).toMatchObject({
+        finishReason: { unified: 'stop' },
+      });
+    });
+
+    it('emits a descriptive non-retryable error when the prose is not JSON', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: 'I cannot answer that as JSON, sorry.' }],
+            },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const chunks = await readAll(result.stream);
+
+      const errorChunk = chunks.find((c) => c.type === 'error');
+      expect(errorChunk).toBeDefined();
+      expect(APICallError.isInstance(errorChunk.error)).toBe(true);
+      expect((errorChunk.error as APICallError).isRetryable).toBe(false);
+      expect((errorChunk.error as APICallError).message).toContain('structured_output');
+      expect((errorChunk.error as APICallError).message).toContain('README');
+      // No finish event - the stream fails instead of delivering prose
+      expect(chunks.some((c) => c.type === 'finish')).toBe(false);
+    });
+
+    it('treats scalar JSON prose as unrecoverable and emits the loud error', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: '42' }] },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const chunks = await readAll(result.stream);
+
+      const errorChunk = chunks.find((c) => c.type === 'error');
+      expect(errorChunk).toBeDefined();
+      expect(APICallError.isInstance(errorChunk.error)).toBe(true);
+      expect((errorChunk.error as APICallError).isRetryable).toBe(false);
+      expect(chunks.some((c) => c.type === 'finish')).toBe(false);
+    });
+
+    it('does not interfere when structured output was already streamed via input_json_delta', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'stream_event',
+            event: {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'input_json_delta', partial_json: '{"name":"Dave"}' },
+            },
+          };
+          yield successResult(); // no structured_output on the result message
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const chunks = await readAll(result.stream);
+
+      expect(chunks.some((c) => c.type === 'error')).toBe(false);
+      const streamedText = chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join('');
+      expect(JSON.parse(streamedText)).toEqual({ name: 'Dave' });
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
     });
   });
 });

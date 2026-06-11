@@ -367,6 +367,17 @@ export interface ClaudeCodeSettings {
   /**
    * Hook callbacks for lifecycle events (e.g., PreToolUse, PostToolUse).
    * Note: typed loosely to support multiple SDK versions.
+   *
+   * Two verified upstream CLI behaviors to be aware of (CLI 2.1.172):
+   * - A `PreToolUse` hook returning `permissionDecision: 'defer'` combined
+   *   with a {@link canUseTool} callback fails the tool call before
+   *   `canUseTool` is ever consulted. Return no decision (or `'allow'`)
+   *   instead of `'defer'` when `canUseTool` should handle the call.
+   * - The `PermissionDenied` hook only fires for CLI-internal auto-mode
+   *   classifier denials (e.g. `permissionMode: 'auto'`). Denials issued by
+   *   `canUseTool` do NOT trigger it; they surface via the result message's
+   *   `permission_denials`, exposed as
+   *   `providerMetadata['claude-code'].permissionDenials`.
    */
   hooks?: Partial<
     Record<
@@ -378,6 +389,14 @@ export interface ClaudeCodeSettings {
   /**
    * Dynamic permission callback invoked before a tool is executed.
    * Allows runtime approval/denial and optional input mutation.
+   *
+   * Upstream CLI caveats (verified on CLI 2.1.172):
+   * - Do not combine with a `PreToolUse` hook that returns
+   *   `permissionDecision: 'defer'` — the CLI fails the tool call before
+   *   this callback is consulted.
+   * - Denials returned here do not fire the `PermissionDenied` hook (it only
+   *   fires for auto-mode classifier denials); they surface in
+   *   `providerMetadata['claude-code'].permissionDenials` instead.
    */
   canUseTool?: CanUseTool;
 

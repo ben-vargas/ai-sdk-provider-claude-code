@@ -257,7 +257,7 @@ npx tsx examples/message-injection.ts
 
 > **Native Support**: Object generation uses the SDK's native `outputFormat` option with constrained decoding, providing schema-compliant JSON for **supported** JSON Schema features.
 >
-> **Important**: Avoid `.email()`, `.url()`, `.uuid()`, `.datetime()` and complex regex with lookaheads — these produce JSON Schema `format` and `pattern` annotations that cause the Claude Code CLI to silently fall back to prose. Use `.describe()` with format hints instead (e.g. `z.string().describe('Email address (e.g. user@example.com)')`) and validate client-side if strict compliance is needed.
+> **Important**: `.email()`, `.url()`, `.uuid()`, `.datetime()` work — the provider strips the JSON Schema `format` keywords they produce (the CLI would otherwise silently fall back to prose) and folds the hint into the field description, while Zod still validates the values client-side. Complex regex with lookaheads/backreferences remains a CLI limitation: `pattern` is passed through (simple patterns are genuinely enforced), so keep patterns simple and validate strictly client-side if needed.
 
 ### 21. Object Generation (`generate-object.ts`)
 
@@ -369,7 +369,7 @@ npx tsx examples/ai-sdk-tools.ts
 
 **Key concepts**: `createAiSdkMcpServer`, `mcpServers` setting, `allowedTools` with `mcp__<serverName>__<toolName>` naming, provider-executed dynamic tool parts
 
-**What you'll see**: AI SDK tools (Zod schemas, `execute` functions) running in-process via `generateText` and `streamText`. Tool calls/results surface as provider-executed dynamic tool parts in the `streamText` fullStream; `generateText` runs the bridged tool in-process too, but its steps content currently contains only text/reasoning parts (no tool parts).
+**What you'll see**: AI SDK tools (Zod schemas, `execute` functions) running in-process via `generateText` and `streamText`. Tool calls/results surface as provider-executed dynamic tool parts on both paths: in the `generateText` steps content and in the `streamText` fullStream (plus an in-process `execute()` log showing the bridged tool actually running locally).
 
 ## Warm Start & Timing
 
@@ -432,8 +432,9 @@ const { object } = await generateObject({
   schema: z.object({
     name: z.string(),
     age: z.number(),
-    // Use .describe() instead of .email() — format constraints cause CLI fallback
-    email: z.string().describe('Email address (e.g. user@example.com)'),
+    // .email() works: the provider strips the `format` keyword for the CLI
+    // (folding the hint into the description) and Zod validates client-side.
+    email: z.string().email(),
   }),
   prompt: 'Generate a random user profile',
 });

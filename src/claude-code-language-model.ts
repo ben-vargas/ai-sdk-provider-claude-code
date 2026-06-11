@@ -1,7 +1,10 @@
 import type {
   LanguageModelV3,
+  LanguageModelV3Content,
   LanguageModelV3FinishReason,
   LanguageModelV3StreamPart,
+  LanguageModelV3ToolCall,
+  LanguageModelV3ToolResult,
   LanguageModelV3Usage,
   SharedV3Warning,
   JSONValue,
@@ -14,6 +17,7 @@ import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.j
 import { createAPICallError, createAuthenticationError, createTimeoutError } from './errors.js';
 import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
 import { validateModelId, validatePrompt, validateSessionId } from './validation.js';
+import { sanitizeJsonSchemaForOutputFormat } from './sanitize-json-schema.js';
 import { getLogger, createVerboseLogger } from './logger.js';
 
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
@@ -102,6 +106,63 @@ function isClaudeCodeTruncationError(error: unknown, bufferedText: string): bool
 
   // If we have a truncation indicator AND meaningful content, treat as truncation.
   return true;
+}
+
+/**
+ * Error message thrown when structured output was requested but the CLI
+ * returned neither `structured_output` nor parseable JSON prose. The usual
+ * cause is a schema construct the CLI's constrained decoder cannot enforce
+ * (the CLI then silently falls back to prose instead of erroring).
+ */
+const MISSING_STRUCTURED_OUTPUT_ERROR_MESSAGE =
+  'Structured output was requested (responseFormat with a JSON schema) but the Claude Code CLI returned no structured_output, and the prose response could not be parsed as JSON. ' +
+  'This usually means the schema contains constructs the CLI cannot enforce (e.g. complex regex patterns with lookaheads/backreferences), causing it to silently fall back to prose. ' +
+  "Simplify the generation schema and validate strictly client-side. See the 'Structured Outputs' section of the ai-sdk-provider-claude-code README for the list of known limitations.";
+
+/**
+ * Attempts to recover a JSON object/array from prose text returned when the
+ * CLI silently skipped structured output. Tries the trimmed text first, then
+ * the contents of fenced code blocks (```json ... ``` or ``` ... ```),
+ * last-to-first — when several blocks are present, the final one is most
+ * likely the model's actual answer.
+ *
+ * Only candidates that parse to a JSON object or array count: this recovery
+ * path only runs when `responseFormat.schema` is present (always an
+ * object/array schema in practice), and accepting scalars (prose that trims
+ * to `null`, `true`, or a bare number) would bypass the loud failure only to
+ * fail downstream with the opaque AI_NoObjectGeneratedError this path exists
+ * to eliminate.
+ *
+ * @param text - Accumulated assistant prose text
+ * @returns The valid JSON text (as emitted by the model) or undefined
+ */
+function extractJsonObjectText(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const candidates: string[] = [trimmed];
+  const fencedBlocks = Array.from(trimmed.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/gi))
+    .map((match) => match[1]?.trim())
+    .filter((block): block is string => block !== undefined && block.length > 0);
+  candidates.push(...fencedBlocks.reverse());
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return candidate;
+      }
+      // Scalar JSON (null, booleans, numbers, bare strings) - not a valid
+      // structured output; try the next candidate.
+    } catch {
+      // Try the next candidate
+    }
+  }
+
+  return undefined;
 }
 
 /**
@@ -212,6 +273,19 @@ const STREAMING_FEATURE_WARNING =
 const SDK_OPTIONS_BLOCKLIST = new Set(['model', 'abortController', 'prompt', 'outputFormat']);
 
 /**
+ * Tool names the CLI uses to launch subagents. The CLI bundled with the
+ * pinned SDK (2.1.170) names the tool 'Task' (verified via the init tool
+ * list), while current Agent SDK docs name it 'Agent' with 'Task' as a
+ * backwards-compatible alias — recognize both so parent-hierarchy tracking
+ * survives the upstream rename.
+ */
+const SUBAGENT_TOOL_NAMES = new Set(['Task', 'Agent']);
+
+function isSubagentToolName(name: string): boolean {
+  return SUBAGENT_TOOL_NAMES.has(name);
+}
+
+/**
  * SDK 0.3.x system-message subtypes that are intentionally informational.
  * The provider debug-logs and ignores them: they carry host/UI telemetry
  * with no AI SDK stream-part equivalent.
@@ -284,11 +358,38 @@ type ToolErrorPart = {
   toolName: string;
   error: string;
   providerExecuted: true;
+  dynamic: true;
   providerMetadata?: Record<string, JSONValue>;
 };
 
 // Local extension of the AI SDK stream part union to include tool-error.
 type ExtendedStreamPart = LanguageModelV3StreamPart | ToolErrorPart;
+
+/**
+ * `tool-result` part shape shared by doGenerate content and doStream parts.
+ * The V3 type does not declare `providerExecuted` on tool results, but this
+ * provider has always emitted it on the stream path; keep both paths aligned.
+ */
+type ProviderToolResultPart = LanguageModelV3ToolResult & { providerExecuted: true };
+
+/**
+ * Ordered content collected by doGenerate, tagged with the originating
+ * assistant message uuid so refusal-fallback `supersedes` retractions can
+ * drop already-collected parts (text, thinking, AND tool calls) instead of
+ * duplicating or orphaning them.
+ */
+type GenerateContentSegment =
+  | { kind: 'text'; uuid?: string; text: string }
+  | { kind: 'reasoning'; uuid?: string; text: string }
+  | { kind: 'tool-call'; uuid?: string; toolCallId: string; part: LanguageModelV3ToolCall }
+  | { kind: 'tool-result'; toolCallId: string; part: ProviderToolResultPart }
+  // tool_error blocks carry a V3 `tool-result` part with `isError: true`:
+  // the V3 CONTENT union has no `tool-error` member and AI SDK core's
+  // asContent() silently drops unknown part types, whereas an isError
+  // tool-result round-trips into a proper tool-error content part visible
+  // in generateText steps content. (doStream keeps the provider-extension
+  // tool-error STREAM part, which AI SDK core handles natively.)
+  | { kind: 'tool-error'; toolCallId: string; part: ProviderToolResultPart };
 
 type ContentBlock = { type: string; [key: string]: unknown };
 
@@ -816,31 +917,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     return sdkOptions?.resume ?? this.settings.resume ?? this.sessionId;
   }
 
-  private extractTextAndThinking(content: unknown): { text: string; thinking: string[] } {
-    if (!Array.isArray(content)) return { text: '', thinking: [] };
-
-    let text = '';
-    const thinking: string[] = [];
-
-    for (const part of content) {
-      if (!isContentBlock(part)) continue;
-      if (part.type === 'text' && typeof part.text === 'string') {
-        text += part.text;
-      } else if (part.type === 'thinking' && typeof part.thinking === 'string') {
-        thinking.push(part.thinking as string);
-      }
-    }
-
-    if (text.length > 0 && typeof text !== 'string') {
-      throw new Error('extractTextAndThinking: accumulated text must be a string');
-    }
-    if (thinking.some((t) => typeof t !== 'string')) {
-      throw new Error('extractTextAndThinking: all thinking entries must be strings');
-    }
-
-    return { text, thinking };
-  }
-
   private extractToolUses(content: unknown): ClaudeToolUse[] {
     return filterContentBlocks(content, 'tool_use').map((block) => {
       const { id, name, input, parent_tool_use_id } = block as {
@@ -975,6 +1051,170 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     }
 
     return result;
+  }
+
+  /**
+   * Builds a provider-executed `tool-call` part from an assistant `tool_use`
+   * block. Shared by doGenerate (content part) and doStream (stream part) so
+   * the two paths cannot drift in field shape.
+   */
+  private buildToolCallPart(
+    toolCallId: string,
+    toolName: string,
+    input: string,
+    parentToolCallId: string | null | undefined
+  ): LanguageModelV3ToolCall {
+    return {
+      type: 'tool-call',
+      toolCallId,
+      toolName,
+      input,
+      providerExecuted: true,
+      dynamic: true, // V3 field: indicates tool is provider-defined (not in user's tools map)
+      providerMetadata: {
+        'claude-code': {
+          // rawInput preserves the original serialized format before AI SDK normalization.
+          // Use this if you need the exact string sent to the Claude CLI, which may differ
+          // from the `input` field after AI SDK processing.
+          rawInput: input,
+          parentToolCallId: parentToolCallId ?? null,
+        },
+      },
+    };
+  }
+
+  /**
+   * Builds a provider-executed `tool-result` part from a user-message
+   * `tool_result` block, applying normalization and `maxToolResultSize`
+   * truncation. Shared by doGenerate and doStream.
+   */
+  private buildToolResultPart(
+    toolCallId: string,
+    toolName: string,
+    result: unknown,
+    isError: boolean,
+    parentToolCallId: string | null | undefined
+  ): ProviderToolResultPart {
+    const normalizedResult = this.normalizeToolResult(result);
+    const rawResult =
+      typeof result === 'string'
+        ? result
+        : result === undefined
+          ? // tool_result blocks may omit `content` entirely; '' keeps both
+            // `result` (NonNullable<JSONValue>) and rawResult (JSONValue) valid.
+            ''
+          : (() => {
+              try {
+                // JSON.stringify returns undefined (not a string) for
+                // non-serializable values such as functions or symbols.
+                return JSON.stringify(result) ?? String(result);
+              } catch {
+                return String(result);
+              }
+            })();
+    const maxToolResultSize = this.settings.maxToolResultSize;
+    const truncatedResult = truncateToolResultForStream(normalizedResult, maxToolResultSize);
+    const truncatedRawResult = truncateToolResultForStream(rawResult, maxToolResultSize) as string;
+    const rawResultTruncated = truncatedRawResult !== rawResult;
+
+    return {
+      type: 'tool-result',
+      toolCallId,
+      toolName,
+      // `?? ''`: absent `content` (undefined) and string results that
+      // normalize to JSON null (e.g. the string "null") must not violate the
+      // NonNullable<JSONValue> contract of LanguageModelV3ToolResult.result.
+      result: (truncatedResult ?? '') as NonNullable<JSONValue>,
+      isError,
+      providerExecuted: true,
+      dynamic: true, // V3 field: indicates tool is provider-defined
+      providerMetadata: {
+        'claude-code': {
+          // rawResult preserves the original CLI output string before JSON parsing.
+          // Use this when you need the exact string returned by the tool, especially
+          // if the `result` field has been parsed/normalized and you need the original format.
+          rawResult: truncatedRawResult,
+          rawResultTruncated,
+          parentToolCallId: parentToolCallId ?? null,
+        },
+      },
+    };
+  }
+
+  private serializeToolError(error: unknown): string {
+    return typeof error === 'string'
+      ? error
+      : typeof error === 'object' && error !== null
+        ? (() => {
+            try {
+              return JSON.stringify(error) ?? String(error);
+            } catch {
+              return String(error);
+            }
+          })()
+        : String(error);
+  }
+
+  /**
+   * Builds a provider-executed `tool-error` STREAM part from a user-message
+   * `tool_error` block (doStream only; AI SDK core handles tool-error stream
+   * parts natively).
+   */
+  private buildToolErrorPart(
+    toolCallId: string,
+    toolName: string,
+    error: unknown,
+    parentToolCallId: string | null | undefined
+  ): ToolErrorPart {
+    const rawError = this.serializeToolError(error);
+
+    return {
+      type: 'tool-error',
+      toolCallId,
+      toolName,
+      error: rawError,
+      providerExecuted: true,
+      dynamic: true, // V3 field: indicates tool is provider-defined
+      providerMetadata: {
+        'claude-code': {
+          rawError,
+          parentToolCallId: parentToolCallId ?? null,
+        },
+      },
+    };
+  }
+
+  /**
+   * Builds a V3 `tool-result` CONTENT part with `isError: true` from a
+   * user-message `tool_error` block (doGenerate only). The V3 content union
+   * has no `tool-error` member and AI SDK core's asContent() silently drops
+   * unknown content part types, so an extension tool-error part would never
+   * reach `generateText` users — an isError tool-result, by contrast,
+   * round-trips into a proper tool-error part in steps content.
+   */
+  private buildToolErrorResultPart(
+    toolCallId: string,
+    toolName: string,
+    error: unknown,
+    parentToolCallId: string | null | undefined
+  ): ProviderToolResultPart {
+    const rawError = this.serializeToolError(error);
+
+    return {
+      type: 'tool-result',
+      toolCallId,
+      toolName,
+      result: rawError,
+      isError: true,
+      providerExecuted: true,
+      dynamic: true, // V3 field: indicates tool is provider-defined
+      providerMetadata: {
+        'claude-code': {
+          rawError,
+          parentToolCallId: parentToolCallId ?? null,
+        },
+      },
+    };
   }
 
   private generateAllWarnings(
@@ -1308,11 +1548,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     }
     opts.env = mergedEnv;
 
-    // Native structured outputs (SDK 0.1.45+)
+    // Native structured outputs (SDK 0.1.45+). The schema is sanitized first:
+    // the CLI silently drops structured_output entirely when the schema
+    // contains `format` keywords (date-time, email, uri, uuid, ...), so they
+    // are stripped client-side with the hint folded into descriptions. This
+    // loses nothing: generateObject/streamObject validate against the user's
+    // original Zod schema client-side, so .email()/.datetime() enforcement is
+    // preserved.
     if (responseFormat?.type === 'json' && responseFormat.schema) {
+      const { schema: sanitizedSchema, strippedFormatPaths } = sanitizeJsonSchemaForOutputFormat(
+        responseFormat.schema as Record<string, unknown>
+      );
+      if (strippedFormatPaths.length > 0) {
+        this.logger.debug(
+          `[claude-code] Stripped unsupported 'format' keywords from outputFormat schema (hints folded into descriptions; client-side Zod validation still enforces them) at: ${strippedFormatPaths.join(', ')}`
+        );
+      }
       opts.outputFormat = {
         type: 'json_schema',
-        schema: responseFormat.schema as Record<string, unknown>,
+        schema: sanitizedSchema,
       };
     }
 
@@ -1328,6 +1582,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     if (isAbortError(error)) {
       // Return the abort reason if available, otherwise the error itself
       throw error;
+    }
+
+    // Already-classified provider errors (e.g. the missing-structured-output
+    // failure thrown from result handling) pass through unchanged instead of
+    // being re-wrapped with their metadata dropped.
+    if (error instanceof APICallError || error instanceof LoadAPIKeyError) {
+      return error;
     }
 
     // Type guard for error with properties
@@ -1629,11 +1890,57 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     );
 
     let text = '';
-    // Per-message text and thinking segments so refusal-fallback `supersedes`
-    // retractions can drop already-collected content instead of duplicating it.
-    const textSegments: Array<{ uuid?: string; text: string }> = [];
-    const thinkingSegments: Array<{ uuid?: string; text: string }> = [];
+    // Ordered, uuid-tagged content segments (text, thinking, tool parts) in
+    // arrival order, so refusal-fallback `supersedes` retractions can drop
+    // already-collected content instead of duplicating it, and so tool parts
+    // interleave with text/reasoning in the final content array.
+    const contentSegments: GenerateContentSegment[] = [];
+    const joinTextSegments = () =>
+      contentSegments
+        .filter((segment) => segment.kind === 'text')
+        .map((segment) => segment.text)
+        .join('');
+    // Text of the final assistant turn only: segments after the last
+    // user-message-derived segment (tool-result/tool-error). Mirrors
+    // doStream's accumulator reset on user messages, so JSON recovery in
+    // multi-turn tool runs is not defeated by earlier-turn chatter.
+    const joinFinalTurnTextSegments = () => {
+      let start = 0;
+      for (let i = 0; i < contentSegments.length; i++) {
+        const kind = contentSegments[i]?.kind;
+        if (kind === 'tool-result' || kind === 'tool-error') {
+          start = i + 1;
+        }
+      }
+      return contentSegments
+        .slice(start)
+        .filter((segment) => segment.kind === 'text')
+        .map((segment) => segment.text)
+        .join('');
+    };
+    // Known tools by ID so tool_result/tool_error blocks can resolve the tool
+    // name and parent context (mirrors doStream's toolStates).
+    const knownTools = new Map<string, { name: string; parentToolCallId: string | null }>();
+    // Tool call IDs whose tool-call segment was retracted by a refusal-fallback
+    // `supersedes` message. Late tool_result/tool_error frames for these IDs
+    // are dropped: their call no longer exists in content, so emitting them
+    // would create an orphan that makes AI SDK core's asContent() throw
+    // ('Tool call ${id} not found.').
+    const retractedToolIds = new Set<string>();
+    // Track active Task tools for subagent hierarchy (mirrors doStream).
+    // Using a Map instead of stack to correctly handle parallel agents
+    const activeTaskTools = new Map<string, { startTime: number }>();
+
+    // Helper to get fallback parent - only returns a parent when exactly ONE Task is active
+    // This prevents incorrect grouping when parallel agents run simultaneously
+    const getFallbackParentId = (): string | null => {
+      if (activeTaskTools.size === 1) {
+        return activeTaskTools.keys().next().value ?? null;
+      }
+      return null;
+    };
     let structuredOutput: unknown | undefined;
+    let receivedResultMessage = false;
     let usage: LanguageModelV3Usage = createEmptyUsage();
     let finishReason: LanguageModelV3FinishReason = { unified: 'stop', raw: undefined };
     let wasTruncated = false;
@@ -1723,38 +2030,228 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             lastAssistantErrorKind = message.error;
           }
           // Refusal-fallback replacement (SDK 0.3.x): drop retracted segments
-          // (text AND thinking) so superseded content is not duplicated in the
-          // final output.
+          // (text, thinking, AND tool calls) so superseded content is not
+          // duplicated in the final output. Tool results/errors whose call was
+          // retracted are dropped too so they don't survive as orphans.
           if (message.supersedes && message.supersedes.length > 0) {
             this.logger.debug(
               `[claude-code] Assistant message supersedes ${message.supersedes.length} prior message(s)`
             );
             const retracted = new Set<string>(message.supersedes);
-            for (const segments of [textSegments, thinkingSegments]) {
-              for (let i = segments.length - 1; i >= 0; i--) {
-                const segmentUuid = segments[i]?.uuid;
-                if (segmentUuid !== undefined && retracted.has(segmentUuid)) {
-                  segments.splice(i, 1);
-                }
+            const retractedToolCallIds = new Set<string>(
+              contentSegments
+                .filter(
+                  (segment) =>
+                    segment.kind === 'tool-call' &&
+                    segment.uuid !== undefined &&
+                    retracted.has(segment.uuid)
+                )
+                .map((segment) => (segment as { toolCallId: string }).toolCallId)
+            );
+            // Clean up tool bookkeeping for retracted calls: a retracted Task
+            // must not remain "active" (it would pollute getFallbackParentId
+            // with a dangling parent reference), and late results for
+            // retracted IDs must be dropped rather than re-paired.
+            for (const toolCallId of retractedToolCallIds) {
+              retractedToolIds.add(toolCallId);
+              knownTools.delete(toolCallId);
+              activeTaskTools.delete(toolCallId);
+            }
+            for (let i = contentSegments.length - 1; i >= 0; i--) {
+              const segment = contentSegments[i];
+              if (segment === undefined) continue;
+              const segmentUuid = 'uuid' in segment ? segment.uuid : undefined;
+              const retractsSegment =
+                (segmentUuid !== undefined && retracted.has(segmentUuid)) ||
+                ((segment.kind === 'tool-result' || segment.kind === 'tool-error') &&
+                  retractedToolCallIds.has(segment.toolCallId));
+              if (retractsSegment) {
+                contentSegments.splice(i, 1);
               }
             }
           }
-          const { text: messageText, thinking: messageThinking } = this.extractTextAndThinking(
-            message.message.content
-          );
-          textSegments.push({
-            ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
-            text: messageText,
-          });
-          text = textSegments.map((segment) => segment.text).join('');
-          for (const trace of messageThinking) {
-            thinkingSegments.push({
-              ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
-              text: trace,
+
+          const messageUuid = typeof message.uuid === 'string' ? message.uuid : undefined;
+          // Extract parent_tool_use_id from SDK message - this is the authoritative source
+          // SDK provides this field when tool is executed within a subagent context
+          const sdkParentToolUseId = (message as { parent_tool_use_id?: string })
+            .parent_tool_use_id;
+          const content = message.message.content;
+
+          // Walk content blocks in document order so text, thinking, and
+          // tool_use parts interleave in the final content array exactly as
+          // the model produced them.
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (!isContentBlock(block)) continue;
+              if (block.type === 'text' && typeof block.text === 'string') {
+                if (block.text.length > 0) {
+                  contentSegments.push({
+                    kind: 'text',
+                    ...(messageUuid !== undefined && { uuid: messageUuid }),
+                    text: block.text,
+                  });
+                }
+              } else if (block.type === 'thinking' && typeof block.thinking === 'string') {
+                contentSegments.push({
+                  kind: 'reasoning',
+                  ...(messageUuid !== undefined && { uuid: messageUuid }),
+                  text: block.thinking,
+                });
+              } else if (block.type === 'tool_use') {
+                const [tool] = this.extractToolUses([block]);
+                if (!tool) continue;
+                // Prefer SDK message-level parent (works for parallel agents)
+                // Fall back to content-level parent, then timing-based inference
+                // Task tools never have a parent (they're top-level)
+                const parentToolCallId = isSubagentToolName(tool.name)
+                  ? null
+                  : (sdkParentToolUseId ?? tool.parentToolUseId ?? getFallbackParentId());
+                this.logger.debug(
+                  `[claude-code] Tool use detected - Tool: ${tool.name}, ID: ${tool.id}, SDK parent: ${sdkParentToolUseId}, resolved parent: ${parentToolCallId}`
+                );
+                knownTools.set(tool.id, { name: tool.name, parentToolCallId });
+                // Track Task tools as active so nested tools can reference them as parent
+                if (isSubagentToolName(tool.name)) {
+                  activeTaskTools.set(tool.id, { startTime: Date.now() });
+                }
+                contentSegments.push({
+                  kind: 'tool-call',
+                  ...(messageUuid !== undefined && { uuid: messageUuid }),
+                  toolCallId: tool.id,
+                  part: this.buildToolCallPart(
+                    tool.id,
+                    tool.name,
+                    this.serializeToolInput(tool.input),
+                    parentToolCallId
+                  ),
+                });
+              }
+            }
+          }
+          text = joinTextSegments();
+        } else if (message.type === 'user') {
+          if (!message.message?.content) {
+            this.logger.warn(
+              `[claude-code] Unexpected user message structure: missing content field. Message type: ${message.type}. This may indicate an SDK protocol violation.`
+            );
+            continue;
+          }
+
+          // Extract parent_tool_use_id from SDK message for late-arriving tool results
+          const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string })
+            .parent_tool_use_id;
+
+          const content = message.message.content;
+          for (const result of this.extractToolResults(content)) {
+            if (retractedToolIds.has(result.id)) {
+              this.logger.debug(
+                `[claude-code] Dropping tool result for retracted (superseded) tool ID: ${result.id}`
+              );
+              continue;
+            }
+            const known = knownTools.get(result.id);
+            const toolName =
+              result.name ?? known?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
+
+            this.logger.debug(
+              `[claude-code] Tool result received - Tool: ${toolName}, ID: ${result.id}`
+            );
+
+            let parentToolCallId: string | null;
+            if (known) {
+              known.name = toolName;
+              parentToolCallId = known.parentToolCallId;
+            } else {
+              this.logger.warn(
+                `[claude-code] Received tool result for unknown tool ID: ${result.id}`
+              );
+              // Use SDK parent if available, otherwise fall back to timing-based inference
+              parentToolCallId = isSubagentToolName(toolName)
+                ? null
+                : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+              knownTools.set(result.id, { name: toolName, parentToolCallId });
+              // Synthesize the tool-call part to preserve call/result pairing
+              // when no prior tool_use block was seen (mirrors doStream).
+              contentSegments.push({
+                kind: 'tool-call',
+                toolCallId: result.id,
+                part: this.buildToolCallPart(result.id, toolName, '', parentToolCallId),
+              });
+            }
+
+            // Remove Task tools from active set when they complete
+            if (isSubagentToolName(toolName)) {
+              activeTaskTools.delete(result.id);
+            }
+
+            contentSegments.push({
+              kind: 'tool-result',
+              toolCallId: result.id,
+              part: this.buildToolResultPart(
+                result.id,
+                toolName,
+                result.result,
+                result.isError,
+                parentToolCallId
+              ),
+            });
+          }
+          // Handle tool errors
+          for (const error of this.extractToolErrors(content)) {
+            if (retractedToolIds.has(error.id)) {
+              this.logger.debug(
+                `[claude-code] Dropping tool error for retracted (superseded) tool ID: ${error.id}`
+              );
+              continue;
+            }
+            const known = knownTools.get(error.id);
+            const toolName = error.name ?? known?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
+
+            this.logger.debug(
+              `[claude-code] Tool error received - Tool: ${toolName}, ID: ${error.id}`
+            );
+
+            let parentToolCallId: string | null;
+            if (known) {
+              known.name = toolName;
+              parentToolCallId = known.parentToolCallId;
+            } else {
+              this.logger.warn(
+                `[claude-code] Received tool error for unknown tool ID: ${error.id}`
+              );
+              // Use SDK parent if available, otherwise fall back to timing-based inference
+              parentToolCallId = isSubagentToolName(toolName)
+                ? null
+                : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+              knownTools.set(error.id, { name: toolName, parentToolCallId });
+              // Ensure a tool-call part precedes the tool-error (mirrors doStream)
+              contentSegments.push({
+                kind: 'tool-call',
+                toolCallId: error.id,
+                part: this.buildToolCallPart(error.id, toolName, '', parentToolCallId),
+              });
+            }
+
+            // Remove Task tools from active set when they error
+            if (isSubagentToolName(toolName)) {
+              activeTaskTools.delete(error.id);
+            }
+
+            contentSegments.push({
+              kind: 'tool-error',
+              toolCallId: error.id,
+              part: this.buildToolErrorResultPart(
+                error.id,
+                toolName,
+                error.error,
+                parentToolCallId
+              ),
             });
           }
         } else if (message.type === 'result') {
           done();
+          receivedResultMessage = true;
           this.setSessionId(message.session_id);
           costUsd = message.total_cost_usd;
           durationMs = message.duration_ms;
@@ -1870,19 +2367,80 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       }
     }
 
-    // Use structured output from SDK if available (native JSON schema support)
-    // Otherwise fall back to accumulated text
-    const finalText = structuredOutput !== undefined ? JSON.stringify(structuredOutput) : text;
-    const thinkingTraces = thinkingSegments.map((segment) => segment.text);
+    // Loud failure / graceful recovery for native structured outputs: the CLI
+    // can return a SUCCESSFUL result without structured_output when the schema
+    // contains constructs it cannot enforce, silently falling back to prose.
+    // Without this, the prose flows downstream and generateObject fails with an
+    // opaque AI_NoObjectGeneratedError. Try to recover JSON from the prose
+    // first; otherwise throw a descriptive, non-retryable error. Truncation
+    // and error_max_structured_output_retries handling above are unaffected.
+    if (
+      options.responseFormat?.type === 'json' &&
+      options.responseFormat.schema !== undefined &&
+      receivedResultMessage &&
+      structuredOutput === undefined &&
+      !wasTruncated &&
+      finishReason.unified === 'stop'
+    ) {
+      // Prefer the final assistant turn's prose (matches doStream, which
+      // resets its accumulator on user messages), then fall back to all
+      // turns joined (doGenerate never resets text segments).
+      const recoveredJsonText =
+        extractJsonObjectText(joinFinalTurnTextSegments()) ??
+        extractJsonObjectText(joinTextSegments());
+      if (recoveredJsonText !== undefined) {
+        this.logger.warn(
+          '[claude-code] outputFormat was requested but the CLI returned no structured_output; recovered JSON by parsing the prose response. The schema likely contains constructs the CLI cannot enforce - see the README structured-output limitations.'
+        );
+        structuredOutput = JSON.parse(recoveredJsonText);
+      } else {
+        throw createAPICallError({
+          message: MISSING_STRUCTURED_OUTPUT_ERROR_MESSAGE,
+          promptExcerpt: messagesPrompt.substring(0, 200),
+          isRetryable: false,
+        });
+      }
+    }
+
+    const thinkingTraces = contentSegments
+      .filter((segment) => segment.kind === 'reasoning')
+      .map((segment) => (segment as { text: string }).text);
+
+    // Build the ordered content array. Adjacent text segments collapse into a
+    // single text part (plain text responses keep their single-part shape),
+    // while tool parts interleave with text/reasoning in arrival order.
+    // When the SDK returned structured output (native JSON schema support),
+    // it replaces the accumulated text as a single trailing text part.
+    const contentParts: LanguageModelV3Content[] = [];
+    for (const segment of contentSegments) {
+      if (segment.kind === 'reasoning') {
+        contentParts.push({ type: 'reasoning', text: segment.text });
+      } else if (segment.kind === 'text') {
+        if (structuredOutput !== undefined) continue;
+        const last = contentParts[contentParts.length - 1];
+        if (last !== undefined && last.type === 'text') {
+          last.text += segment.text;
+        } else {
+          contentParts.push({ type: 'text', text: segment.text });
+        }
+      } else {
+        // tool-call and tool-result parts are V3 content union members.
+        // CLI tool_error blocks were mapped to tool-result parts with
+        // isError: true (see buildToolErrorResultPart) so they survive AI
+        // SDK core's asContent(), which drops unknown content part types.
+        contentParts.push(segment.part);
+      }
+    }
+    if (structuredOutput !== undefined) {
+      contentParts.push({ type: 'text', text: JSON.stringify(structuredOutput) });
+    } else if (!contentParts.some((part) => part.type === 'text')) {
+      // Preserve the long-standing invariant that doGenerate always returns
+      // a text part, even when the response produced no text.
+      contentParts.push({ type: 'text', text: '' });
+    }
 
     return {
-      content: [
-        ...thinkingTraces.map((trace) => ({
-          type: 'reasoning' as const,
-          text: trace,
-        })),
-        { type: 'text' as const, text: finalText },
-      ],
+      content: contentParts,
       usage,
       finishReason,
       warnings,
@@ -2033,23 +2591,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
           closeToolInput(toolId, state);
 
-          controller.enqueue({
-            type: 'tool-call',
-            toolCallId: toolId,
-            toolName: state.name,
-            input: state.lastSerializedInput ?? '',
-            providerExecuted: true,
-            dynamic: true, // V3 field: indicates tool is provider-defined (not in user's tools map)
-            providerMetadata: {
-              'claude-code': {
-                // rawInput preserves the original serialized format before AI SDK normalization.
-                // Use this if you need the exact string sent to the Claude CLI, which may differ
-                // from the `input` field after AI SDK processing.
-                rawInput: state.lastSerializedInput ?? '',
-                parentToolCallId: state.parentToolCallId ?? null,
-              },
-            },
-          } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+          controller.enqueue(
+            this.buildToolCallPart(
+              toolId,
+              state.name,
+              state.lastSerializedInput ?? '',
+              state.parentToolCallId
+            )
+          );
           state.callEmitted = true;
         };
 
@@ -2279,7 +2828,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 let state = toolStates.get(toolId);
                 if (!state) {
                   // Use timing-based inference for parent (Task tools are top-level)
-                  const currentParentId = toolName === 'Task' ? null : getFallbackParentId();
+                  const currentParentId = isSubagentToolName(toolName)
+                    ? null
+                    : getFallbackParentId();
                   state = {
                     name: toolName,
                     inputStarted: false,
@@ -2309,7 +2860,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
 
                   // Track Task tools as active so nested tools can reference them as parent
-                  if (toolName === 'Task') {
+                  if (isSubagentToolName(toolName)) {
                     activeTaskTools.set(toolId, { startTime: Date.now() });
                   }
                   state.inputStarted = true;
@@ -2430,20 +2981,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     // Emit tool-call immediately when input is complete (don't wait for result)
                     // This allows UI to show "running" state while tool executes
                     if (!state.callEmitted) {
-                      controller.enqueue({
-                        type: 'tool-call',
-                        toolCallId: toolId,
-                        toolName: state.name,
-                        input: effectiveInput,
-                        providerExecuted: true,
-                        dynamic: true,
-                        providerMetadata: {
-                          'claude-code': {
-                            rawInput: effectiveInput,
-                            parentToolCallId: state.parentToolCallId ?? null,
-                          },
-                        },
-                      } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                      controller.enqueue(
+                        this.buildToolCallPart(
+                          toolId,
+                          state.name,
+                          effectiveInput,
+                          state.parentToolCallId
+                        )
+                      );
                       state.callEmitted = true;
                     }
                   }
@@ -2562,10 +3107,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   // Prefer SDK message-level parent (works for parallel agents)
                   // Fall back to content-level parent, then timing-based inference
                   // Task tools never have a parent (they're top-level)
-                  const currentParentId =
-                    tool.name === 'Task'
-                      ? null
-                      : (sdkParentToolUseId ?? tool.parentToolUseId ?? getFallbackParentId());
+                  const currentParentId = isSubagentToolName(tool.name)
+                    ? null
+                    : (sdkParentToolUseId ?? tool.parentToolUseId ?? getFallbackParentId());
                   state = {
                     name: tool.name,
                     inputStarted: false,
@@ -2577,7 +3121,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   this.logger.debug(
                     `[claude-code] New tool use detected - Tool: ${tool.name}, ID: ${toolId}, SDK parent: ${sdkParentToolUseId}, resolved parent: ${currentParentId}`
                   );
-                } else if (!state.parentToolCallId && sdkParentToolUseId && tool.name !== 'Task') {
+                } else if (
+                  !state.parentToolCallId &&
+                  sdkParentToolUseId &&
+                  !isSubagentToolName(tool.name)
+                ) {
                   // RETROACTIVE PARENT CONTEXT: Tool state was created by streaming events
                   // but we now have authoritative parent from SDK message - update state
                   state.parentToolCallId = sdkParentToolUseId;
@@ -2605,7 +3153,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     },
                   } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
                   // Track Task tools as active so nested tools can reference them as parent
-                  if (tool.name === 'Task') {
+                  if (isSubagentToolName(tool.name)) {
                     activeTaskTools.set(toolId, { startTime: Date.now() });
                   }
                   state.inputStarted = true;
@@ -2824,10 +3372,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     `[claude-code] Received tool result for unknown tool ID: ${result.id}`
                   );
                   // Use SDK parent if available, otherwise fall back to timing-based inference
-                  const resolvedParentId =
-                    toolName === 'Task'
-                      ? null
-                      : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+                  const resolvedParentId = isSubagentToolName(toolName)
+                    ? null
+                    : (sdkParentToolUseIdForResults ?? getFallbackParentId());
                   state = {
                     name: toolName,
                     inputStarted: false,
@@ -2861,54 +3408,23 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   }
                 }
                 state.name = toolName;
-                const normalizedResult = this.normalizeToolResult(result.result);
-                const rawResult =
-                  typeof result.result === 'string'
-                    ? result.result
-                    : (() => {
-                        try {
-                          return JSON.stringify(result.result);
-                        } catch {
-                          return String(result.result);
-                        }
-                      })();
-                const maxToolResultSize = this.settings.maxToolResultSize;
-                const truncatedResult = truncateToolResultForStream(
-                  normalizedResult,
-                  maxToolResultSize
-                );
-                const truncatedRawResult = truncateToolResultForStream(
-                  rawResult,
-                  maxToolResultSize
-                ) as string;
-                const rawResultTruncated = truncatedRawResult !== rawResult;
 
                 emitToolCall(result.id, state);
 
                 // Remove Task tools from active set when they complete
-                if (toolName === 'Task') {
+                if (isSubagentToolName(toolName)) {
                   activeTaskTools.delete(result.id);
                 }
 
-                controller.enqueue({
-                  type: 'tool-result',
-                  toolCallId: result.id,
-                  toolName,
-                  result: truncatedResult,
-                  isError: result.isError,
-                  providerExecuted: true,
-                  dynamic: true, // V3 field: indicates tool is provider-defined
-                  providerMetadata: {
-                    'claude-code': {
-                      // rawResult preserves the original CLI output string before JSON parsing.
-                      // Use this when you need the exact string returned by the tool, especially
-                      // if the `result` field has been parsed/normalized and you need the original format.
-                      rawResult: truncatedRawResult,
-                      rawResultTruncated,
-                      parentToolCallId: state.parentToolCallId ?? null,
-                    },
-                  },
-                } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                controller.enqueue(
+                  this.buildToolResultPart(
+                    result.id,
+                    toolName,
+                    result.result,
+                    result.isError,
+                    state.parentToolCallId
+                  )
+                );
               }
               // Handle tool errors
               for (const error of this.extractToolErrors(content)) {
@@ -2925,10 +3441,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     `[claude-code] Received tool error for unknown tool ID: ${error.id}`
                   );
                   // Use SDK parent if available, otherwise fall back to timing-based inference
-                  const errorResolvedParentId =
-                    toolName === 'Task'
-                      ? null
-                      : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+                  const errorResolvedParentId = isSubagentToolName(toolName)
+                    ? null
+                    : (sdkParentToolUseIdForResults ?? getFallbackParentId());
                   state = {
                     name: toolName,
                     inputStarted: true,
@@ -2943,37 +3458,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 emitToolCall(error.id, state);
 
                 // Remove Task tools from active set when they error
-                if (toolName === 'Task') {
+                if (isSubagentToolName(toolName)) {
                   activeTaskTools.delete(error.id);
                 }
 
-                const rawError =
-                  typeof error.error === 'string'
-                    ? error.error
-                    : typeof error.error === 'object' && error.error !== null
-                      ? (() => {
-                          try {
-                            return JSON.stringify(error.error);
-                          } catch {
-                            return String(error.error);
-                          }
-                        })()
-                      : String(error.error);
-
-                controller.enqueue({
-                  type: 'tool-error',
-                  toolCallId: error.id,
-                  toolName,
-                  error: rawError,
-                  providerExecuted: true,
-                  dynamic: true, // V3 field: indicates tool is provider-defined
-                  providerMetadata: {
-                    'claude-code': {
-                      rawError,
-                      parentToolCallId: state.parentToolCallId ?? null,
-                    },
-                  },
-                } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                controller.enqueue(
+                  this.buildToolErrorPart(error.id, toolName, error.error, state.parentToolCallId)
+                );
               }
             } else if (message.type === 'result') {
               done();
@@ -3067,6 +3558,49 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 controller.enqueue({
                   type: 'text-end',
                   id: jsonTextId,
+                });
+              } else if (
+                options.responseFormat?.type === 'json' &&
+                options.responseFormat.schema !== undefined &&
+                finishReason.unified === 'stop'
+              ) {
+                // Loud failure / graceful recovery (mirrors doGenerate): the
+                // CLI can return a SUCCESSFUL result without structured_output
+                // when the schema contains constructs it cannot enforce,
+                // silently falling back to prose. Try to recover JSON from the
+                // accumulated prose; otherwise fail with a descriptive,
+                // non-retryable error instead of streaming prose that ends in
+                // an opaque AI_NoObjectGeneratedError downstream.
+                const recoveredJsonText = extractJsonObjectText(accumulatedText);
+                if (recoveredJsonText === undefined) {
+                  throw createAPICallError({
+                    message: MISSING_STRUCTURED_OUTPUT_ERROR_MESSAGE,
+                    promptExcerpt: messagesPrompt.substring(0, 200),
+                    isRetryable: false,
+                  });
+                }
+                this.logger.warn(
+                  '[claude-code] outputFormat was requested but the CLI returned no structured_output; recovered JSON by parsing the prose response. The schema likely contains constructs the CLI cannot enforce - see the README structured-output limitations.'
+                );
+                if (textPartId) {
+                  controller.enqueue({
+                    type: 'text-end',
+                    id: textPartId,
+                  });
+                }
+                const recoveredTextId = generateId();
+                controller.enqueue({
+                  type: 'text-start',
+                  id: recoveredTextId,
+                });
+                controller.enqueue({
+                  type: 'text-delta',
+                  id: recoveredTextId,
+                  delta: recoveredJsonText,
+                });
+                controller.enqueue({
+                  type: 'text-end',
+                  id: recoveredTextId,
                 });
               } else if (textPartId) {
                 // Close the text part if it was opened (non-JSON mode)
