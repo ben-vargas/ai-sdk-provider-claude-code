@@ -653,6 +653,11 @@ describe('validateSettings', () => {
         .valid
     ).toBe(true);
 
+    // A blank/whitespace resume id is treated as absent (the SDK ignores it),
+    // so it does NOT sidestep the listSessions requirement.
+    expect(validateSettings({ continue: true, sessionStore, resume: '' }).valid).toBe(false);
+    expect(validateSettings({ continue: true, sessionStore, resume: '   ' }).valid).toBe(false);
+
     // continue without sessionStore (and vice versa) is fine
     expect(validateSettings({ continue: true }).valid).toBe(true);
     expect(validateSettings({ sessionStore }).valid).toBe(true);

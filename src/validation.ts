@@ -375,6 +375,12 @@ export function validateSettings(settings: unknown): {
       return override !== undefined ? override : (validSettings as Record<string, unknown>)[key];
     };
     const effSessionStore = effective('sessionStore');
+    // The SDK treats a blank/whitespace resume id as absent (no session to
+    // resume), so normalize it for the cross-option checks below.
+    const effectiveResumeId = (): string | undefined => {
+      const r = effective('resume');
+      return typeof r === 'string' && r.trim() !== '' ? r : undefined;
+    };
 
     // SDK constraint: sessionStore mirroring requires local session writes,
     // so it cannot be combined with persistSession: false.
@@ -401,7 +407,7 @@ export function validateSettings(settings: unknown): {
     if (
       effective('continue') === true &&
       effSessionStore !== undefined &&
-      effective('resume') === undefined &&
+      effectiveResumeId() === undefined &&
       typeof (effSessionStore as { listSessions?: unknown }).listSessions !== 'function'
     ) {
       errors.push(
@@ -432,7 +438,7 @@ export function validateSettings(settings: unknown): {
     if (
       effective('sessionId') !== undefined &&
       effective('forkSession') !== true &&
-      (effective('continue') === true || effective('resume') !== undefined)
+      (effective('continue') === true || effectiveResumeId() !== undefined)
     ) {
       errors.push(
         "sessionId cannot be combined with continue or resume unless forkSession: true is also set (it then names the forked session's ID). Remove sessionId, remove continue/resume, or add forkSession: true."

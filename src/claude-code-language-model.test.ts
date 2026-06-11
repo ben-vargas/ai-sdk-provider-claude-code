@@ -1034,6 +1034,110 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.forkSession).toBe(true);
     });
 
+    it('drops sdkOptions.sessionId on the auto-resumed turn (resume re-added it)', async () => {
+      // sdkOptions: { sessionId } works on turn one, but on turn two the
+      // provider auto-resumes (this.sessionId -> opts.resume) AND the generic
+      // sdkOptions merge re-adds sessionId. The CLI rejects --session-id with
+      // --resume unless --fork-session; the merged-option enforcement must
+      // suppress the sdkOptions.sessionId here.
+      const sid = '7a3b9c2d-1e4f-4a6b-8c0d-2e3f4a5b6c7d';
+      const modelWithSdkSessionId = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          // simulate the auto-resume second turn directly via resume:
+          resume: 'prior-session',
+          sdkOptions: { sessionId: sid },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'prior-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithSdkSessionId.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.resume).toBe('prior-session');
+      // sessionId suppressed: --session-id + --resume without --fork-session is rejected.
+      expect(call?.options?.sessionId).toBeUndefined();
+    });
+
+    it('keeps sdkOptions.sessionId when forkSession is also set via sdkOptions', async () => {
+      const sid = '8b4c0d3e-2f5a-4b7c-9d1e-3f4a5b6c7d8e';
+      const modelWithBoth = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          resume: 'prior-session',
+          sdkOptions: { sessionId: sid, forkSession: true },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: sid,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithBoth.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.sessionId).toBe(sid);
+      expect(call?.options?.forkSession).toBe(true);
+    });
+
+    it('does not drain for prompt suggestions when promptSuggestions is explicitly false', async () => {
+      const onPromptSuggestion = vi.fn();
+      const modelNoDrain = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion, promptSuggestions: false } as any,
+      });
+
+      let iteratedAfterResult = false;
+      const mockResponse = (async function* () {
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'no-drain-session',
+          usage: { input_tokens: 0, output_tokens: 0 },
+        };
+        // If the drain ran, the loop would pull this next value.
+        iteratedAfterResult = true;
+        yield {
+          type: 'prompt_suggestion',
+          suggestion: 'should not be consumed',
+          session_id: 'no-drain-session',
+        };
+      })();
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelNoDrain.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      // promptSuggestions:false => no drain => generator not advanced past result,
+      // callback never fires.
+      expect(iteratedAfterResult).toBe(false);
+      expect(onPromptSuggestion).not.toHaveBeenCalled();
+    });
+
     it('should drop sessionId when continue arrives via the sdkOptions escape hatch without forkSession', async () => {
       const modelWithSdkContinue = new ClaudeCodeLanguageModel({
         id: 'sonnet',

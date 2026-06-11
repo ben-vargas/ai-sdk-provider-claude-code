@@ -1515,6 +1515,27 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       }
     }
 
+    // A blank/whitespace resume id is treated as absent by the SDK; normalize
+    // it so it neither suppresses sessionId below nor reaches the CLI as
+    // `--resume ''`.
+    if (typeof opts.resume === 'string' && opts.resume.trim() === '') {
+      opts.resume = undefined;
+    }
+
+    // Enforce the CLI's --session-id exclusivity on the FINAL merged options.
+    // The pre-merge guard above only governs settings.sessionId; the generic
+    // sdkOptions merge can re-add sessionId afterward. The CLI rejects
+    // --session-id together with --resume/--continue unless --fork-session is
+    // set, so drop sessionId here whenever that rule is violated (covers the
+    // auto-resume second turn of a `sdkOptions: { sessionId }` config).
+    if (
+      opts.sessionId !== undefined &&
+      opts.forkSession !== true &&
+      (opts.resume !== undefined || opts.continue === true)
+    ) {
+      opts.sessionId = undefined;
+    }
+
     // SDK constraint: fallbackModel must differ from the main model (the SDK
     // throws while building CLI args at query time). Reject early with
     // guidance instead. Mirrors the SDK's naive string equality check.
@@ -2446,7 +2467,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           // shared bounded drain (10s timeout, stops at the first suggestion);
           // otherwise stop iterating immediately so a lingering CLI cannot
           // block generateText after the result is already available.
-          if (this.settings.onPromptSuggestion) {
+          // Drain for the post-result prompt_suggestion only when suggestions
+          // can actually be emitted. The SDK enables them when promptSuggestions
+          // is absent OR true and disables them only when explicitly false, so
+          // skip the (up to 10s) drain solely in the explicit-false case.
+          const effectivePromptSuggestions =
+            sdkOptions?.promptSuggestions ?? this.settings.promptSuggestions;
+          if (this.settings.onPromptSuggestion && effectivePromptSuggestions !== false) {
             await this.drainPromptSuggestion(response, this.settings.onPromptSuggestion);
           }
           break;
@@ -3915,7 +3942,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               // per turn, so stop once it is delivered, and a timeout closes the
               // iterator (tearing down the subprocess) if the CLI lingers after
               // the result without emitting one.
-              if (this.settings.onPromptSuggestion) {
+              // Drain for the post-result prompt_suggestion only when
+              // suggestions can be emitted (promptSuggestions absent or true;
+              // disabled only when explicitly false), skipping the up-to-10s
+              // drain in the explicit-false case.
+              const effectivePromptSuggestions =
+                sdkOptions?.promptSuggestions ?? this.settings.promptSuggestions;
+              if (this.settings.onPromptSuggestion && effectivePromptSuggestions !== false) {
                 await this.drainPromptSuggestion(response, this.settings.onPromptSuggestion);
               }
               return;
