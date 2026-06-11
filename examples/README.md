@@ -371,6 +371,54 @@ npx tsx examples/ai-sdk-tools.ts
 
 **What you'll see**: AI SDK tools (Zod schemas, `execute` functions) running in-process via `generateText` and `streamText`. Tool calls/results surface as provider-executed dynamic tool parts in the `streamText` fullStream; `generateText` runs the bridged tool in-process too, but its steps content currently contains only text/reasoning parts (no tool parts).
 
+## Warm Start & Timing
+
+### 31. Warm Start (`warm-start.ts`)
+
+**Purpose**: Cut time-to-first-token by pre-spawning the CLI with `startup()`/`WarmQuery`, compared side-by-side against a cold `generateText` baseline using the new timing metadata (`ttftMs`, `ttftStreamMs`, `timeToRequestMs`, `warmSpareClaimed`).
+
+```bash
+npx tsx examples/warm-start.ts
+```
+
+**Key concepts**: `startup()` / `WarmQuery` (pre-spawned CLI subprocess, one query per handle, `close()`/AsyncDisposable cleanup), timing metadata in `providerMetadata['claude-code']` (`ttftMs`, `ttftStreamMs`, `timeToRequestMs`, `warmSpareClaimed` — absence vs `false` distinguishable), driving the raw SDK message stream directly, since `WarmQuery` cannot accelerate `generateText`/`streamText`
+
+## Context Usage
+
+### 32. Context Usage (`context-usage.ts`)
+
+**Purpose**: Read the session's context-window usage via `onQueryCreated` + a Stop hook calling `query.getContextUsage()`, including why a late call fails.
+
+```bash
+npx tsx examples/context-usage.ts
+```
+
+**Key concepts**: `onQueryCreated`, Stop hook timing (query must still be live), `getContextUsage()` breakdown (used/remaining tokens per category)
+
+## Prompt Suggestions
+
+### 33. Prompt Suggestions (`prompt-suggestions.ts`)
+
+**Purpose**: Receive the SDK's predicted next user prompt via the `onPromptSuggestion` callback (`promptSuggestions: true`) and feed it back as the next turn.
+
+```bash
+npx tsx examples/prompt-suggestions.ts
+```
+
+**Key concepts**: Post-finish delivery (suggestion arrives after the result message, so it is a callback rather than providerMetadata — bridge with a promise + bounded race), bounded drain (provider stops at the first suggestion, 10s cap, at most one suggestion per turn), opt-in gating (callback never fires without `promptSuggestions: true`)
+
+## Skills Option
+
+### 34. Skills Option (`skills-option.ts`)
+
+**Purpose**: Demonstrate the new `skills` setting (`string[] | 'all'`) — single-switch skills enablement with no `allowedTools` wiring — using a self-contained temp-project skill, with a positive run and a `skills: []` allowlist-rejection contrast.
+
+```bash
+npx tsx examples/skills-option.ts
+```
+
+**Key concepts**: `skills` option as a one-line enablement allowlist (no `allowedTools: ['Skill']` needed), `settingSources` still required for filesystem skill discovery, `skills` filters enablement, not a sandbox — omitted skills are rejected at invocation ("not in this session's skills allowlist") but their files remain readable on disk
+
 ## Common Patterns
 
 ### Object Generation
@@ -498,31 +546,35 @@ const result4 = streamText({
 
 ## Quick Reference
 
-| Example                     | Primary Use Case      | Key Feature             |
-| --------------------------- | --------------------- | ----------------------- |
-| basic-usage                 | Getting started       | Simple text generation  |
-| streaming                   | Responsive UIs        | Real-time output        |
-| tool-streaming              | Tool observability    | Tool event inspection   |
-| images                      | Multimodal prompts    | Image input support     |
-| conversation-history        | Chatbots              | Context preservation    |
-| logging-default             | Default behavior      | Warn/error only         |
-| logging-verbose             | Development/debugging | All log levels          |
-| logging-custom-logger       | External integration  | Custom logger impl      |
-| logging-disabled            | Silent operation      | No logs at all          |
-| custom-config               | Enterprise setup      | Configuration options   |
-| tool-management             | Security              | Access control          |
-| hooks-callbacks             | Event handling        | Lifecycle hooks         |
-| hooks-permission-denied     | Permission control    | canUseTool deny + hooks |
-| sdk-tools-callbacks         | Custom tools          | In-process MCP tools    |
-| ai-sdk-tools                | AI SDK tool bridging  | createAiSdkMcpServer    |
-| skills-management           | Skills configuration  | settingSources setup    |
-| session-management          | Session lifecycle     | Resume, fork, inspect   |
-| long-running-tasks          | Complex reasoning     | Timeout handling        |
-| generate-object             | Object generation     | Core patterns & nesting |
-| generate-object-constraints | Validation            | Regex, ranges, enums    |
-| stream-object               | Real-time UI          | Partial object updates  |
-| structured-output-repro     | Troubleshooting       | Schema fallback repro   |
-| limitations                 | Constraints overview  | Unsupported features    |
+| Example                     | Primary Use Case       | Key Feature             |
+| --------------------------- | ---------------------- | ----------------------- |
+| basic-usage                 | Getting started        | Simple text generation  |
+| streaming                   | Responsive UIs         | Real-time output        |
+| tool-streaming              | Tool observability     | Tool event inspection   |
+| images                      | Multimodal prompts     | Image input support     |
+| conversation-history        | Chatbots               | Context preservation    |
+| logging-default             | Default behavior       | Warn/error only         |
+| logging-verbose             | Development/debugging  | All log levels          |
+| logging-custom-logger       | External integration   | Custom logger impl      |
+| logging-disabled            | Silent operation       | No logs at all          |
+| custom-config               | Enterprise setup       | Configuration options   |
+| tool-management             | Security               | Access control          |
+| hooks-callbacks             | Event handling         | Lifecycle hooks         |
+| hooks-permission-denied     | Permission control     | canUseTool deny + hooks |
+| sdk-tools-callbacks         | Custom tools           | In-process MCP tools    |
+| ai-sdk-tools                | AI SDK tool bridging   | createAiSdkMcpServer    |
+| skills-management           | Skills configuration   | settingSources setup    |
+| skills-option               | Skills enablement      | `skills` allowlist      |
+| session-management          | Session lifecycle      | Resume, fork, inspect   |
+| warm-start                  | Latency optimization   | startup()/WarmQuery     |
+| context-usage               | Context monitoring     | getContextUsage()       |
+| prompt-suggestions          | Next-prompt prediction | onPromptSuggestion      |
+| long-running-tasks          | Complex reasoning      | Timeout handling        |
+| generate-object             | Object generation      | Core patterns & nesting |
+| generate-object-constraints | Validation             | Regex, ranges, enums    |
+| stream-object               | Real-time UI           | Partial object updates  |
+| structured-output-repro     | Troubleshooting        | Schema fallback repro   |
+| limitations                 | Constraints overview   | Unsupported features    |
 
 ## Learning Path
 
@@ -530,7 +582,8 @@ const result4 = streamText({
 2. **Images & Tools**: `images.ts` → `tool-streaming.ts` to understand multimodal inputs and tool events
 3. **Logging**: `logging-default.ts` → `logging-verbose.ts` → `logging-custom-logger.ts` → `logging-disabled.ts`
 4. **Object Generation**: `generate-object.ts` → `generate-object-constraints.ts` → `stream-object.ts`
-5. **Advanced**: `custom-config.ts` → `tool-management.ts` → `skills-management.ts` → `hooks-callbacks.ts` → `sdk-tools-callbacks.ts` → `ai-sdk-tools.ts` → `session-management.ts` → `long-running-tasks.ts`
-6. **Testing/Troubleshooting**: Run `integration-test.ts`, then `structured-output-repro.ts` and `limitations.ts` if behavior seems off
+5. **Advanced**: `custom-config.ts` → `tool-management.ts` → `skills-management.ts` → `skills-option.ts` → `hooks-callbacks.ts` → `sdk-tools-callbacks.ts` → `ai-sdk-tools.ts` → `session-management.ts` → `long-running-tasks.ts`
+6. **SDK 0.3.x features**: `warm-start.ts` → `context-usage.ts` → `prompt-suggestions.ts`
+7. **Testing/Troubleshooting**: Run `integration-test.ts`, then `structured-output-repro.ts` and `limitations.ts` if behavior seems off
 
 For more details, see the main [README](../README.md).
