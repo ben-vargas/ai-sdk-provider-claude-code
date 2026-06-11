@@ -265,33 +265,6 @@ function isZodObjectSchema(schema: unknown): schema is ZodObject<ZodRawShape> {
   return typeof candidate.shape === 'object' && candidate.shape !== null;
 }
 
-/**
- * Detects a Zod object whose unknown-key handling is NON-default
- * (`.strict()`, `.passthrough()`, or `.catchall()`). The Agent SDK's
- * `tool(name, desc, shape, ...)` takes only the schema's `.shape` and
- * re-wraps it as a DEFAULT (stripping) object, which strips unknown keys
- * before our handler runs — so these modes cannot round-trip and a `.strict()`
- * schema would NOT reject extra keys as declared. In Zod v4 these modes set a
- * `catchall` on the object def; a plain object has none. Detection is
- * conservative: if the internal shape is ever unrecognizable (e.g. a future
- * Zod layout), it returns false rather than throwing on a valid plain schema.
- */
-function hasNonDefaultUnknownKeyMode(schema: ZodObject<ZodRawShape>): boolean {
-  const v4 = (schema as { _zod?: { def?: { catchall?: unknown } } })._zod?.def;
-  if (v4) {
-    // Zod v4: a plain object has NO `catchall`; .strict()/.passthrough()/
-    // .catchall() set one. (Do NOT use this for v3 — v3 plain objects always
-    // carry a ZodNever catchall, which would false-reject them.)
-    return v4.catchall !== undefined;
-  }
-  const v3 = (schema as { _def?: { unknownKeys?: unknown } })._def;
-  if (v3 && typeof v3.unknownKeys === 'string') {
-    // Zod v3: the mode lives in `unknownKeys` ('strip' is the default).
-    return v3.unknownKeys !== 'strip';
-  }
-  // Unrecognized layout: do NOT throw on a possibly-valid plain schema.
-  return false;
-}
 
 /**
  * Bridges AI SDK tool definitions (the `ai` package's `tool()` helper) into
@@ -305,14 +278,19 @@ function hasNonDefaultUnknownKeyMode(schema: ZodObject<ZodRawShape>): boolean {
  * reach providers. This helper is the explicit alternative: pass your tools
  * here and wire the result into the `mcpServers` setting.
  *
- * Validation: object-level `.refine()`/`.superRefine()` ARE enforced (the
- * handler re-parses with the full schema via `safeParseAsync`). Unknown-key
- * MODES are NOT supported — `.strict()`/`.passthrough()`/`.catchall()` throw at
- * creation time, because the Agent SDK's `tool()` takes only the schema shape
- * and validates against a default (stripping) object, so those modes cannot
- * round-trip. Declare tools with a plain `z.object({...})`.
+ * Validation scope: the Agent SDK's `tool()` takes only the schema SHAPE and
+ * validates incoming args against a default `z.object(shape)` — running
+ * FIELD-LEVEL validation and transforms (the handler receives each field's
+ * parsed `_output`) and STRIPPING unknown keys — before this handler runs. The
+ * bridge does NOT re-parse on top of that: re-parsing the SDK's already-parsed
+ * output against the original schema would re-run field transforms and would
+ * outright reject any schema whose output type differs from its input (e.g.
+ * `z.string().transform(v => v.length)`). Consequently OBJECT-LEVEL constructs
+ * are NOT enforced by the bridge — `.refine()`/`.superRefine()` (cross-field
+ * invariants) and `.strict()`/`.passthrough()`/`.catchall()` (unknown-key
+ * modes) — so perform those checks inside `execute()`.
  *
- * Each tool's `execute` is called with the validated input and a minimal
+ * Each tool's `execute` is called with the SDK-validated input and a minimal
  * options object ({@link AiSdkToolExecuteOptions}). String results pass
  * through as MCP text content; all other results are `JSON.stringify`'d.
  * Errors thrown (or rejections) become `isError: true` tool results instead
@@ -385,44 +363,28 @@ export function createAiSdkMcpServer(
     }
     // Narrowed schema (captured so the async handler closure keeps the type).
     const zodSchema: ZodObject<ZodRawShape> = def.inputSchema;
-    if (hasNonDefaultUnknownKeyMode(zodSchema)) {
-      throw new Error(
-        `createAiSdkMcpServer: tool "${toolName}" uses a non-default unknown-key mode ` +
-          "(.strict() / .passthrough() / .catchall()). The Agent SDK's tool() validates " +
-          'against a default object derived from the schema shape and STRIPS unknown keys ' +
-          'before the handler runs, so these modes cannot be enforced through the bridge. ' +
-          'Declare the tool with a plain z.object({...}) and handle extra/unknown keys inside ' +
-          'execute() (object-level .refine()/.superRefine() ARE enforced).'
-      );
-    }
     return tool(
       toolName,
       def.description ?? '',
       zodSchema.shape as ZodRawShape,
       async (args: Record<string, unknown>, extra: unknown): Promise<MinimalCallToolResult> => {
         try {
-          // The Agent SDK's tool() validates against the object's `.shape`
-          // (per-field), which DROPS object-level refinements
-          // (z.object({...}).refine(...) / .superRefine(...)). Re-parse with
-          // the full schema so those run before the tool executes, and pass
-          // the parsed (and possibly transformed) value to execute(). Use the
-          // ASYNC parser: AI SDK tools may use async refinements/transforms,
-          // which throw "Encountered Promise during synchronous parse" under
-          // the sync parser.
-          const parsed = await zodSchema.safeParseAsync(args);
-          if (!parsed.success) {
-            return buildIsErrorResult(
-              `Invalid arguments for tool "${toolName}": ${parsed.error.message}`
-            );
-          }
           const extraInfo = (extra ?? {}) as { signal?: AbortSignal; requestId?: string | number };
-          // Preserve `this === def` so tools that read off their own object
-          // continue to work; forward the MCP request id as `toolCallId`
-          // (only when present — never coerce undefined to 'undefined').
-          // Discard parsed.data: the SDK already ran field transforms when it
-          // parsed `args` against the shape (InferShape = each field's _output),
-          // so passing parsed.data would transform a SECOND time. The re-parse
-          // above is only a validation gate for object-level refinements.
+          // Pass the SDK's already-parsed `args` straight to execute. The Agent
+          // SDK's tool() takes only the schema SHAPE and validates incoming args
+          // against a default z.object(shape) — running field-level validation
+          // AND transforms (InferShape = each field's `_output`) and stripping
+          // unknown keys — BEFORE this handler runs. The bridge therefore does
+          // NOT re-parse: re-parsing the SDK's output against the original
+          // schema would re-run field transforms (and outright FAIL for any
+          // schema whose output type differs from its input, e.g.
+          // z.string().transform(v => v.length)). Object-level refinements
+          // (.refine/.superRefine) and unknown-key modes (.strict/.passthrough/
+          // .catchall) are consequently NOT enforced by the bridge — see the
+          // helper's JSDoc; perform cross-field/unknown-key checks inside
+          // execute(). `this === def` is preserved so tools can read off their
+          // own object; the MCP request id is forwarded as `toolCallId` only
+          // when present (never coerced to 'undefined').
           const result: unknown = await execute.call(def, args as never, {
             toolCallId: extraInfo.requestId !== undefined ? String(extraInfo.requestId) : undefined,
             abortSignal: extraInfo.signal,

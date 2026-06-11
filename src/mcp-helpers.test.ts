@@ -119,43 +119,34 @@ describe('createAiSdkMcpServer', () => {
     expect(result).toEqual({ content: [{ type: 'text', text: '{"sum":5}' }] });
   });
 
-  it('throws at creation for non-default unknown-key modes (.strict/.passthrough/.catchall)', () => {
-    // The Agent SDK strips unknown keys before the handler, so these modes
-    // cannot be enforced through the bridge; reject them explicitly rather
-    // than silently not enforcing the declared constraint.
+  it('accepts plain, refined, strict, and transform schemas at creation (no Zod-internal probing)', () => {
+    // The bridge does not inspect Zod internals to reject schema modes — the
+    // Agent SDK owns field-level validation and the bridge documents that
+    // object-level constructs are not enforced. So none of these throw.
     expect(() =>
       createAiSdkMcpServer('myTools', {
-        s: { inputSchema: z.object({ a: z.number() }).strict(), execute: async () => 'ok' },
-      })
-    ).toThrow(/non-default unknown-key mode/);
-
-    expect(() =>
-      createAiSdkMcpServer('myTools', {
-        c: {
-          inputSchema: z.object({ a: z.number() }).catchall(z.string()),
-          execute: async () => 'ok',
-        },
-      })
-    ).toThrow(/non-default unknown-key mode/);
-
-    // A plain object (default strip) and an object-level refinement are fine.
-    expect(() =>
-      createAiSdkMcpServer('myTools', {
-        ok: { inputSchema: z.object({ a: z.number() }), execute: async () => 'ok' },
+        plain: { inputSchema: z.object({ a: z.number() }), execute: async () => 'ok' },
+        strict: { inputSchema: z.object({ a: z.number() }).strict(), execute: async () => 'ok' },
         refined: {
           inputSchema: z.object({ a: z.number(), b: z.number() }).refine(({ a, b }) => a < b),
+          execute: async () => 'ok',
+        },
+        transform: {
+          inputSchema: z.object({ n: z.string().transform((v) => v.length) }),
           execute: async () => 'ok',
         },
       })
     ).not.toThrow();
   });
 
-  it('enforces object-level refinements before executing the tool', async () => {
+  it("does NOT re-parse args (object-level refinements are the caller's job in execute)", async () => {
+    // The bridge passes the SDK-validated args straight to execute and does
+    // NOT re-parse — re-parsing would re-run field transforms and reject
+    // valid transform schemas. So an object-level refinement is NOT enforced
+    // by the bridge; the tool runs and execute must do the cross-field check.
     const execute = vi.fn(async () => 'ran');
     const config = createAiSdkMcpServer('myTools', {
       ordered: {
-        // Object-level refinement lives on the object, not its `.shape`, so
-        // the Agent SDK's shape-only validation would miss it.
         inputSchema: z
           .object({ a: z.number(), b: z.number() })
           .refine(({ a, b }) => a < b, { message: 'a must be less than b' }),
@@ -164,38 +155,28 @@ describe('createAiSdkMcpServer', () => {
     });
 
     const [ordered] = getToolDefs(config);
-
-    // Violates the refinement: must NOT run the tool, returns isError.
-    const bad = await ordered!.handler({ a: 5, b: 2 }, undefined);
-    expect(bad.isError).toBe(true);
-    expect((bad.content[0] as { text: string }).text).toContain('Invalid arguments');
-    expect(execute).not.toHaveBeenCalled();
-
-    // Satisfies the refinement: runs with the parsed value.
-    const good = await ordered!.handler({ a: 2, b: 5 }, undefined);
-    expect(good.isError).toBeUndefined();
-    expect(execute).toHaveBeenCalledWith({ a: 2, b: 5 }, expect.anything());
+    // Refinement-violating input is passed through (not enforced by the bridge).
+    const res = await ordered!.handler({ a: 5, b: 2 }, undefined);
+    expect(res.isError).toBeUndefined();
+    expect(execute).toHaveBeenCalledWith({ a: 5, b: 2 }, expect.anything());
   });
 
-  it('supports async Zod refinements via async parsing', async () => {
+  it('does not reject valid transform schemas whose output type differs from input', async () => {
+    // z.string().transform(v => v.length) has input=string, output=number.
+    // The SDK parses and passes the number to the handler; re-parsing would
+    // reject it (expects string). The bridge must NOT re-parse.
     const execute = vi.fn(async () => 'ran');
     const config = createAiSdkMcpServer('myTools', {
-      asyncRefined: {
-        inputSchema: z
-          .object({ id: z.string() })
-          .refine(async ({ id }) => id.startsWith('ok-'), { message: 'must start with ok-' }),
+      lengthy: {
+        inputSchema: z.object({ n: z.string().transform((v) => v.length) }),
         execute,
       },
     });
-    const [t] = getToolDefs(config);
-
-    const bad = await t!.handler({ id: 'bad' }, undefined);
-    expect(bad.isError).toBe(true);
-    expect(execute).not.toHaveBeenCalled();
-
-    const good = await t!.handler({ id: 'ok-1' }, undefined);
-    expect(good.isError).toBeUndefined();
-    expect(execute).toHaveBeenCalled();
+    const [lengthy] = getToolDefs(config);
+    // The SDK would pass the already-transformed value (a number); simulate that.
+    const res = await lengthy!.handler({ n: 5 } as never, undefined);
+    expect(res.isError).toBeUndefined();
+    expect(execute).toHaveBeenCalledWith({ n: 5 }, expect.anything());
   });
 
   it('drains an AsyncIterable result to its final value', async () => {
