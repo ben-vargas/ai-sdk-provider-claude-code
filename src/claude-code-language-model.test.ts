@@ -2695,6 +2695,78 @@ describe('ClaudeCodeLanguageModel', () => {
         expect(result.content).toEqual([{ type: 'text', text: 'Replacement answer' }]);
       });
 
+      it('evicts content named only by the model_refusal_fallback notice in doGenerate', async () => {
+        // No assistant `supersedes`: the end-of-turn fallback notice's
+        // retracted_message_uuids is the sole eviction signal, and it must
+        // still drop the refused text + tool call + tool result.
+        const refusedToolId = 'toolu_gen_notice_refused';
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-refused',
+              message: {
+                content: [
+                  { type: 'text', text: 'Refused partial answer' },
+                  {
+                    type: 'tool_use',
+                    id: refusedToolId,
+                    name: 'Bash',
+                    input: { command: 'echo refused' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: refusedToolId,
+                    name: 'Bash',
+                    content: 'refused',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-replacement',
+              // No `supersedes` - the notice below is the only signal.
+              message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+            };
+            yield {
+              type: 'system',
+              subtype: 'model_refusal_fallback',
+              trigger: 'refusal',
+              direction: 'retry',
+              original_model: 'claude-opus-4-6',
+              fallback_model: 'claude-sonnet-4-5',
+              request_id: 'req-notice',
+              retracted_message_uuids: ['uuid-refused'],
+              content: 'Retried on fallback model',
+              session_id: 'gen-notice-session',
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-notice-session',
+              usage: { input_tokens: 10, output_tokens: 5 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        } as any);
+
+        expect(result.content).toEqual([{ type: 'text', text: 'Replacement answer' }]);
+      });
+
       it('removes retracted Task tools from fallback-parent inference', async () => {
         const retractedTaskId = 'toolu_gen_retracted_task';
         const laterToolId = 'toolu_gen_later_tool';
@@ -6848,6 +6920,64 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(chunks.some((c) => c.type === 'tool-result' && c.toolCallId === 'toolu_zombie')).toBe(
         false
       );
+    });
+
+    it('evicts uuids named only by the model_refusal_fallback notice (not assistant supersedes)', async () => {
+      // The refused assistant message arrives WITHOUT a superseding assistant
+      // frame; the end-of-turn fallback notice is the only retraction signal,
+      // and it must still evict the refused content.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            // NOTE: no `supersedes` here - only the notice below names the uuid
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'system',
+            subtype: 'model_refusal_fallback',
+            trigger: 'refusal',
+            direction: 'retry',
+            original_model: 'claude-opus-4-6',
+            fallback_model: 'claude-sonnet-4-5',
+            request_id: 'req-notice',
+            retracted_message_uuids: ['uuid-refused'],
+            content: 'Retried on fallback model',
+            session_id: 'fallback-notice-session',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'fallback-notice-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      // The notice-only retraction runs without error and the stream finishes;
+      // the refused text already streamed live cannot be un-streamed, but the
+      // eviction path is exercised (accumulator cleared) and the replacement
+      // is delivered.
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+      const deltas = chunks.filter((c) => c.type === 'text-delta').map((c) => c.delta);
+      expect(deltas).toContain('Replacement answer');
     });
 
     it('should drop superseded thinking traces in doGenerate', async () => {

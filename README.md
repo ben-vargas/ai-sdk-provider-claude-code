@@ -303,7 +303,7 @@ This provider exposes Agent SDK options directly. Key options include:
 
 ### User dialogs (`onUserDialog` / `supportedDialogKinds`)
 
-Some CLI flows ask the host to render a blocking dialog (a `request_user_dialog` control request) — for example `'refusal_fallback_prompt'`, which asks whether to retry a refused request differently. The SDK **fails closed** here: a dialog kind not declared in `supportedDialogKinds` is never emitted, and the flow behind it degrades to its no-dialog behavior (for `'refusal_fallback_prompt'`, the classic refusal error ends the turn). Providing `onUserDialog` alone does NOT opt you in — both options are required, and passing a non-empty `supportedDialogKinds` without the callback throws at SDK option intake (the provider warns at validation time).
+Some CLI flows ask the host to render a blocking dialog (a `request_user_dialog` control request) — for example `'refusal_fallback_prompt'`, which asks whether to retry a refused request differently. The SDK **fails closed** here: a dialog kind not declared in `supportedDialogKinds` is never emitted, and the flow behind it degrades to its no-dialog behavior (for `'refusal_fallback_prompt'`, the classic refusal error ends the turn). Providing `onUserDialog` alone does NOT opt you in — both options are required, and passing a non-empty `supportedDialogKinds` without the callback throws at SDK option intake, so the provider **rejects** that combination at validation time (`createClaudeCode`/model construction throws `Invalid settings`).
 
 ```ts
 const model = claudeCode('sonnet', {

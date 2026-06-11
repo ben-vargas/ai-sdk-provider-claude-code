@@ -20,7 +20,6 @@
  */
 
 import { generateText } from 'ai';
-import type { ModelMessage } from 'ai';
 import { claudeCode } from '../dist/index.js';
 
 // The provider's post-result drain gives up after 10s; wait slightly longer.
@@ -33,7 +32,10 @@ function waitFor<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   ]);
 }
 
-async function suggestionsEnabled(): Promise<{ answer: string; suggestion: string | null }> {
+async function suggestionsEnabled(): Promise<{
+  sessionId: string | undefined;
+  suggestion: string | null;
+}> {
   console.log('1️⃣ promptSuggestions: true — suggestion delivered post-finish\n');
 
   // The CLI suppresses prompt suggestions on the FIRST turn of a fresh
@@ -84,7 +86,10 @@ async function suggestionsEnabled(): Promise<{ answer: string; suggestion: strin
         'turn; the feedback-loop demo below will use a simulated suggestion.)'
     );
   }
-  return { answer: result.text.trim(), suggestion };
+  // Return the SESSION (not the turn text): the feedback loop resumes the real
+  // conversation so the history stays coherent regardless of which turn the
+  // suggestion came from.
+  return { sessionId, suggestion };
 }
 
 async function suggestionsDisabled(): Promise<void> {
@@ -114,25 +119,19 @@ async function suggestionsDisabled(): Promise<void> {
   );
 }
 
-async function feedSuggestionBack(firstAnswer: string, suggestion: string): Promise<void> {
+async function feedSuggestionBack(
+  sessionId: string | undefined,
+  suggestion: string
+): Promise<void> {
   console.log('\n3️⃣ The intended UX loop — feed the suggestion back as the next user message\n');
 
-  // In a chat UI you would render the suggestion as a tappable chip;
-  // here we simply send it as the next user turn.
-  const messages: ModelMessage[] = [
-    {
-      role: 'user',
-      content:
-        'I am writing a two-line poem about the ocean. ' +
-        'Give me ONLY the first line for now. I will ask for the second line next.',
-    },
-    { role: 'assistant', content: firstAnswer },
-    { role: 'user', content: suggestion },
-  ];
-
+  // In a chat UI you would render the suggestion as a tappable chip; here we
+  // send it as the next user turn. Resuming the seeded session keeps the
+  // conversation coherent (the model already has the first line in context)
+  // instead of hand-reconstructing a transcript.
   const result = await generateText({
-    model: claudeCode('haiku'),
-    messages,
+    model: claudeCode('haiku', sessionId ? { resume: sessionId } : {}),
+    prompt: suggestion,
   });
   console.log('User (from suggestion):', suggestion);
   console.log('Assistant:', result.text.trim());
@@ -140,7 +139,7 @@ async function feedSuggestionBack(firstAnswer: string, suggestion: string): Prom
 
 async function main() {
   try {
-    const { answer, suggestion } = await suggestionsEnabled();
+    const { sessionId, suggestion } = await suggestionsEnabled();
     await suggestionsDisabled();
     // Demonstrate the feedback loop either way: with the real suggestion
     // when one was delivered, otherwise with a clearly-labeled simulated one
@@ -148,7 +147,7 @@ async function main() {
     if (!suggestion) {
       console.log('\n(Using a simulated suggestion for the loop demo below.)');
     }
-    await feedSuggestionBack(answer, suggestion ?? 'Now give me the second line of the poem.');
+    await feedSuggestionBack(sessionId, suggestion ?? 'Now give me the second line of the poem.');
   } catch (error) {
     console.error('Error:', error);
     console.log('\nTroubleshooting:');

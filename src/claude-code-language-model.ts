@@ -1777,7 +1777,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
    */
   private handleSystemMessage(
     message: SDKSystemMessageVariant,
-    tracking: RequestMetadataTracking
+    tracking: RequestMetadataTracking,
+    onRetractedUuids?: (uuids: string[]) => void
   ): void {
     switch (message.subtype) {
       case 'api_retry':
@@ -1798,11 +1799,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         );
         break;
       }
-      case 'model_refusal_fallback':
+      case 'model_refusal_fallback': {
         this.logger.debug(
           `[claude-code] Model refusal fallback - ${message.original_model} -> ${message.fallback_model} (direction: ${message.direction})`
         );
+        // The end-of-turn notice carries retracted_message_uuids - the
+        // complete, resolution-time eviction record for the turn (including
+        // tombstoned tool_result frames the per-message `supersedes` may not
+        // have named). Replay it through the caller's eviction routine;
+        // eviction is idempotent so already-retracted uuids are a no-op.
+        const retractedUuids = (message as { retracted_message_uuids?: string[] })
+          .retracted_message_uuids;
+        if (onRetractedUuids && retractedUuids && retractedUuids.length > 0) {
+          this.logger.debug(
+            `[claude-code] Refusal fallback retracts ${retractedUuids.length} message uuid(s)`
+          );
+          onRetractedUuids(retractedUuids);
+        }
         break;
+      }
       case 'thinking_tokens':
         // `estimated_tokens` is a running total for the current thinking block
         // only, so accumulate the per-frame delta to cover multi-block requests.
@@ -1985,6 +2000,45 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // would create an orphan that makes AI SDK core's asContent() throw
     // ('Tool call ${id} not found.').
     const retractedToolIds = new Set<string>();
+    // Evict every segment named by a retraction signal (an assistant message's
+    // `supersedes` on arrival, or the end-of-turn model_refusal_fallback
+    // notice's `retracted_message_uuids`, which the SDK documents as the
+    // complete eviction record for the turn). Idempotent: re-evicting an
+    // already-removed uuid is a no-op, so the two signals compose safely.
+    const evictRetractedUuids = (retracted: Set<string>): void => {
+      if (retracted.size === 0) return;
+      const retractedToolCallIds = new Set<string>(
+        contentSegments
+          .filter(
+            (segment) =>
+              segment.kind === 'tool-call' &&
+              segment.uuid !== undefined &&
+              retracted.has(segment.uuid)
+          )
+          .map((segment) => (segment as { toolCallId: string }).toolCallId)
+      );
+      // Clean up tool bookkeeping for retracted calls: a retracted Task must
+      // not remain "active" (it would pollute getFallbackParentId with a
+      // dangling parent reference), and late results for retracted IDs must be
+      // dropped rather than re-paired.
+      for (const toolCallId of retractedToolCallIds) {
+        retractedToolIds.add(toolCallId);
+        knownTools.delete(toolCallId);
+        activeTaskTools.delete(toolCallId);
+      }
+      for (let i = contentSegments.length - 1; i >= 0; i--) {
+        const segment = contentSegments[i];
+        if (segment === undefined) continue;
+        const segmentUuid = 'uuid' in segment ? segment.uuid : undefined;
+        const retractsSegment =
+          (segmentUuid !== undefined && retracted.has(segmentUuid)) ||
+          ((segment.kind === 'tool-result' || segment.kind === 'tool-error') &&
+            retractedToolCallIds.has(segment.toolCallId));
+        if (retractsSegment) {
+          contentSegments.splice(i, 1);
+        }
+      }
+    };
     // Track active Task tools for subagent hierarchy (mirrors doStream).
     // Using a Map instead of stack to correctly handle parallel agents
     const activeTaskTools = new Map<string, { startTime: number }>();
@@ -2110,38 +2164,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             this.logger.debug(
               `[claude-code] Assistant message supersedes ${message.supersedes.length} prior message(s)`
             );
-            const retracted = new Set<string>(message.supersedes);
-            const retractedToolCallIds = new Set<string>(
-              contentSegments
-                .filter(
-                  (segment) =>
-                    segment.kind === 'tool-call' &&
-                    segment.uuid !== undefined &&
-                    retracted.has(segment.uuid)
-                )
-                .map((segment) => (segment as { toolCallId: string }).toolCallId)
-            );
-            // Clean up tool bookkeeping for retracted calls: a retracted Task
-            // must not remain "active" (it would pollute getFallbackParentId
-            // with a dangling parent reference), and late results for
-            // retracted IDs must be dropped rather than re-paired.
-            for (const toolCallId of retractedToolCallIds) {
-              retractedToolIds.add(toolCallId);
-              knownTools.delete(toolCallId);
-              activeTaskTools.delete(toolCallId);
-            }
-            for (let i = contentSegments.length - 1; i >= 0; i--) {
-              const segment = contentSegments[i];
-              if (segment === undefined) continue;
-              const segmentUuid = 'uuid' in segment ? segment.uuid : undefined;
-              const retractsSegment =
-                (segmentUuid !== undefined && retracted.has(segmentUuid)) ||
-                ((segment.kind === 'tool-result' || segment.kind === 'tool-error') &&
-                  retractedToolCallIds.has(segment.toolCallId));
-              if (retractsSegment) {
-                contentSegments.splice(i, 1);
-              }
-            }
+            evictRetractedUuids(new Set<string>(message.supersedes));
           }
 
           const messageUuid = typeof message.uuid === 'string' ? message.uuid : undefined;
@@ -2411,7 +2434,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           this.setSessionId(message.session_id);
           this.logger.info(`[claude-code] Session initialized: ${message.session_id}`);
         } else if (message.type === 'system') {
-          this.handleSystemMessage(message, metadataTracking);
+          this.handleSystemMessage(message, metadataTracking, (uuids) =>
+            evictRetractedUuids(new Set(uuids))
+          );
         }
       }
     } catch (error: unknown) {
@@ -2733,6 +2758,45 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         // Extended thinking: Map block indices to reasoning part IDs
         const reasoningBlocksByIndex = new Map<number, string>();
         let currentReasoningPartId: string | undefined;
+
+        // Evict every stream segment named by a retraction signal (an assistant
+        // message's `supersedes` on arrival, or the end-of-turn
+        // model_refusal_fallback notice's `retracted_message_uuids`, the SDK's
+        // complete eviction record for the turn). Already-emitted text/tool
+        // parts cannot be un-streamed, but they stop influencing the final
+        // accumulators and fallback parenting; pending tool calls are dropped
+        // and tombstoned. Idempotent, so the two signals compose safely.
+        const evictRetractedUuids = (retracted: Set<string>): void => {
+          if (retracted.size === 0) return;
+          for (let i = textSegments.length - 1; i >= 0; i--) {
+            const segmentUuid = textSegments[i]?.uuid;
+            if (segmentUuid !== undefined && retracted.has(segmentUuid)) {
+              textSegments.splice(i, 1);
+            }
+          }
+          accumulatedText = textSegments.map((segment) => segment.text).join('');
+
+          for (const [toolId, state] of [...toolStates]) {
+            if (state.messageUuid === undefined || !retracted.has(state.messageUuid)) {
+              continue;
+            }
+            activeTaskTools.delete(toolId);
+            if (!state.callEmitted) {
+              closeToolInput(toolId, state);
+              toolStates.delete(toolId);
+              retractedStreamToolIds.add(toolId);
+              toolInputAccumulators.delete(toolId);
+              for (const [blockIndex, mappedId] of toolBlocksByIndex) {
+                if (mappedId === toolId) {
+                  toolBlocksByIndex.delete(blockIndex);
+                }
+              }
+              this.logger.debug(
+                `[claude-code] Retracted pending tool call from superseded message - ID: ${toolId}`
+              );
+            }
+          }
+        };
 
         try {
           // Emit stream-start with warnings
@@ -3149,43 +3213,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 // The SDK does not guarantee the canonical replacement carries
                 // text blocks, so retraction must not depend on this message
                 // having text of its own.
-                const retracted = new Set<string>(message.supersedes ?? []);
-                for (let i = textSegments.length - 1; i >= 0; i--) {
-                  const segmentUuid = textSegments[i]?.uuid;
-                  if (segmentUuid !== undefined && retracted.has(segmentUuid)) {
-                    textSegments.splice(i, 1);
-                  }
-                }
-                accumulatedText = textSegments.map((segment) => segment.text).join('');
-
-                // Retract tool state from superseded messages too. Already-
-                // emitted tool-calls cannot be un-streamed (their states stay
-                // so late results still pair), but they must stop influencing
-                // fallback parenting. Pending states (no tool-call emitted
-                // yet) are dropped entirely so finalizeToolCalls() does not
-                // emit retracted calls at the end of the stream; their open
-                // input parts are closed and the stream-event bookkeeping is
-                // cleaned so a late content_block_stop cannot resurrect them.
-                for (const [toolId, state] of [...toolStates]) {
-                  if (state.messageUuid === undefined || !retracted.has(state.messageUuid)) {
-                    continue;
-                  }
-                  activeTaskTools.delete(toolId);
-                  if (!state.callEmitted) {
-                    closeToolInput(toolId, state);
-                    toolStates.delete(toolId);
-                    retractedStreamToolIds.add(toolId);
-                    toolInputAccumulators.delete(toolId);
-                    for (const [blockIndex, mappedId] of toolBlocksByIndex) {
-                      if (mappedId === toolId) {
-                        toolBlocksByIndex.delete(blockIndex);
-                      }
-                    }
-                    this.logger.debug(
-                      `[claude-code] Retracted pending tool call from superseded message - ID: ${toolId}`
-                    );
-                  }
-                }
+                evictRetractedUuids(new Set<string>(message.supersedes ?? []));
               }
 
               if (!message.message?.content) {
@@ -3854,7 +3882,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 modelId: this.modelId,
               });
             } else if (message.type === 'system') {
-              this.handleSystemMessage(message, metadataTracking);
+              this.handleSystemMessage(message, metadataTracking, (uuids) =>
+                evictRetractedUuids(new Set(uuids))
+              );
             } else if (message.type === 'prompt_suggestion') {
               // Defensive: normally arrives after the result message (handled by
               // the post-finish drain above), but consume it here if it arrives early.
