@@ -6781,6 +6781,75 @@ describe('ClaudeCodeLanguageModel', () => {
       ).toBe(false);
     });
 
+    it('drops late tool results for retracted pending tool calls instead of resurrecting them', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          // Pending tool (input started, never finalized) on the refused message...
+          yield {
+            type: 'stream_event',
+            parent_tool_use_id: null,
+            uuid: 'uuid-refused',
+            event: {
+              type: 'content_block_start',
+              index: 0,
+              content_block: { type: 'tool_use', id: 'toolu_zombie', name: 'Bash', input: {} },
+            },
+          };
+          // ...superseded by the canonical replacement...
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement' }] },
+          };
+          // ...then a LATE tool_result for the retracted call arrives. The
+          // unknown-tool path must not synthesize a new call/result pair.
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: 'toolu_zombie',
+                  content: 'late output',
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'zombie-tool-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // No synthesized resurrection: nothing for the zombie id after the
+      // retraction's input-end (one input-start from before the supersede,
+      // one input-end at retraction, and nothing else).
+      const zombieParts = chunks.filter(
+        (c) => c.id === 'toolu_zombie' || c.toolCallId === 'toolu_zombie'
+      );
+      expect(zombieParts.map((c) => c.type)).toEqual(['tool-input-start', 'tool-input-end']);
+      expect(chunks.some((c) => c.type === 'tool-result' && c.toolCallId === 'toolu_zombie')).toBe(
+        false
+      );
+    });
+
     it('should drop superseded thinking traces in doGenerate', async () => {
       const mockResponse = {
         async *[Symbol.asyncIterator]() {

@@ -2638,6 +2638,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           done = () => resolve(undefined);
         });
         const toolStates = new Map<string, ToolStreamState>();
+        // Tombstones for pending tool calls dropped by supersede retraction:
+        // late tool_result/tool_error blocks for these IDs must be discarded,
+        // not synthesized back into a tool-call via the unknown-tool path
+        // (mirrors doGenerate's retractedToolIds).
+        const retractedStreamToolIds = new Set<string>();
         // Track active Task tools for subagent hierarchy
         // Using a Map instead of stack to correctly handle parallel agents
         const activeTaskTools = new Map<string, { startTime: number }>();
@@ -3169,6 +3174,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   if (!state.callEmitted) {
                     closeToolInput(toolId, state);
                     toolStates.delete(toolId);
+                    retractedStreamToolIds.add(toolId);
                     toolInputAccumulators.delete(toolId);
                     for (const [blockIndex, mappedId] of toolBlocksByIndex) {
                       if (mappedId === toolId) {
@@ -3481,6 +3487,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
               const content = message.message.content;
               for (const result of this.extractToolResults(content)) {
+                if (retractedStreamToolIds.has(result.id)) {
+                  this.logger.debug(
+                    `[claude-code] Dropping tool result for retracted (superseded) tool ID: ${result.id}`
+                  );
+                  continue;
+                }
                 let state = toolStates.get(result.id);
                 const toolName =
                   result.name ?? state?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
@@ -3550,6 +3562,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               }
               // Handle tool errors
               for (const error of this.extractToolErrors(content)) {
+                if (retractedStreamToolIds.has(error.id)) {
+                  this.logger.debug(
+                    `[claude-code] Dropping tool error for retracted (superseded) tool ID: ${error.id}`
+                  );
+                  continue;
+                }
                 let state = toolStates.get(error.id);
                 const toolName =
                   error.name ?? state?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
