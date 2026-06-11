@@ -859,6 +859,51 @@ describe('validateSettings', () => {
       const skillWarnings = result.warnings.filter((w) => w.includes('Skill'));
       expect(skillWarnings).toHaveLength(0);
     });
+
+    it('should not warn when settingSources arrives via the sdkOptions escape hatch', () => {
+      const settings = {
+        allowedTools: ['Skill', 'Read'],
+        sdkOptions: {
+          settingSources: ['user', 'project'] as const,
+        },
+      };
+      const result = validateSettings(settings);
+
+      expect(result.valid).toBe(true);
+      const skillWarnings = result.warnings.filter((w) =>
+        w.includes("allowedTools includes 'Skill'")
+      );
+      expect(skillWarnings).toHaveLength(0);
+    });
+
+    it('should warn when Skill arrives via sdkOptions.allowedTools but settingSources is not set', () => {
+      const settings = {
+        sdkOptions: {
+          allowedTools: ['Skill', 'Read'],
+        },
+      };
+      const result = validateSettings(settings);
+
+      expect(result.valid).toBe(true);
+      expect(result.warnings.some((w) => w.includes("allowedTools includes 'Skill'"))).toBe(true);
+      expect(result.warnings.some((w) => w.includes('settingSources is not set'))).toBe(true);
+    });
+
+    it('should not warn when both Skill and settingSources arrive via sdkOptions', () => {
+      const settings = {
+        sdkOptions: {
+          allowedTools: ['Skill', 'Read'],
+          settingSources: ['user', 'project'] as const,
+        },
+      };
+      const result = validateSettings(settings);
+
+      expect(result.valid).toBe(true);
+      const skillWarnings = result.warnings.filter((w) =>
+        w.includes("allowedTools includes 'Skill'")
+      );
+      expect(skillWarnings).toHaveLength(0);
+    });
   });
 
   describe('User dialog settings', () => {

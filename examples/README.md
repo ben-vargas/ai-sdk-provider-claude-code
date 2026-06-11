@@ -405,7 +405,7 @@ npx tsx examples/context-usage.ts
 npx tsx examples/prompt-suggestions.ts
 ```
 
-**Key concepts**: Post-finish delivery (suggestion arrives after the result message, so it is a callback rather than providerMetadata — bridge with a promise + bounded race), bounded drain (provider stops at the first suggestion, 10s cap, at most one suggestion per turn), opt-in gating (callback never fires without `promptSuggestions: true`)
+**Key concepts**: Post-finish delivery (suggestion arrives after the result message, so it is a callback rather than providerMetadata — bridge with a promise + bounded race), bounded drain (provider stops at the first suggestion, 10s cap, at most one suggestion per turn), gating (suggestions are enabled when `promptSuggestions` is `true` or left unset, and disabled only when explicitly `false`)
 
 ## Skills Option
 

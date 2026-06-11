@@ -513,8 +513,16 @@ export function validateSettings(settings: unknown): {
       return { valid: false, warnings, errors };
     }
 
-    // Warn about Skills configuration issues
-    if (validSettings.allowedTools?.includes('Skill') && !validSettings.settingSources) {
+    // Warn about Skills configuration issues. Both allowedTools and
+    // settingSources can arrive via the sdkOptions escape hatch, so inspect
+    // the EFFECTIVE (sdkOptions-overlaid) values to avoid a spurious warning
+    // when settingSources (or allowedTools) is supplied through sdkOptions.
+    const effAllowedTools = effective('allowedTools');
+    if (
+      Array.isArray(effAllowedTools) &&
+      effAllowedTools.includes('Skill') &&
+      !effective('settingSources')
+    ) {
       warnings.push(
         "allowedTools includes 'Skill' but settingSources is not set. Skills require settingSources (e.g., ['user', 'project']) to load skill definitions."
       );
