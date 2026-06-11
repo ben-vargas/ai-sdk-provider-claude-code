@@ -382,14 +382,14 @@ type GenerateContentSegment =
   | { kind: 'text'; uuid?: string; text: string }
   | { kind: 'reasoning'; uuid?: string; text: string }
   | { kind: 'tool-call'; uuid?: string; toolCallId: string; part: LanguageModelV3ToolCall }
-  | { kind: 'tool-result'; toolCallId: string; part: ProviderToolResultPart }
+  | { kind: 'tool-result'; uuid?: string; toolCallId: string; part: ProviderToolResultPart }
   // tool_error blocks carry a V3 `tool-result` part with `isError: true`:
   // the V3 CONTENT union has no `tool-error` member and AI SDK core's
   // asContent() silently drops unknown part types, whereas an isError
   // tool-result round-trips into a proper tool-error content part visible
   // in generateText steps content. (doStream keeps the provider-extension
   // tool-error STREAM part, which AI SDK core handles natively.)
-  | { kind: 'tool-error'; toolCallId: string; part: ProviderToolResultPart };
+  | { kind: 'tool-error'; uuid?: string; toolCallId: string; part: ProviderToolResultPart };
 
 type ContentBlock = { type: string; [key: string]: unknown };
 
@@ -2011,9 +2011,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         contentSegments
           .filter(
             (segment) =>
-              segment.kind === 'tool-call' &&
-              segment.uuid !== undefined &&
-              retracted.has(segment.uuid)
+              // tool-CALL retracted by its message uuid...
+              (segment.kind === 'tool-call' &&
+                segment.uuid !== undefined &&
+                retracted.has(segment.uuid)) ||
+              // ...or a tool-RESULT/ERROR retracted by ITS OWN message uuid
+              // (the SDK may name a tombstoned tool_result frame directly).
+              ((segment.kind === 'tool-result' || segment.kind === 'tool-error') &&
+                segment.uuid !== undefined &&
+                retracted.has(segment.uuid))
           )
           .map((segment) => (segment as { toolCallId: string }).toolCallId)
       );
@@ -2237,6 +2243,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           // Extract parent_tool_use_id from SDK message for late-arriving tool results
           const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string })
             .parent_tool_use_id;
+          // tool_result/tool_error frames are their own normalized SDK messages
+          // with their own uuid; tag segments with it so a refusal-fallback
+          // retraction that names the tool_result uuid DIRECTLY (per the SDK,
+          // retracted_message_uuids can include tombstoned tool_results) evicts
+          // them even when the originating tool_use was not itself retracted.
+          const resultMessageUuid =
+            typeof (message as { uuid?: unknown }).uuid === 'string'
+              ? (message as { uuid: string }).uuid
+              : undefined;
 
           const content = message.message.content;
           for (const result of this.extractToolResults(content)) {
@@ -2283,6 +2298,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
             contentSegments.push({
               kind: 'tool-result',
+              ...(resultMessageUuid !== undefined && { uuid: resultMessageUuid }),
               toolCallId: result.id,
               part: this.buildToolResultPart(
                 result.id,
@@ -2336,6 +2352,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
             contentSegments.push({
               kind: 'tool-error',
+              ...(resultMessageUuid !== undefined && { uuid: resultMessageUuid }),
               toolCallId: error.id,
               part: this.buildToolErrorResultPart(
                 error.id,

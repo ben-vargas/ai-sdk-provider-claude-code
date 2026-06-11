@@ -2767,6 +2767,78 @@ describe('ClaudeCodeLanguageModel', () => {
         expect(result.content).toEqual([{ type: 'text', text: 'Replacement answer' }]);
       });
 
+      it('evicts a tool_result by its OWN message uuid named in retracted_message_uuids', async () => {
+        // The tool_use is NOT retracted; only the tool_result frame's own
+        // message uuid appears in retracted_message_uuids (the SDK documents
+        // tombstoned tool_results as direct entries). It must still be evicted.
+        const keptToolId = 'toolu_gen_kept_call';
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-assistant',
+              message: {
+                content: [
+                  { type: 'text', text: 'Answer.' },
+                  { type: 'tool_use', id: keptToolId, name: 'Read', input: { file: 'x' } },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              uuid: 'uuid-toolresult',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: keptToolId,
+                    name: 'Read',
+                    content: 'stale result',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'system',
+              subtype: 'model_refusal_fallback',
+              trigger: 'refusal',
+              direction: 'retry',
+              original_model: 'claude-opus-4-6',
+              fallback_model: 'claude-sonnet-4-5',
+              request_id: 'req-notice',
+              // Names the tool_result frame's own uuid, NOT the assistant uuid.
+              retracted_message_uuids: ['uuid-toolresult'],
+              content: 'Retried',
+              session_id: 'gen-toolresult-uuid-session',
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-toolresult-uuid-session',
+              usage: { input_tokens: 10, output_tokens: 5 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        } as any);
+
+        // The tool-result is gone; the kept text and its (non-retracted)
+        // tool-call remain.
+        const kinds = result.content.map((part: any) => part.type);
+        expect(result.content.some((part: any) => part.type === 'tool-result')).toBe(false);
+        expect(kinds).toContain('text');
+        expect(
+          result.content.some(
+            (part: any) => part.type === 'tool-call' && part.toolCallId === keptToolId
+          )
+        ).toBe(true);
+      });
+
       it('removes retracted Task tools from fallback-parent inference', async () => {
         const retractedTaskId = 'toolu_gen_retracted_task';
         const laterToolId = 'toolu_gen_later_tool';
