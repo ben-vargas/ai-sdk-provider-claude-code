@@ -916,7 +916,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
   }
 
   private getEffectiveResume(sdkOptions?: Partial<Options>): string | undefined {
-    return sdkOptions?.resume ?? this.settings.resume ?? this.sessionId;
+    // The SDK treats a blank/whitespace resume id as absent, so skip blanks
+    // rather than letting one shadow a real later candidate or reach the CLI
+    // as `--resume ''`.
+    for (const candidate of [sdkOptions?.resume, this.settings.resume, this.sessionId]) {
+      if (typeof candidate === 'string' && candidate.trim() !== '') {
+        return candidate;
+      }
+    }
+    return undefined;
   }
 
   private extractToolUses(content: unknown): ClaudeToolUse[] {
@@ -1327,7 +1335,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     const opts: Partial<Options> & Record<string, unknown> = {
       model: this.getModel(),
       abortController,
-      resume: effectiveResume ?? this.settings.resume ?? this.sessionId,
+      resume: effectiveResume,
       pathToClaudeCodeExecutable: this.settings.pathToClaudeCodeExecutable,
       maxTurns: this.settings.maxTurns,
       maxThinkingTokens: this.settings.maxThinkingTokens,
@@ -1515,9 +1523,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       }
     }
 
-    // A blank/whitespace resume id is treated as absent by the SDK; normalize
-    // it so it neither suppresses sessionId below nor reaches the CLI as
-    // `--resume ''`.
+    // The generic merge above can re-introduce a blank `sdkOptions.resume`
+    // (the base resume was normalized via getEffectiveResume, but the merge
+    // copies the raw value). The SDK treats a blank/whitespace resume as
+    // absent, so normalize again here so it neither suppresses sessionId below
+    // nor reaches the CLI as `--resume ''`.
     if (typeof opts.resume === 'string' && opts.resume.trim() === '') {
       opts.resume = undefined;
     }

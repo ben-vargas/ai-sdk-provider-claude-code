@@ -1103,6 +1103,40 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.forkSession).toBe(true);
     });
 
+    it('forwards sessionId when resume is a blank string (treated as absent)', async () => {
+      // { sessionId, resume: '' } previously suppressed sessionId (resume was
+      // still '' when the guard ran) then cleared resume -> a random new
+      // session instead of the requested deterministic ID. A blank resume is
+      // now normalized to absent BEFORE the guard, so sessionId is forwarded.
+      const sid = '9c5d1e4f-3a6b-4c8d-0e2f-4a5b6c7d8e9f';
+      const modelBlankResume = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { sessionId: sid, resume: '   ' } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: sid,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelBlankResume.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      // Blank resume is dropped (not passed as --resume ''), and sessionId is
+      // forwarded as the deterministic ID.
+      expect(call?.options?.resume).toBeUndefined();
+      expect(call?.options?.sessionId).toBe(sid);
+    });
+
     it('does not drain for prompt suggestions when promptSuggestions is explicitly false', async () => {
       const onPromptSuggestion = vi.fn();
       const modelNoDrain = new ClaudeCodeLanguageModel({

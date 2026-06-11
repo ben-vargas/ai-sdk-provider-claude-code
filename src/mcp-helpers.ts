@@ -280,14 +280,33 @@ export function createAiSdkMcpServer(
           'schema. Pass the same z.object({...}) schema you would give to the AI SDK tool() helper.'
       );
     }
+    // Narrowed schema (captured so the async handler closure keeps the type).
+    const zodSchema: ZodObject<ZodRawShape> = def.inputSchema;
     return tool(
       toolName,
       def.description ?? '',
-      def.inputSchema.shape as ZodRawShape,
+      zodSchema.shape as ZodRawShape,
       async (args: Record<string, unknown>, extra: unknown): Promise<MinimalCallToolResult> => {
         try {
+          // The Agent SDK's tool() validates against the object's `.shape`
+          // (per-field), which DROPS object-level refinements
+          // (z.object({...}).refine(...) / .superRefine(...)). Re-parse with
+          // the full schema so those run before the tool executes, and pass
+          // the parsed (and possibly transformed) value to execute().
+          const parsed = zodSchema.safeParse(args);
+          if (!parsed.success) {
+            return {
+              isError: true,
+              content: [
+                {
+                  type: 'text',
+                  text: `Invalid arguments for tool "${toolName}": ${parsed.error.message}`,
+                },
+              ],
+            };
+          }
           const extraInfo = (extra ?? {}) as { signal?: AbortSignal; requestId?: string | number };
-          const result: unknown = await execute.call(def, args as never, {
+          const result: unknown = await execute.call(def, parsed.data as never, {
             toolCallId: extraInfo.requestId !== undefined ? String(extraInfo.requestId) : undefined,
             abortSignal: extraInfo.signal,
           });

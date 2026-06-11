@@ -119,6 +119,47 @@ describe('createAiSdkMcpServer', () => {
     expect(result).toEqual({ content: [{ type: 'text', text: '{"sum":5}' }] });
   });
 
+  it('enforces object-level refinements before executing the tool', async () => {
+    const execute = vi.fn(async () => 'ran');
+    const config = createAiSdkMcpServer('myTools', {
+      ordered: {
+        // Object-level refinement lives on the object, not its `.shape`, so
+        // the Agent SDK's shape-only validation would miss it.
+        inputSchema: z
+          .object({ a: z.number(), b: z.number() })
+          .refine(({ a, b }) => a < b, { message: 'a must be less than b' }),
+        execute,
+      },
+    });
+
+    const [ordered] = getToolDefs(config);
+
+    // Violates the refinement: must NOT run the tool, returns isError.
+    const bad = await ordered!.handler({ a: 5, b: 2 }, undefined);
+    expect(bad.isError).toBe(true);
+    expect((bad.content[0] as { text: string }).text).toContain('Invalid arguments');
+    expect(execute).not.toHaveBeenCalled();
+
+    // Satisfies the refinement: runs with the parsed value.
+    const good = await ordered!.handler({ a: 2, b: 5 }, undefined);
+    expect(good.isError).toBeUndefined();
+    expect(execute).toHaveBeenCalledWith({ a: 2, b: 5 }, expect.anything());
+  });
+
+  it('passes the parsed (transformed) value to execute', async () => {
+    const execute = vi.fn(async () => 'ok');
+    const config = createAiSdkMcpServer('myTools', {
+      trimmed: {
+        inputSchema: z.object({ name: z.string().transform((v) => v.trim()) }),
+        execute,
+      },
+    });
+
+    const [trimmed] = getToolDefs(config);
+    await trimmed!.handler({ name: '  Ada  ' }, undefined);
+    expect(execute).toHaveBeenCalledWith({ name: 'Ada' }, expect.anything());
+  });
+
   it('should pass toolCallId and abortSignal from the MCP extra to execute', async () => {
     const execute = vi.fn(async () => 'ok');
     const config = createAiSdkMcpServer('myTools', {
