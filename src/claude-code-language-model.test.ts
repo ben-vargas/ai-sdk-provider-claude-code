@@ -1103,6 +1103,36 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.forkSession).toBe(true);
     });
 
+    it('does not let a blank sdkOptions.resume erase the settings.resume fallback', async () => {
+      const modelBlankSdkResume = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          resume: 'real-session',
+          sdkOptions: { resume: '   ' },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'real-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelBlankSdkResume.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      // Blank sdkOptions.resume is ignored; the real settings.resume survives.
+      expect(call?.options?.resume).toBe('real-session');
+    });
+
     it('forwards sessionId when resume is a blank string (treated as absent)', async () => {
       // { sessionId, resume: '' } previously suppressed sessionId (resume was
       // still '' when the guard ran) then cleared resume -> a random new
@@ -2757,6 +2787,59 @@ describe('ClaudeCodeLanguageModel', () => {
           (part: any) => part.type === 'tool-result' && part.toolCallId === childToolId
         ) as any;
         expect(childResult?.providerMetadata?.['claude-code']?.parentToolCallId).toBe(taskToolId);
+      });
+
+      it('treats an explicit null parent_tool_use_id as top-level (not inferred under an active Task)', async () => {
+        // SDK 0.3 messages always carry parent_tool_use_id (string | null).
+        // A null value means top-level; it must NOT fall through to the
+        // single-active-Task timing inference.
+        const taskToolId = 'toolu_gen_active_task';
+        const topLevelToolId = 'toolu_gen_toplevel';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // A Task starts (becomes the single active Task).
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-task',
+              parent_tool_use_id: null,
+              message: {
+                content: [
+                  { type: 'tool_use', id: taskToolId, name: 'Task', input: { objective: 'x' } },
+                ],
+              },
+            };
+            // A separate top-level message (parent_tool_use_id: null) emits a
+            // normal tool WHILE the Task is active. It must stay top-level.
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-top',
+              parent_tool_use_id: null,
+              message: {
+                content: [
+                  { type: 'tool_use', id: topLevelToolId, name: 'Read', input: { file: 'x' } },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-explicit-null-session',
+              usage: { input_tokens: 2, output_tokens: 1 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Do work' }] }],
+        } as any);
+
+        const toolCalls = result.content.filter((p: any) => p.type === 'tool-call') as any[];
+        const topCall = toolCalls.find((p) => p.toolCallId === topLevelToolId);
+        // Explicit null => top-level, NOT nested under the active Task.
+        expect(topCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBeNull();
       });
 
       it("infers parentToolCallId for subagents launched via the 'Agent' tool name", async () => {

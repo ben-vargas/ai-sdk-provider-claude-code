@@ -146,6 +146,45 @@ describe('createAiSdkMcpServer', () => {
     expect(execute).toHaveBeenCalledWith({ a: 2, b: 5 }, expect.anything());
   });
 
+  it('supports async Zod refinements via async parsing', async () => {
+    const execute = vi.fn(async () => 'ran');
+    const config = createAiSdkMcpServer('myTools', {
+      asyncRefined: {
+        inputSchema: z
+          .object({ id: z.string() })
+          .refine(async ({ id }) => id.startsWith('ok-'), { message: 'must start with ok-' }),
+        execute,
+      },
+    });
+    const [t] = getToolDefs(config);
+
+    const bad = await t!.handler({ id: 'bad' }, undefined);
+    expect(bad.isError).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+
+    const good = await t!.handler({ id: 'ok-1' }, undefined);
+    expect(good.isError).toBeUndefined();
+    expect(execute).toHaveBeenCalled();
+  });
+
+  it('drains an AsyncIterable result to its final value', async () => {
+    const config = createAiSdkMcpServer('myTools', {
+      streamy: {
+        inputSchema: z.object({}),
+        execute: async function* () {
+          yield { partial: 1 };
+          yield { partial: 2 };
+          return { final: 'done' };
+        } as never,
+      },
+    });
+    const [streamy] = getToolDefs(config);
+    const result = await streamy!.handler({}, undefined);
+    // The last YIELDED value is used (generator return is not yielded), so
+    // the final visible output is { partial: 2 } - serialized, not '{}'.
+    expect(result).toEqual({ content: [{ type: 'text', text: '{"partial":2}' }] });
+  });
+
   it('passes the parsed (transformed) value to execute', async () => {
     const execute = vi.fn(async () => 'ok');
     const config = createAiSdkMcpServer('myTools', {

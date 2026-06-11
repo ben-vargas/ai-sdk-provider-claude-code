@@ -286,6 +286,25 @@ function isSubagentToolName(name: string): boolean {
 }
 
 /**
+ * Resolve a tool's parentToolCallId. SDK 0.3 messages carry a REQUIRED
+ * `parent_tool_use_id: string | null` (string = subagent parent, null =
+ * top-level), so an explicit value — INCLUDING null — is authoritative and
+ * wins over timing inference. The single-active-Task inference is only a
+ * legacy fallback for older CLIs that omit the field (undefined). A `?? `
+ * chain would wrongly treat an explicit null as "missing" and infer a parent,
+ * nesting a top-level tool under an unrelated active Task.
+ */
+function resolveToolParentId(
+  messageLevel: string | null | undefined,
+  blockLevel: string | null | undefined,
+  inferFallback: () => string | null
+): string | null {
+  if (messageLevel !== undefined) return messageLevel;
+  if (typeof blockLevel === 'string') return blockLevel;
+  return inferFallback();
+}
+
+/**
  * SDK 0.3.x system-message subtypes that are intentionally informational.
  * The provider debug-logs and ignores them: they carry host/UI telemetry
  * with no AI SDK stream-part equivalent.
@@ -1526,10 +1545,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // The generic merge above can re-introduce a blank `sdkOptions.resume`
     // (the base resume was normalized via getEffectiveResume, but the merge
     // copies the raw value). The SDK treats a blank/whitespace resume as
-    // absent, so normalize again here so it neither suppresses sessionId below
-    // nor reaches the CLI as `--resume ''`.
+    // absent, so a blank `sdkOptions.resume` must NOT clobber the normalized
+    // fallback — restore the computed effectiveResume (already blank-stripped)
+    // rather than clearing to undefined, which would erase a real
+    // settings.resume / captured session id and start a new session.
     if (typeof opts.resume === 'string' && opts.resume.trim() === '') {
-      opts.resume = undefined;
+      opts.resume = effectiveResume;
     }
 
     // Enforce the CLI's --session-id exclusivity on the FINAL merged options.
@@ -2211,7 +2232,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           const messageUuid = typeof message.uuid === 'string' ? message.uuid : undefined;
           // Extract parent_tool_use_id from SDK message - this is the authoritative source
           // SDK provides this field when tool is executed within a subagent context
-          const sdkParentToolUseId = (message as { parent_tool_use_id?: string })
+          const sdkParentToolUseId = (message as { parent_tool_use_id?: string | null })
             .parent_tool_use_id;
           const content = message.message.content;
 
@@ -2243,7 +2264,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 // Task tools never have a parent (they're top-level)
                 const parentToolCallId = isSubagentToolName(tool.name)
                   ? null
-                  : (sdkParentToolUseId ?? tool.parentToolUseId ?? getFallbackParentId());
+                  : resolveToolParentId(sdkParentToolUseId, tool.parentToolUseId, getFallbackParentId);
                 this.logger.debug(
                   `[claude-code] Tool use detected - Tool: ${tool.name}, ID: ${tool.id}, SDK parent: ${sdkParentToolUseId}, resolved parent: ${parentToolCallId}`
                 );
@@ -2276,7 +2297,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           }
 
           // Extract parent_tool_use_id from SDK message for late-arriving tool results
-          const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string })
+          const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string | null })
             .parent_tool_use_id;
           // tool_result/tool_error frames are their own normalized SDK messages
           // with their own uuid; tag segments with it so a refusal-fallback
@@ -2315,7 +2336,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               // Use SDK parent if available, otherwise fall back to timing-based inference
               parentToolCallId = isSubagentToolName(toolName)
                 ? null
-                : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+                : resolveToolParentId(sdkParentToolUseIdForResults, undefined, getFallbackParentId);
               knownTools.set(result.id, { name: toolName, parentToolCallId });
               // Synthesize the tool-call part to preserve call/result pairing
               // when no prior tool_use block was seen (mirrors doStream).
@@ -2370,7 +2391,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               // Use SDK parent if available, otherwise fall back to timing-based inference
               parentToolCallId = isSubagentToolName(toolName)
                 ? null
-                : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+                : resolveToolParentId(sdkParentToolUseIdForResults, undefined, getFallbackParentId);
               knownTools.set(error.id, { name: toolName, parentToolCallId });
               // Ensure a tool-call part precedes the tool-error (mirrors doStream)
               contentSegments.push({
@@ -3047,7 +3068,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     .parent_tool_use_id;
                   const currentParentId = isSubagentToolName(toolName)
                     ? null
-                    : (partialParentId ?? getFallbackParentId());
+                    : resolveToolParentId(partialParentId, undefined, getFallbackParentId);
                   const envelopeUuid = (message as { uuid?: unknown }).uuid;
                   state = {
                     name: toolName,
@@ -3287,7 +3308,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
               // Extract parent_tool_use_id from SDK message - this is the authoritative source
               // SDK provides this field when tool is executed within a subagent context
-              const sdkParentToolUseId = (message as { parent_tool_use_id?: string })
+              const sdkParentToolUseId = (message as { parent_tool_use_id?: string | null })
                 .parent_tool_use_id;
 
               const content = message.message.content;
@@ -3321,7 +3342,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   // Task tools never have a parent (they're top-level)
                   const currentParentId = isSubagentToolName(tool.name)
                     ? null
-                    : (sdkParentToolUseId ?? tool.parentToolUseId ?? getFallbackParentId());
+                    : resolveToolParentId(sdkParentToolUseId, tool.parentToolUseId, getFallbackParentId);
                   state = {
                     name: tool.name,
                     inputStarted: false,
@@ -3600,7 +3621,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               emittedTextSinceLastAssistant = '';
 
               // Extract parent_tool_use_id from SDK message for late-arriving tool results
-              const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string })
+              const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string | null })
                 .parent_tool_use_id;
 
               const content = message.message.content;
@@ -3626,7 +3647,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   // Use SDK parent if available, otherwise fall back to timing-based inference
                   const resolvedParentId = isSubagentToolName(toolName)
                     ? null
-                    : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+                    : resolveToolParentId(sdkParentToolUseIdForResults, undefined, getFallbackParentId);
                   state = {
                     name: toolName,
                     inputStarted: false,
@@ -3701,7 +3722,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   // Use SDK parent if available, otherwise fall back to timing-based inference
                   const errorResolvedParentId = isSubagentToolName(toolName)
                     ? null
-                    : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+                    : resolveToolParentId(sdkParentToolUseIdForResults, undefined, getFallbackParentId);
                   state = {
                     name: toolName,
                     inputStarted: true,

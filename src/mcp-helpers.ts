@@ -292,8 +292,11 @@ export function createAiSdkMcpServer(
           // (per-field), which DROPS object-level refinements
           // (z.object({...}).refine(...) / .superRefine(...)). Re-parse with
           // the full schema so those run before the tool executes, and pass
-          // the parsed (and possibly transformed) value to execute().
-          const parsed = zodSchema.safeParse(args);
+          // the parsed (and possibly transformed) value to execute(). Use the
+          // ASYNC parser: AI SDK tools may use async refinements/transforms,
+          // which throw "Encountered Promise during synchronous parse" under
+          // the sync parser.
+          const parsed = await zodSchema.safeParseAsync(args);
           if (!parsed.success) {
             return {
               isError: true,
@@ -306,10 +309,25 @@ export function createAiSdkMcpServer(
             };
           }
           const extraInfo = (extra ?? {}) as { signal?: AbortSignal; requestId?: string | number };
-          const result: unknown = await execute.call(def, parsed.data as never, {
+          let result: unknown = await execute.call(def, parsed.data as never, {
             toolCallId: extraInfo.requestId !== undefined ? String(extraInfo.requestId) : undefined,
             abortSignal: extraInfo.signal,
           });
+          // AI SDK execute() may return an AsyncIterable that yields partial
+          // outputs and a final value (the SDK consumes it and uses the last
+          // yield). Drain it to the final value here instead of stringifying
+          // the iterator object to `{}`.
+          if (
+            result != null &&
+            typeof (result as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] ===
+              'function'
+          ) {
+            let last: unknown;
+            for await (const chunk of result as AsyncIterable<unknown>) {
+              last = chunk;
+            }
+            result = last;
+          }
           let text: string;
           if (typeof result === 'string') {
             text = result;
