@@ -658,6 +658,18 @@ describe('validateSettings', () => {
     expect(validateSettings({ continue: true, sessionStore, resume: '' }).valid).toBe(false);
     expect(validateSettings({ continue: true, sessionStore, resume: '   ' }).valid).toBe(false);
 
+    // But a blank sdkOptions.resume must NOT shadow a real settings.resume:
+    // the runtime falls back to it, so the explicit resume is present and the
+    // listSessions requirement does not apply.
+    expect(
+      validateSettings({
+        continue: true,
+        sessionStore,
+        resume: 'real-session',
+        sdkOptions: { resume: '' },
+      }).valid
+    ).toBe(true);
+
     // continue without sessionStore (and vice versa) is fine
     expect(validateSettings({ continue: true }).valid).toBe(true);
     expect(validateSettings({ sessionStore }).valid).toBe(true);

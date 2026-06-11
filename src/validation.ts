@@ -389,8 +389,16 @@ export function validateSettings(settings: unknown): {
     // The SDK treats a blank/whitespace resume id as absent (no session to
     // resume), so normalize it for the cross-option checks below.
     const effectiveResumeId = (): string | undefined => {
-      const r = effective('resume');
-      return typeof r === 'string' && !isBlankResume(r) ? r : undefined;
+      // Mirror the runtime's getEffectiveResume: pick the first NON-BLANK
+      // candidate (sdkOptions overlay, then first-class setting). Using
+      // effective('resume') alone would let a blank sdkOptions.resume shadow a
+      // real settings.resume, wrongly rejecting a config the query accepts.
+      for (const candidate of [sdkOptionsRecord?.resume, validSettings.resume]) {
+        if (typeof candidate === 'string' && !isBlankResume(candidate)) {
+          return candidate;
+        }
+      }
+      return undefined;
     };
 
     // SDK constraint: sessionStore mirroring requires local session writes,

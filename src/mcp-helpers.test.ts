@@ -119,6 +119,37 @@ describe('createAiSdkMcpServer', () => {
     expect(result).toEqual({ content: [{ type: 'text', text: '{"sum":5}' }] });
   });
 
+  it('throws at creation for non-default unknown-key modes (.strict/.passthrough/.catchall)', () => {
+    // The Agent SDK strips unknown keys before the handler, so these modes
+    // cannot be enforced through the bridge; reject them explicitly rather
+    // than silently not enforcing the declared constraint.
+    expect(() =>
+      createAiSdkMcpServer('myTools', {
+        s: { inputSchema: z.object({ a: z.number() }).strict(), execute: async () => 'ok' },
+      })
+    ).toThrow(/non-default unknown-key mode/);
+
+    expect(() =>
+      createAiSdkMcpServer('myTools', {
+        c: {
+          inputSchema: z.object({ a: z.number() }).catchall(z.string()),
+          execute: async () => 'ok',
+        },
+      })
+    ).toThrow(/non-default unknown-key mode/);
+
+    // A plain object (default strip) and an object-level refinement are fine.
+    expect(() =>
+      createAiSdkMcpServer('myTools', {
+        ok: { inputSchema: z.object({ a: z.number() }), execute: async () => 'ok' },
+        refined: {
+          inputSchema: z.object({ a: z.number(), b: z.number() }).refine(({ a, b }) => a < b),
+          execute: async () => 'ok',
+        },
+      })
+    ).not.toThrow();
+  });
+
   it('enforces object-level refinements before executing the tool', async () => {
     const execute = vi.fn(async () => 'ran');
     const config = createAiSdkMcpServer('myTools', {

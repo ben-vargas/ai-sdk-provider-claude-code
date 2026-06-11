@@ -266,6 +266,24 @@ function isZodObjectSchema(schema: unknown): schema is ZodObject<ZodRawShape> {
 }
 
 /**
+ * Detects a Zod object whose unknown-key handling is NON-default
+ * (`.strict()`, `.passthrough()`, or `.catchall()`). The Agent SDK's
+ * `tool(name, desc, shape, ...)` takes only the schema's `.shape` and
+ * re-wraps it as a DEFAULT (stripping) object, which strips unknown keys
+ * before our handler runs — so these modes cannot round-trip and a `.strict()`
+ * schema would NOT reject extra keys as declared. In Zod v4 these modes set a
+ * `catchall` on the object def; a plain object has none. Detection is
+ * conservative: if the internal shape is ever unrecognizable (e.g. a future
+ * Zod layout), it returns false rather than throwing on a valid plain schema.
+ */
+function hasNonDefaultUnknownKeyMode(schema: ZodObject<ZodRawShape>): boolean {
+  const def =
+    (schema as { _zod?: { def?: { catchall?: unknown } }; _def?: { catchall?: unknown } })._zod
+      ?.def ?? (schema as { _def?: { catchall?: unknown } })._def;
+  return def != null && def.catchall !== undefined;
+}
+
+/**
  * Bridges AI SDK tool definitions (the `ai` package's `tool()` helper) into
  * an in-process SDK MCP server that the Claude Code CLI can execute.
  *
@@ -276,6 +294,13 @@ function isZodObjectSchema(schema: unknown): schema is ZodObject<ZodRawShape> {
  * schema); the `execute` functions live in the `ai` package layer and never
  * reach providers. This helper is the explicit alternative: pass your tools
  * here and wire the result into the `mcpServers` setting.
+ *
+ * Validation: object-level `.refine()`/`.superRefine()` ARE enforced (the
+ * handler re-parses with the full schema via `safeParseAsync`). Unknown-key
+ * MODES are NOT supported — `.strict()`/`.passthrough()`/`.catchall()` throw at
+ * creation time, because the Agent SDK's `tool()` takes only the schema shape
+ * and validates against a default (stripping) object, so those modes cannot
+ * round-trip. Declare tools with a plain `z.object({...})`.
  *
  * Each tool's `execute` is called with the validated input and a minimal
  * options object ({@link AiSdkToolExecuteOptions}). String results pass
@@ -350,6 +375,16 @@ export function createAiSdkMcpServer(
     }
     // Narrowed schema (captured so the async handler closure keeps the type).
     const zodSchema: ZodObject<ZodRawShape> = def.inputSchema;
+    if (hasNonDefaultUnknownKeyMode(zodSchema)) {
+      throw new Error(
+        `createAiSdkMcpServer: tool "${toolName}" uses a non-default unknown-key mode ` +
+          "(.strict() / .passthrough() / .catchall()). The Agent SDK's tool() validates " +
+          'against a default object derived from the schema shape and STRIPS unknown keys ' +
+          'before the handler runs, so these modes cannot be enforced through the bridge. ' +
+          'Declare the tool with a plain z.object({...}) and handle extra/unknown keys inside ' +
+          'execute() (object-level .refine()/.superRefine() ARE enforced).'
+      );
+    }
     return tool(
       toolName,
       def.description ?? '',
