@@ -1941,9 +1941,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     if (options.abortSignal?.aborted) {
       // Propagate already-aborted state immediately with original reason
       abortController.abort(options.abortSignal.reason);
-    } else if (options.abortSignal) {
-      abortListener = () => abortController.abort(options.abortSignal?.reason);
-      options.abortSignal.addEventListener('abort', abortListener, { once: true });
     }
 
     // Collect stderr for error reporting (SDK may not include it in errors)
@@ -1954,6 +1951,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
     const sdkOptions = this.getSanitizedSdkOptions();
     const effectiveResume = this.getEffectiveResume(sdkOptions);
+    // createQueryOptions can throw (e.g. fallbackModel === model); attach the
+    // abort listener only AFTER it succeeds so an early throw cannot leave a
+    // listener on a long-lived caller AbortSignal.
     const queryOptions = this.createQueryOptions(
       abortController,
       options.responseFormat,
@@ -1961,6 +1961,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       sdkOptions,
       effectiveResume
     );
+    if (options.abortSignal && !options.abortSignal.aborted) {
+      abortListener = () => abortController.abort(options.abortSignal?.reason);
+      options.abortSignal.addEventListener('abort', abortListener, { once: true });
+    }
 
     let text = '';
     // Ordered, uuid-tagged content segments (text, thinking, tool parts) in
@@ -2620,9 +2624,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     if (options.abortSignal?.aborted) {
       // Propagate already-aborted state immediately with original reason
       abortController.abort(options.abortSignal.reason);
-    } else if (options.abortSignal) {
-      abortListener = () => abortController.abort(options.abortSignal?.reason);
-      options.abortSignal.addEventListener('abort', abortListener, { once: true });
     }
 
     // Collect stderr for error reporting (SDK may not include it in errors)
@@ -2633,6 +2634,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
     const sdkOptions = this.getSanitizedSdkOptions();
     const effectiveResume = this.getEffectiveResume(sdkOptions);
+    // createQueryOptions can throw (e.g. fallbackModel === model); attach the
+    // abort listener only AFTER it succeeds so an early throw cannot leave a
+    // listener on a long-lived caller AbortSignal.
     const queryOptions = this.createQueryOptions(
       abortController,
       options.responseFormat,
@@ -2640,6 +2644,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       sdkOptions,
       effectiveResume
     );
+    if (options.abortSignal && !options.abortSignal.aborted) {
+      abortListener = () => abortController.abort(options.abortSignal?.reason);
+      options.abortSignal.addEventListener('abort', abortListener, { once: true });
+    }
 
     // Enable partial messages for true streaming (token-by-token delivery)
     // This can be overridden by user settings, but we default to true for doStream
@@ -3378,16 +3386,44 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   });
                   accumulatedText = textSegments.map((segment) => segment.text).join('');
 
-                  if (emittedTextSinceLastAssistant.includes(text)) {
-                    // The replacement text itself already arrived via stream_event
+                  if (emittedTextSinceLastAssistant === text) {
+                    // The replacement text was fully streamed via stream_event
                     // deltas attributable to THIS message (the window resets when
                     // each assistant message is processed, so matches against
                     // earlier/refused output cannot false-positive here); the
-                    // retracted text was emitted and cannot be un-streamed, so
+                    // deltas were emitted and cannot be un-streamed, so
                     // re-emitting the replacement here would duplicate output.
                     streamedTextLength = Math.max(streamedTextLength, text.length);
                     this.logger.debug(
                       '[claude-code] Skipping text emission for superseding assistant message (replacement already streamed)'
+                    );
+                  } else if (
+                    emittedTextSinceLastAssistant.length > 0 &&
+                    text.startsWith(emittedTextSinceLastAssistant)
+                  ) {
+                    // A PREFIX of the replacement already streamed (e.g. deltas
+                    // emitted 'Replace' and the final message is 'Replacement
+                    // answer'). Emit only the unstreamed suffix on the SAME open
+                    // part - re-emitting the full text as a new part would
+                    // duplicate the prefix ('ReplaceReplacement answer').
+                    if (options.responseFormat?.type !== 'json') {
+                      const suffix = text.slice(emittedTextSinceLastAssistant.length);
+                      if (suffix) {
+                        if (!textPartId) {
+                          textPartId = generateId();
+                          controller.enqueue({ type: 'text-start', id: textPartId });
+                        }
+                        controller.enqueue({
+                          type: 'text-delta',
+                          id: textPartId,
+                          delta: suffix,
+                        });
+                        emittedTextSinceLastAssistant = text;
+                      }
+                    }
+                    streamedTextLength = Math.max(streamedTextLength, text.length);
+                    this.logger.debug(
+                      '[claude-code] Emitted unstreamed suffix of superseding assistant message'
                     );
                   } else if (options.responseFormat?.type !== 'json') {
                     // Without stream_events the canonical replacement was never

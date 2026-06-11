@@ -22,14 +22,12 @@
 import { generateText } from 'ai';
 import { claudeCode } from '../dist/index.js';
 
-// The provider's post-result drain gives up after 10s; wait slightly longer.
-const SUGGESTION_WAIT_MS = 12_000;
-
-function waitFor<T>(promise: Promise<T>, ms: number): Promise<T | null> {
-  return Promise.race([
-    promise,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
-  ]);
+// generateText() already awaits the provider's bounded post-result drain (10s)
+// when onPromptSuggestion is set, so by the time it resolves the callback has
+// either fired or never will. This just settles the resolved-or-not promise
+// without waiting a second full window.
+function settled<T>(promise: Promise<T>): Promise<T | null> {
+  return Promise.race([promise, Promise.resolve(null)]);
 }
 
 async function suggestionsEnabled(): Promise<{
@@ -76,7 +74,7 @@ async function suggestionsEnabled(): Promise<{
   // This console ordering is the documented post-finish delivery in action.
   console.log('Answer (finished first):', result.text.trim());
 
-  const suggestion = await waitFor(suggestionPromise, SUGGESTION_WAIT_MS);
+  const suggestion = await settled(suggestionPromise);
   if (suggestion) {
     console.log('Suggested next prompt (arrived after finish):', suggestion);
   } else {
@@ -154,7 +152,11 @@ async function main() {
     console.log('1. Install Claude Code: https://docs.anthropic.com/en/docs/claude-code/overview');
     console.log('2. Authenticate: claude auth login');
     console.log('3. Run check-cli.ts to verify setup');
+    process.exitCode = 1;
   }
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

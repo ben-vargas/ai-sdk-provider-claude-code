@@ -76,7 +76,11 @@ async function main() {
   // of time. We wall-clock it separately to show where the cost moved.
   console.log('\n2️⃣  Warm path (startup() handshake, then warm.query())...');
   const handshakeStart = performance.now();
-  const warm = await startup({ options: { model: 'haiku' } });
+  // Pin settingSources: [] so the warm path uses the SAME isolation as
+  // claudeCode() (which pins it by default). Without this, SDK 0.3.x would
+  // load filesystem settings/hooks/MCP only on the warm run, skewing the
+  // timing comparison.
+  const warm = await startup({ options: { model: 'haiku', settingSources: [] } });
   const handshakeMs = performance.now() - handshakeStart;
   console.log(`startup() handshake took ${Math.round(handshakeMs)}ms (paid ahead of time)`);
 

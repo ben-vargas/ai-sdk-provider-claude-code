@@ -1133,6 +1133,44 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.forkSession).toBe(false);
     });
 
+    it('does not leak the abort listener when createQueryOptions throws (doGenerate + doStream)', async () => {
+      // The fallbackModel===model check throws inside createQueryOptions, before
+      // the listener-removing finally. The listener must never be attached in
+      // that case, so a long-lived caller AbortSignal is not retained.
+      const signal = new AbortController().signal;
+      const addSpy = vi.spyOn(signal, 'addEventListener');
+
+      const badModel = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { fallbackModel: 'sonnet' } as any,
+      });
+
+      await expect(
+        badModel.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+          abortSignal: signal,
+        } as any)
+      ).rejects.toThrow(/fallbackModel cannot be the same as the model/);
+
+      // doStream throws synchronously from createQueryOptions inside start();
+      // surface it by reading the stream.
+      await expect(
+        (async () => {
+          const { stream } = await badModel.doStream({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+            abortSignal: signal,
+          } as any);
+          const reader = stream.getReader();
+          while (true) {
+            const { done } = await reader.read();
+            if (done) break;
+          }
+        })()
+      ).rejects.toThrow(/fallbackModel cannot be the same as the model/);
+
+      expect(addSpy).not.toHaveBeenCalledWith('abort', expect.anything(), expect.anything());
+    });
+
     it('should reject fallbackModel equal to the main model before invoking the SDK', async () => {
       const modelWithSameFallback = new ClaudeCodeLanguageModel({
         id: 'sonnet',
@@ -6753,6 +6791,67 @@ describe('ClaudeCodeLanguageModel', () => {
         'The answer is 4.',
       ]);
       expect(textDeltas[0].id).not.toBe(textDeltas[1].id);
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
+    it('emits only the unstreamed suffix when a prefix of the replacement already streamed', async () => {
+      // A stream_event delta emits a PREFIX of the replacement ('Replace'),
+      // then the superseding assistant message carries the full text
+      // ('Replacement answer'). Emitting the full text again would duplicate
+      // the prefix ('ReplaceReplacement answer'); only the suffix should ship.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          // Partial replacement streamed as a delta (a prefix of the full text).
+          yield {
+            type: 'stream_event',
+            uuid: 'uuid-replacement',
+            event: {
+              type: 'content_block_delta',
+              index: 1,
+              delta: { type: 'text_delta', text: 'Replace' },
+            },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'partial-suffix-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // The refused text streamed live and cannot be un-streamed, but the
+      // REPLACEMENT must not duplicate its already-streamed prefix: the deltas
+      // after the prefix must be the suffix ('ment answer'), so the joined
+      // stream contains 'Replacement answer' once and never 'ReplaceReplacement'.
+      const deltas = chunks.filter((c) => c.type === 'text-delta').map((c) => c.delta);
+      const streamed = deltas.join('');
+      expect(streamed).not.toContain('ReplaceReplacement');
+      expect(streamed.endsWith('Replacement answer')).toBe(true);
+      expect(deltas).toContain('ment answer');
       expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
     });
 
