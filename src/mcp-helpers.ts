@@ -265,7 +265,6 @@ function isZodObjectSchema(schema: unknown): schema is ZodObject<ZodRawShape> {
   return typeof candidate.shape === 'object' && candidate.shape !== null;
 }
 
-
 /**
  * Bridges AI SDK tool definitions (the `ai` package's `tool()` helper) into
  * an in-process SDK MCP server that the Claude Code CLI can execute.
