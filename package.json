@@ -1,6 +1,6 @@
 {
   "name": "ai-sdk-provider-claude-code",
-  "version": "3.4.4",
+  "version": "3.5.0",
   "description": "AI SDK v6 provider for Claude via Claude Agent SDK (use Pro/Max subscription)",
   "keywords": [
     "ai-sdk",
@@ -64,6 +64,13 @@
     "example:object": "npm run build && npx tsx examples/generate-object.ts",
     "example:object:constraints": "npm run build && npx tsx examples/generate-object-constraints.ts",
     "example:tools": "npm run build && npx tsx examples/tool-management.ts",
+    "example:ai-sdk-tools": "npm run build && npx tsx examples/ai-sdk-tools.ts",
+    "example:sessions": "npm run build && npx tsx examples/session-management.ts",
+    "example:hooks-permissions": "npm run build && npx tsx examples/hooks-permission-denied.ts",
+    "example:warm-start": "npm run build && npx tsx examples/warm-start.ts",
+    "example:context-usage": "npm run build && npx tsx examples/context-usage.ts",
+    "example:prompt-suggestions": "npm run build && npx tsx examples/prompt-suggestions.ts",
+    "example:skills-option": "npm run build && npx tsx examples/skills-option.ts",
     "example:mcp:filesystem": "npm run build && npx tsx examples/mcp-filesystem.ts",
     "example:mcp:exa": "npm run build && npx tsx examples/mcp-exa.ts",
     "example:timeout": "npm run build && npx tsx examples/long-running-tasks.ts",
@@ -74,7 +81,7 @@
   "dependencies": {
     "@ai-sdk/provider": "^3.0.0",
     "@ai-sdk/provider-utils": "^4.0.1",
-    "@anthropic-ai/claude-agent-sdk": "^0.2.63"
+    "@anthropic-ai/claude-agent-sdk": "^0.3.170"
   },
   "devDependencies": {
     "@edge-runtime/vm": "5.0.0",

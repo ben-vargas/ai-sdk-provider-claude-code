@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
 import { getErrorMetadata, isAuthenticationError } from './errors.js';
 import type { Logger } from './types.js';
-import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
+import { APICallError, type LanguageModelV3StreamPart } from '@ai-sdk/provider';
 
 // Extend stream part union locally to include provider-specific 'tool-error'
 type ToolErrorPart = {
@@ -315,7 +316,7 @@ describe('ClaudeCodeLanguageModel', () => {
       }
     });
 
-    it('should omit env in SDK options when settings.env is undefined', async () => {
+    it('should always pass an allowlisted env to SDK options when settings.env is undefined', async () => {
       const modelNoEnv = new ClaudeCodeLanguageModel({
         id: 'sonnet',
         settings: {},
@@ -340,7 +341,230 @@ describe('ClaudeCodeLanguageModel', () => {
       const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
       expect(call).toBeDefined();
       expect(call.options).toBeDefined();
-      expect(call.options.env).toBeUndefined();
+      // SDK 0.3.x replaces the subprocess env entirely, so the provider always
+      // constructs the env from the sanitizing allowlist.
+      expect(call.options.env).toBeDefined();
+      if (process.env.PATH !== undefined) {
+        expect(call.options.env.PATH).toBe(process.env.PATH);
+      }
+    });
+
+    it('should inherit prefix-matched env vars (ANTHROPIC_/CLAUDE_/AWS_/GOOGLE_) and exact network vars', async () => {
+      const testKeys = [
+        'ANTHROPIC_TEST_X',
+        'CLAUDE_TEST_X',
+        'AWS_TEST_X',
+        'GOOGLE_TEST_X',
+        'HTTPS_PROXY',
+        'NO_PROXY',
+        'NODE_EXTRA_CA_CERTS',
+        'GCLOUD_PROJECT',
+        'CLOUD_ML_REGION',
+        'NOT_ALLOWLISTED_TEST_X',
+      ] as const;
+      const original: Record<string, string | undefined> = {};
+      for (const key of testKeys) original[key] = process.env[key];
+      try {
+        for (const key of testKeys) process.env[key] = `value-${key}`;
+
+        const modelNoEnv = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: {},
+        });
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 's-prefix-env',
+              usage: { input_tokens: 0, output_tokens: 0 },
+            };
+          },
+        };
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        await modelNoEnv.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+
+        const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        const env = call.options.env;
+        expect(env).toBeDefined();
+        // Prefix-matched inheritance
+        expect(env.ANTHROPIC_TEST_X).toBe('value-ANTHROPIC_TEST_X');
+        expect(env.CLAUDE_TEST_X).toBe('value-CLAUDE_TEST_X');
+        expect(env.AWS_TEST_X).toBe('value-AWS_TEST_X');
+        expect(env.GOOGLE_TEST_X).toBe('value-GOOGLE_TEST_X');
+        // Exact-key network/cloud allowlist
+        expect(env.HTTPS_PROXY).toBe('value-HTTPS_PROXY');
+        expect(env.NO_PROXY).toBe('value-NO_PROXY');
+        expect(env.NODE_EXTRA_CA_CERTS).toBe('value-NODE_EXTRA_CA_CERTS');
+        expect(env.GCLOUD_PROJECT).toBe('value-GCLOUD_PROJECT');
+        expect(env.CLOUD_ML_REGION).toBe('value-CLOUD_ML_REGION');
+        // Non-allowlisted vars are not inherited
+        expect('NOT_ALLOWLISTED_TEST_X' in env).toBe(false);
+      } finally {
+        for (const key of testKeys) {
+          if (original[key] === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = original[key];
+          }
+        }
+      }
+    });
+
+    it('should default CLAUDE_AGENT_SDK_CLIENT_APP and allow overrides', async () => {
+      const originalClientApp = process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
+      try {
+        delete process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
+
+        const mockResponse = () => ({
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 's-client-app',
+              usage: { input_tokens: 0, output_tokens: 0 },
+            };
+          },
+        });
+
+        // Default applied when not set anywhere
+        const modelDefault = new ClaudeCodeLanguageModel({ id: 'sonnet', settings: {} });
+        vi.mocked(mockQuery).mockReturnValue(mockResponse() as any);
+        await modelDefault.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+        let call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        // Sync check: the hardcoded PROVIDER_VERSION constant must match
+        // package.json so the telemetry identifier never reports a stale version.
+        const pkgVersion = JSON.parse(
+          readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+        ).version as string;
+        expect(call.options.env.CLAUDE_AGENT_SDK_CLIENT_APP).toBe(
+          `ai-sdk-provider-claude-code/${pkgVersion}`
+        );
+
+        // settings.env override wins
+        vi.mocked(mockQuery).mockClear();
+        const modelSettingsEnv = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: { env: { CLAUDE_AGENT_SDK_CLIENT_APP: 'my-app/1.0.0' } } as any,
+        });
+        vi.mocked(mockQuery).mockReturnValue(mockResponse() as any);
+        await modelSettingsEnv.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+        call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        expect(call.options.env.CLAUDE_AGENT_SDK_CLIENT_APP).toBe('my-app/1.0.0');
+
+        // process.env value is inherited (CLAUDE_ prefix) and not overwritten
+        vi.mocked(mockQuery).mockClear();
+        process.env.CLAUDE_AGENT_SDK_CLIENT_APP = 'from-process/2.0.0';
+        const modelProcessEnv = new ClaudeCodeLanguageModel({ id: 'sonnet', settings: {} });
+        vi.mocked(mockQuery).mockReturnValue(mockResponse() as any);
+        await modelProcessEnv.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+        call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        expect(call.options.env.CLAUDE_AGENT_SDK_CLIENT_APP).toBe('from-process/2.0.0');
+      } finally {
+        if (originalClientApp === undefined) {
+          delete process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
+        } else {
+          process.env.CLAUDE_AGENT_SDK_CLIENT_APP = originalClientApp;
+        }
+      }
+    });
+
+    it('should pass settingSources: [] to the SDK when unset (isolation mode)', async () => {
+      const modelDefault = new ClaudeCodeLanguageModel({ id: 'sonnet', settings: {} });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-sources-default',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelDefault.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call.options.settingSources).toEqual([]);
+    });
+
+    it('should pass user-provided settingSources through and allow sdkOptions override', async () => {
+      const mockResponse = () => ({
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-sources-user',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      });
+
+      const modelWithSources = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { settingSources: ['user', 'project'] },
+      });
+      vi.mocked(mockQuery).mockReturnValue(mockResponse() as any);
+      await modelWithSources.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+      let call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call.options.settingSources).toEqual(['user', 'project']);
+
+      // sdkOptions escape hatch overrides the pinned default
+      vi.mocked(mockQuery).mockClear();
+      const modelWithSdkOverride = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { sdkOptions: { settingSources: ['local'] } } as any,
+      });
+      vi.mocked(mockQuery).mockReturnValue(mockResponse() as any);
+      await modelWithSdkOverride.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+      call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call.options.settingSources).toEqual(['local']);
+    });
+
+    it('should keep the pinned settingSources: [] when sdkOptions has an explicit undefined', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-sources-undefined',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+
+      // Conditionally-built sdkOptions can carry undefined-valued own properties;
+      // those must not clobber the isolation default (SDK 0.3.x treats an
+      // undefined settingSources as "load ALL filesystem settings").
+      const modelWithUndefinedOverride = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { sdkOptions: { settingSources: undefined } } as any,
+      });
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+      await modelWithUndefinedOverride.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call.options.settingSources).toEqual([]);
     });
 
     it('should pass through Agent SDK options and allow sdkOptions overrides', async () => {
@@ -418,6 +642,264 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.persistSession).toBe(false);
     });
 
+    it('should pass through new SDK 0.3.x options', async () => {
+      const modelWithNewOptions = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          skills: ['pdf', 'docx'],
+          settings: { permissions: { allow: ['Bash(ls:*)'] } },
+          managedSettings: { sandbox: { network: { allowManagedDomainsOnly: true } } },
+          toolAliases: { Bash: 'mcp__workspace__bash' },
+          toolConfig: { askUserQuestion: { previewFormat: 'html' } },
+          planModeInstructions: 'Research only; produce a migration plan.',
+          title: 'My custom session',
+          forwardSubagentText: true,
+          agentProgressSummaries: true,
+          includeHookEvents: true,
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-new-options',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithNewOptions.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.skills).toEqual(['pdf', 'docx']);
+      expect(call?.options?.settings).toEqual({ permissions: { allow: ['Bash(ls:*)'] } });
+      expect(call?.options?.managedSettings).toEqual({
+        sandbox: { network: { allowManagedDomainsOnly: true } },
+      });
+      expect(call?.options?.toolAliases).toEqual({ Bash: 'mcp__workspace__bash' });
+      expect(call?.options?.toolConfig).toEqual({ askUserQuestion: { previewFormat: 'html' } });
+      expect(call?.options?.planModeInstructions).toBe('Research only; produce a migration plan.');
+      expect(call?.options?.title).toBe('My custom session');
+      expect(call?.options?.forwardSubagentText).toBe(true);
+      expect(call?.options?.agentProgressSummaries).toBe(true);
+      expect(call?.options?.includeHookEvents).toBe(true);
+    });
+
+    it('should pass through onUserDialog and supportedDialogKinds', async () => {
+      const onUserDialog = vi.fn(async () => ({ behavior: 'cancelled' as const }));
+      const modelWithDialogs = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          onUserDialog,
+          supportedDialogKinds: ['refusal_fallback_prompt'],
+        },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-dialogs',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithDialogs.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.onUserDialog).toBe(onUserDialog);
+      expect(call?.options?.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
+    });
+
+    it('should omit onUserDialog and supportedDialogKinds when unset', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-no-dialogs',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect('onUserDialog' in call.options).toBe(false);
+      expect('supportedDialogKinds' in call.options).toBe(false);
+    });
+
+    it("should pass through skills: 'all'", async () => {
+      const modelWithSkills = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { skills: 'all' } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-skills-all',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithSkills.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.skills).toBe('all');
+    });
+
+    it("should accept effort 'xhigh' and pass it through", async () => {
+      const modelWithEffort = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { effort: 'xhigh' },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-effort',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithEffort.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.effort).toBe('xhigh');
+    });
+
+    it('should pass through systemPrompt as an array of blocks', async () => {
+      const systemPrompt = [
+        'Static instructions.',
+        '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__',
+        'Session-specific context.',
+      ];
+      const modelWithArrayPrompt = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { systemPrompt } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-sysprompt-array',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithArrayPrompt.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.systemPrompt).toEqual(systemPrompt);
+    });
+
+    it('should pass through systemPrompt preset with excludeDynamicSections', async () => {
+      const modelWithPreset = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          systemPrompt: {
+            type: 'preset',
+            preset: 'claude_code',
+            excludeDynamicSections: true,
+          },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-sysprompt-preset',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithPreset.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.systemPrompt).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+        excludeDynamicSections: true,
+      });
+    });
+
+    it('should pass through alpha options (taskBudget, sessionStore, sessionStoreFlush, loadTimeoutMs)', async () => {
+      const sessionStore = {
+        append: async () => undefined,
+        load: async () => null,
+      };
+      const modelWithAlphaOptions = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          taskBudget: { total: 50000 },
+          sessionStore,
+          sessionStoreFlush: 'eager',
+          loadTimeoutMs: 30000,
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-alpha',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithAlphaOptions.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.taskBudget).toEqual({ total: 50000 });
+      expect(call?.options?.sessionStore).toBe(sessionStore);
+      expect(call?.options?.sessionStoreFlush).toBe('eager');
+      expect(call?.options?.loadTimeoutMs).toBe(30000);
+    });
+
     it('should pass through sessionId option', async () => {
       const modelWithSessionId = new ClaudeCodeLanguageModel({
         id: 'sonnet',
@@ -444,6 +926,457 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
       expect(call?.options?.sessionId).toBe('custom-session-123');
+    });
+
+    it('should stop forwarding sessionId once a resume target exists (CLI rejects --session-id with --resume)', async () => {
+      const customSessionId = '4ed1ad15-2d5e-4e0c-92cb-e4ae42049fb6';
+      const modelWithSessionId = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sessionId: customSessionId,
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: customSessionId,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const doGenerateOptions = {
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any;
+
+      // Turn 1: no resume target yet, sessionId is forwarded.
+      await modelWithSessionId.doGenerate(doGenerateOptions);
+      const firstCall = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(firstCall?.options?.sessionId).toBe(customSessionId);
+      expect(firstCall?.options?.resume).toBeUndefined();
+
+      // Turn 2: the provider auto-resumes via the captured session ID (which
+      // already IS the custom ID); forwarding sessionId again would send the
+      // CLI-forbidden --resume + --session-id combination.
+      await modelWithSessionId.doGenerate(doGenerateOptions);
+      const secondCall = vi.mocked(mockQuery).mock.calls[1]?.[0] as any;
+      expect(secondCall?.options?.resume).toBe(customSessionId);
+      expect(secondCall?.options?.sessionId).toBeUndefined();
+    });
+
+    it('should keep forwarding sessionId alongside resume when forkSession is set', async () => {
+      const forkId = '9bd1ad15-2d5e-4e0c-92cb-e4ae42049fb7';
+      const modelWithFork = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sessionId: forkId,
+          resume: 'original-session',
+          forkSession: true,
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: forkId,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithFork.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.resume).toBe('original-session');
+      expect(call?.options?.sessionId).toBe(forkId);
+      expect(call?.options?.forkSession).toBe(true);
+    });
+
+    it('should honor forkSession from the sdkOptions escape hatch when forwarding sessionId', async () => {
+      const forkId = '4f3a2b1c-8d7e-4f6a-9b0c-1d2e3f4a5b6c';
+      const modelWithSdkFork = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sessionId: forkId,
+          resume: 'original-session',
+          sdkOptions: { forkSession: true },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: forkId,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithSdkFork.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.resume).toBe('original-session');
+      expect(call?.options?.sessionId).toBe(forkId);
+      expect(call?.options?.forkSession).toBe(true);
+    });
+
+    it('drops sdkOptions.sessionId on the auto-resumed turn (resume re-added it)', async () => {
+      // sdkOptions: { sessionId } works on turn one, but on turn two the
+      // provider auto-resumes (this.sessionId -> opts.resume) AND the generic
+      // sdkOptions merge re-adds sessionId. The CLI rejects --session-id with
+      // --resume unless --fork-session; the merged-option enforcement must
+      // suppress the sdkOptions.sessionId here.
+      const sid = '7a3b9c2d-1e4f-4a6b-8c0d-2e3f4a5b6c7d';
+      const modelWithSdkSessionId = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          // simulate the auto-resume second turn directly via resume:
+          resume: 'prior-session',
+          sdkOptions: { sessionId: sid },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'prior-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithSdkSessionId.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.resume).toBe('prior-session');
+      // sessionId suppressed: --session-id + --resume without --fork-session is rejected.
+      expect(call?.options?.sessionId).toBeUndefined();
+    });
+
+    it('keeps sdkOptions.sessionId when forkSession is also set via sdkOptions', async () => {
+      const sid = '8b4c0d3e-2f5a-4b7c-9d1e-3f4a5b6c7d8e';
+      const modelWithBoth = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          resume: 'prior-session',
+          sdkOptions: { sessionId: sid, forkSession: true },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: sid,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithBoth.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.sessionId).toBe(sid);
+      expect(call?.options?.forkSession).toBe(true);
+    });
+
+    it('does not let a blank sdkOptions.resume erase the settings.resume fallback', async () => {
+      const modelBlankSdkResume = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          resume: 'real-session',
+          sdkOptions: { resume: '   ' },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'real-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelBlankSdkResume.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      // Blank sdkOptions.resume is ignored; the real settings.resume survives.
+      expect(call?.options?.resume).toBe('real-session');
+    });
+
+    it('forwards sessionId when resume is a blank string (treated as absent)', async () => {
+      // { sessionId, resume: '' } previously suppressed sessionId (resume was
+      // still '' when the guard ran) then cleared resume -> a random new
+      // session instead of the requested deterministic ID. A blank resume is
+      // now normalized to absent BEFORE the guard, so sessionId is forwarded.
+      const sid = '9c5d1e4f-3a6b-4c8d-0e2f-4a5b6c7d8e9f';
+      const modelBlankResume = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { sessionId: sid, resume: '   ' } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: sid,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelBlankResume.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      // Blank resume is dropped (not passed as --resume ''), and sessionId is
+      // forwarded as the deterministic ID.
+      expect(call?.options?.resume).toBeUndefined();
+      expect(call?.options?.sessionId).toBe(sid);
+    });
+
+    it('does not drain for prompt suggestions when promptSuggestions is explicitly false', async () => {
+      const onPromptSuggestion = vi.fn();
+      const modelNoDrain = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion, promptSuggestions: false } as any,
+      });
+
+      let iteratedAfterResult = false;
+      const mockResponse = (async function* () {
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'no-drain-session',
+          usage: { input_tokens: 0, output_tokens: 0 },
+        };
+        // If the drain ran, the loop would pull this next value.
+        iteratedAfterResult = true;
+        yield {
+          type: 'prompt_suggestion',
+          suggestion: 'should not be consumed',
+          session_id: 'no-drain-session',
+        };
+      })();
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelNoDrain.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      // promptSuggestions:false => no drain => generator not advanced past result,
+      // callback never fires.
+      expect(iteratedAfterResult).toBe(false);
+      expect(onPromptSuggestion).not.toHaveBeenCalled();
+    });
+
+    it('should drop sessionId when continue arrives via the sdkOptions escape hatch without forkSession', async () => {
+      const modelWithSdkContinue = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sessionId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+          sdkOptions: { continue: true },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'continued-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithSdkContinue.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      // --session-id --continue is an invalid CLI invocation without
+      // --fork-session; sessionId must be suppressed.
+      expect(call?.options?.continue).toBe(true);
+      expect(call?.options?.sessionId).toBeUndefined();
+    });
+
+    it('should forward sessionId with sdkOptions.continue when forkSession is also set', async () => {
+      const forkId = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+      const modelWithContinueFork = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sessionId: forkId,
+          sdkOptions: { continue: true, forkSession: true },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: forkId,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithContinueFork.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.continue).toBe(true);
+      expect(call?.options?.forkSession).toBe(true);
+      expect(call?.options?.sessionId).toBe(forkId);
+    });
+
+    it('should let sdkOptions.forkSession: false override settings.forkSession for the sessionId decision', async () => {
+      const modelWithForkDisabled = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          sessionId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+          resume: 'original-session',
+          forkSession: true,
+          sdkOptions: { forkSession: false },
+        } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'original-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithForkDisabled.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.resume).toBe('original-session');
+      // Fork disabled via escape hatch -> sessionId must be dropped to avoid
+      // the CLI's --session-id/--resume conflict.
+      expect(call?.options?.sessionId).toBeUndefined();
+      expect(call?.options?.forkSession).toBe(false);
+    });
+
+    it('does not leak the abort listener when createQueryOptions throws (doGenerate + doStream)', async () => {
+      // The fallbackModel===model check throws inside createQueryOptions, before
+      // the listener-removing finally. The listener must never be attached in
+      // that case, so a long-lived caller AbortSignal is not retained.
+      const signal = new AbortController().signal;
+      const addSpy = vi.spyOn(signal, 'addEventListener');
+
+      const badModel = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { fallbackModel: 'sonnet' } as any,
+      });
+
+      await expect(
+        badModel.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+          abortSignal: signal,
+        } as any)
+      ).rejects.toThrow(/fallbackModel cannot be the same as the model/);
+
+      // doStream throws synchronously from createQueryOptions inside start();
+      // surface it by reading the stream.
+      await expect(
+        (async () => {
+          const { stream } = await badModel.doStream({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+            abortSignal: signal,
+          } as any);
+          const reader = stream.getReader();
+          while (true) {
+            const { done } = await reader.read();
+            if (done) break;
+          }
+        })()
+      ).rejects.toThrow(/fallbackModel cannot be the same as the model/);
+
+      expect(addSpy).not.toHaveBeenCalledWith('abort', expect.anything(), expect.anything());
+    });
+
+    it('should reject fallbackModel equal to the main model before invoking the SDK', async () => {
+      const modelWithSameFallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          fallbackModel: 'sonnet',
+        } as any,
+      });
+
+      await expect(
+        modelWithSameFallback.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any)
+      ).rejects.toThrow(/fallbackModel cannot be the same as the model/);
+      expect(vi.mocked(mockQuery)).not.toHaveBeenCalled();
+
+      // A different fallbackModel passes through untouched.
+      const modelWithFallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          fallbackModel: 'haiku',
+        } as any,
+      });
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-fallback',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+      await modelWithFallback.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(call?.options?.fallbackModel).toBe('haiku');
     });
 
     it('should pass through debug and debugFile options', async () => {
@@ -976,6 +1909,188 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(isAuthenticationError(thrownError)).toBe(true);
     });
 
+    it('should detect oauth_org_not_allowed pattern as authentication error', async () => {
+      vi.mocked(mockQuery).mockImplementation(() => {
+        throw new Error('Request failed: oauth_org_not_allowed');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeDefined();
+      expect(isAuthenticationError(thrownError)).toBe(true);
+    });
+
+    it('should map overloaded errors to a retryable APICallError', async () => {
+      vi.mocked(mockQuery).mockImplementation(() => {
+        throw new Error('API error: overloaded');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(true);
+      expect((thrownError as APICallError).message).toContain('overloaded');
+    });
+
+    it('should map model_not_found errors to a non-retryable APICallError', async () => {
+      vi.mocked(mockQuery).mockImplementation(() => {
+        throw new Error('API error: model_not_found');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(false);
+      expect((thrownError as APICallError).message).toContain('model was not found');
+    });
+
+    it("should map 'no such model' errors to a non-retryable APICallError", async () => {
+      vi.mocked(mockQuery).mockImplementation(() => {
+        throw new Error('No such model: claude-nonexistent');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(false);
+      expect((thrownError as APICallError).message).toContain('model was not found');
+    });
+
+    // SDK 0.3.x delivers error kinds structurally: SDKAssistantMessage.error
+    // carries the kind, and SDKResultError has `errors: string[]` (no `result`
+    // field). These tests exercise that delivery path end to end.
+    const structuredErrorResponse = (kind: string, errors: string[]) => ({
+      async *[Symbol.asyncIterator]() {
+        yield {
+          type: 'assistant',
+          error: kind,
+          message: { type: 'message', role: 'assistant', content: [] },
+          session_id: 'structured-error-session',
+        };
+        yield {
+          type: 'result',
+          subtype: 'error_during_execution',
+          is_error: true,
+          errors,
+          session_id: 'structured-error-session',
+          total_cost_usd: 0,
+          duration_ms: 10,
+          usage: { input_tokens: 0, output_tokens: 0 },
+        };
+      },
+    });
+
+    it('should classify structured overloaded result errors as retryable', async () => {
+      vi.mocked(mockQuery).mockReturnValue(
+        structuredErrorResponse('overloaded', ['API request failed']) as any
+      );
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(true);
+      // SDKResultError detail comes from errors[], not the missing result field
+      expect((thrownError as APICallError).message).toContain('API request failed');
+    });
+
+    it('should classify structured model_not_found result errors as non-retryable', async () => {
+      vi.mocked(mockQuery).mockReturnValue(
+        structuredErrorResponse('model_not_found', ['Request failed with status 404']) as any
+      );
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(false);
+      expect((thrownError as APICallError).message).toContain('model was not found');
+    });
+
+    it('should classify structured oauth_org_not_allowed result errors as authentication errors', async () => {
+      vi.mocked(mockQuery).mockReturnValue(
+        structuredErrorResponse('oauth_org_not_allowed', ['Request failed with status 403']) as any
+      );
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeDefined();
+      expect(isAuthenticationError(thrownError)).toBe(true);
+    });
+
+    it('should emit a retryable error chunk for structured overloaded errors in streaming', async () => {
+      vi.mocked(mockQuery).mockReturnValue(
+        structuredErrorResponse('overloaded', ['API request failed']) as any
+      );
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: ExtendedStreamPart[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const errorChunk = chunks.find((chunk) => chunk.type === 'error') as
+        | { type: 'error'; error: unknown }
+        | undefined;
+      expect(errorChunk).toBeDefined();
+      expect(errorChunk!.error).toBeInstanceOf(APICallError);
+      expect((errorChunk!.error as APICallError).isRetryable).toBe(true);
+      expect((errorChunk!.error as APICallError).message).toContain('API request failed');
+    });
+
     it('should throw error when result message has is_error flag', async () => {
       // This simulates the actual CLI response when unauthenticated
       const mockResponse = {
@@ -1307,6 +2422,816 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(result.content).toHaveLength(1);
       expect(result.content[0]).toEqual({ type: 'text', text: 'Just text, no thinking.' });
       expect(result.providerMetadata?.['claude-code']?.thinkingTraces).toBeUndefined();
+    });
+
+    describe('provider-executed tool content parts', () => {
+      it('emits ordered tool-call and tool-result content parts interleaved with text', async () => {
+        const toolUseId = 'toolu_gen_calc';
+        const toolName = 'mcp__myTools__calculator';
+        const toolInput = { operation: 'multiply', a: 12, b: 34 };
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  { type: 'text', text: 'Let me calculate that. ' },
+                  { type: 'tool_use', id: toolUseId, name: toolName, input: toolInput },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: toolUseId,
+                    name: toolName,
+                    content: '{"result":408}',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text: 'The answer is 408.' }] },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-tool-session',
+              usage: { input_tokens: 5, output_tokens: 3 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Multiply 12 by 34' }] }],
+        } as any);
+
+        expect(result.content.map((part: any) => part.type)).toEqual([
+          'text',
+          'tool-call',
+          'tool-result',
+          'text',
+        ]);
+        expect(result.content[0]).toEqual({ type: 'text', text: 'Let me calculate that. ' });
+        expect(result.content[1]).toEqual({
+          type: 'tool-call',
+          toolCallId: toolUseId,
+          toolName,
+          input: JSON.stringify(toolInput),
+          providerExecuted: true,
+          dynamic: true,
+          providerMetadata: {
+            'claude-code': {
+              rawInput: JSON.stringify(toolInput),
+              parentToolCallId: null,
+            },
+          },
+        });
+        expect(result.content[2]).toEqual({
+          type: 'tool-result',
+          toolCallId: toolUseId,
+          toolName,
+          // JSON string results are normalized to objects (matches doStream)
+          result: { result: 408 },
+          isError: false,
+          providerExecuted: true,
+          dynamic: true,
+          providerMetadata: {
+            'claude-code': {
+              rawResult: '{"result":408}',
+              rawResultTruncated: false,
+              parentToolCallId: null,
+            },
+          },
+        });
+        expect(result.content[3]).toEqual({ type: 'text', text: 'The answer is 408.' });
+        expect(result.finishReason.unified).toBe('stop');
+      });
+
+      it('truncates long tool results in doGenerate content at maxToolResultSize', async () => {
+        const maxToolResultSize = 100;
+        const modelWithLimit = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: { maxToolResultSize },
+        });
+        const toolUseId = 'toolu_gen_truncate';
+        const toolName = 'Read';
+        const longText = 'x'.repeat(maxToolResultSize + 15);
+        const truncatedText = `${longText.slice(0, maxToolResultSize)}\n...[truncated ${
+          longText.length - maxToolResultSize
+        } chars]`;
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: toolUseId,
+                    name: toolName,
+                    input: { file_path: '/tmp/example.txt' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: toolUseId,
+                    name: toolName,
+                    content: longText,
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-tool-truncate-session',
+              usage: { input_tokens: 4, output_tokens: 2 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await modelWithLimit.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read file' }] }],
+        } as any);
+
+        const toolResult = result.content.find((part: any) => part.type === 'tool-result') as any;
+        expect(toolResult).toBeDefined();
+        expect(toolResult.result).toBe(truncatedText);
+        expect(toolResult.providerMetadata?.['claude-code']).toEqual({
+          rawResult: truncatedText,
+          rawResultTruncated: true,
+          parentToolCallId: null,
+        });
+      });
+
+      it('maps tool_error blocks to isError tool-result content parts (V3 union member, survives asContent)', async () => {
+        const toolUseId = 'toolu_gen_error';
+        const toolName = 'Read';
+        const errorMessage = 'File not found: /nonexistent.txt';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: toolUseId,
+                    name: toolName,
+                    input: { file_path: '/nonexistent.txt' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_error',
+                    tool_use_id: toolUseId,
+                    name: toolName,
+                    error: errorMessage,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-tool-error-session',
+              usage: { input_tokens: 10, output_tokens: 0 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read missing file' }] }],
+        } as any);
+
+        // The V3 content union has no 'tool-error' member and AI SDK core's
+        // asContent() silently drops unknown content part types, so doGenerate
+        // maps tool_error blocks to tool-result parts with isError: true —
+        // asContent converts those into proper tool-error content parts.
+        const partTypes = result.content.map((part: any) => part.type);
+        expect(partTypes).not.toContain('tool-error');
+        expect(partTypes.indexOf('tool-result')).toBeGreaterThan(partTypes.indexOf('tool-call'));
+        const toolError = result.content.find((part: any) => part.type === 'tool-result') as any;
+        expect(toolError).toEqual({
+          type: 'tool-result',
+          toolCallId: toolUseId,
+          toolName,
+          result: errorMessage,
+          isError: true,
+          providerExecuted: true,
+          dynamic: true,
+          providerMetadata: {
+            'claude-code': {
+              rawError: errorMessage,
+              parentToolCallId: null,
+            },
+          },
+        });
+      });
+
+      it('emits result: "" for tool_result blocks with no content field (NonNullable contract)', async () => {
+        const noContentToolId = 'toolu_gen_nocontent';
+        const nullStringToolId = 'toolu_gen_nullstring';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: noContentToolId,
+                    name: 'Bash',
+                    input: { command: 'true' },
+                  },
+                  { type: 'tool_use', id: nullStringToolId, name: 'Bash', input: { command: 'x' } },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  // No `content` field at all (optional per the SDK types)
+                  { type: 'tool_result', tool_use_id: noContentToolId, name: 'Bash' },
+                  // String "null" normalizes to JSON null, which must not
+                  // violate NonNullable<JSONValue> either
+                  {
+                    type: 'tool_result',
+                    tool_use_id: nullStringToolId,
+                    name: 'Bash',
+                    content: 'null',
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-empty-result-session',
+              usage: { input_tokens: 2, output_tokens: 1 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Run it' }] }],
+        } as any);
+
+        const toolResults = result.content.filter(
+          (part: any) => part.type === 'tool-result'
+        ) as any[];
+        expect(toolResults).toHaveLength(2);
+        const noContentResult = toolResults.find((part) => part.toolCallId === noContentToolId);
+        expect(noContentResult?.result).toBe('');
+        expect(noContentResult?.providerMetadata?.['claude-code']?.rawResult).toBe('');
+        const nullStringResult = toolResults.find((part) => part.toolCallId === nullStringToolId);
+        expect(nullStringResult?.result).toBe('');
+        // rawResult preserves the original string the tool returned
+        expect(nullStringResult?.providerMetadata?.['claude-code']?.rawResult).toBe('null');
+      });
+
+      it('infers parentToolCallId from a single active Task tool', async () => {
+        const taskToolId = 'toolu_gen_task';
+        const childToolId = 'toolu_gen_child';
+        const childToolName = 'Bash';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: taskToolId,
+                    name: 'Task',
+                    input: { objective: 'Run command' },
+                  },
+                  {
+                    type: 'tool_use',
+                    id: childToolId,
+                    name: childToolName,
+                    input: { command: 'ls' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: childToolId,
+                    name: childToolName,
+                    content: 'done',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-task-parent-session',
+              usage: { input_tokens: 2, output_tokens: 1 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Do work' }] }],
+        } as any);
+
+        const toolCalls = result.content.filter((part: any) => part.type === 'tool-call') as any[];
+        expect(toolCalls).toHaveLength(2);
+        const taskCall = toolCalls.find((part) => part.toolCallId === taskToolId);
+        const childCall = toolCalls.find((part) => part.toolCallId === childToolId);
+        // Task tools are top-level (never have a parent)
+        expect(taskCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBeNull();
+        expect(childCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBe(taskToolId);
+        const childResult = result.content.find(
+          (part: any) => part.type === 'tool-result' && part.toolCallId === childToolId
+        ) as any;
+        expect(childResult?.providerMetadata?.['claude-code']?.parentToolCallId).toBe(taskToolId);
+      });
+
+      it('treats an explicit null parent_tool_use_id as top-level (not inferred under an active Task)', async () => {
+        // SDK 0.3 messages always carry parent_tool_use_id (string | null).
+        // A null value means top-level; it must NOT fall through to the
+        // single-active-Task timing inference.
+        const taskToolId = 'toolu_gen_active_task';
+        const topLevelToolId = 'toolu_gen_toplevel';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // A Task starts (becomes the single active Task).
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-task',
+              parent_tool_use_id: null,
+              message: {
+                content: [
+                  { type: 'tool_use', id: taskToolId, name: 'Task', input: { objective: 'x' } },
+                ],
+              },
+            };
+            // A separate top-level message (parent_tool_use_id: null) emits a
+            // normal tool WHILE the Task is active. It must stay top-level.
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-top',
+              parent_tool_use_id: null,
+              message: {
+                content: [
+                  { type: 'tool_use', id: topLevelToolId, name: 'Read', input: { file: 'x' } },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-explicit-null-session',
+              usage: { input_tokens: 2, output_tokens: 1 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Do work' }] }],
+        } as any);
+
+        const toolCalls = result.content.filter((p: any) => p.type === 'tool-call') as any[];
+        const topCall = toolCalls.find((p) => p.toolCallId === topLevelToolId);
+        // Explicit null => top-level, NOT nested under the active Task.
+        expect(topCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBeNull();
+      });
+
+      it("infers parentToolCallId for subagents launched via the 'Agent' tool name", async () => {
+        // Upstream Agent SDK docs name the subagent tool 'Agent' ('Task' is
+        // the backwards-compatible alias used by the currently-pinned CLI);
+        // parent tracking must recognize both.
+        const agentToolId = 'toolu_gen_agent';
+        const childToolId = 'toolu_gen_agent_child';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: agentToolId,
+                    name: 'Agent',
+                    input: { description: 'Run command', prompt: 'ls' },
+                  },
+                  {
+                    type: 'tool_use',
+                    id: childToolId,
+                    name: 'Bash',
+                    input: { command: 'ls' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-agent-parent-session',
+              usage: { input_tokens: 2, output_tokens: 1 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Do work' }] }],
+        } as any);
+
+        const toolCalls = result.content.filter((part: any) => part.type === 'tool-call') as any[];
+        const agentCall = toolCalls.find((part) => part.toolCallId === agentToolId);
+        const childCall = toolCalls.find((part) => part.toolCallId === childToolId);
+        // 'Agent' tools are top-level subagent launchers (never have a parent)
+        expect(agentCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBeNull();
+        // ...and act as the fallback parent for nested tools, same as 'Task'
+        expect(childCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBe(agentToolId);
+      });
+
+      it('retracts tool parts from superseded assistant messages', async () => {
+        const refusedToolId = 'toolu_gen_refused';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-refused',
+              message: {
+                content: [
+                  { type: 'text', text: 'Refused partial answer' },
+                  {
+                    type: 'tool_use',
+                    id: refusedToolId,
+                    name: 'Bash',
+                    input: { command: 'echo refused' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: refusedToolId,
+                    name: 'Bash',
+                    content: 'refused',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-replacement',
+              supersedes: ['uuid-refused'],
+              message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-supersede-tools-session',
+              usage: { input_tokens: 10, output_tokens: 5 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        } as any);
+
+        // The retracted tool-call AND its already-arrived tool-result are
+        // dropped along with the refused text; only the replacement survives.
+        expect(result.content).toEqual([{ type: 'text', text: 'Replacement answer' }]);
+      });
+
+      it('evicts content named only by the model_refusal_fallback notice in doGenerate', async () => {
+        // No assistant `supersedes`: the end-of-turn fallback notice's
+        // retracted_message_uuids is the sole eviction signal, and it must
+        // still drop the refused text + tool call + tool result.
+        const refusedToolId = 'toolu_gen_notice_refused';
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-refused',
+              message: {
+                content: [
+                  { type: 'text', text: 'Refused partial answer' },
+                  {
+                    type: 'tool_use',
+                    id: refusedToolId,
+                    name: 'Bash',
+                    input: { command: 'echo refused' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: refusedToolId,
+                    name: 'Bash',
+                    content: 'refused',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-replacement',
+              // No `supersedes` - the notice below is the only signal.
+              message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+            };
+            yield {
+              type: 'system',
+              subtype: 'model_refusal_fallback',
+              trigger: 'refusal',
+              direction: 'retry',
+              original_model: 'claude-opus-4-6',
+              fallback_model: 'claude-sonnet-4-5',
+              request_id: 'req-notice',
+              retracted_message_uuids: ['uuid-refused'],
+              content: 'Retried on fallback model',
+              session_id: 'gen-notice-session',
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-notice-session',
+              usage: { input_tokens: 10, output_tokens: 5 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        } as any);
+
+        expect(result.content).toEqual([{ type: 'text', text: 'Replacement answer' }]);
+      });
+
+      it('evicts a tool_result by its OWN message uuid named in retracted_message_uuids', async () => {
+        // The tool_use is NOT retracted; only the tool_result frame's own
+        // message uuid appears in retracted_message_uuids (the SDK documents
+        // tombstoned tool_results as direct entries). It must still be evicted.
+        const keptToolId = 'toolu_gen_kept_call';
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-assistant',
+              message: {
+                content: [
+                  { type: 'text', text: 'Answer.' },
+                  { type: 'tool_use', id: keptToolId, name: 'Read', input: { file: 'x' } },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              uuid: 'uuid-toolresult',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: keptToolId,
+                    name: 'Read',
+                    content: 'stale result',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'system',
+              subtype: 'model_refusal_fallback',
+              trigger: 'refusal',
+              direction: 'retry',
+              original_model: 'claude-opus-4-6',
+              fallback_model: 'claude-sonnet-4-5',
+              request_id: 'req-notice',
+              // Names the tool_result frame's own uuid, NOT the assistant uuid.
+              retracted_message_uuids: ['uuid-toolresult'],
+              content: 'Retried',
+              session_id: 'gen-toolresult-uuid-session',
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-toolresult-uuid-session',
+              usage: { input_tokens: 10, output_tokens: 5 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        } as any);
+
+        // The tool-result is gone; the kept text and its (non-retracted)
+        // tool-call remain.
+        const kinds = result.content.map((part: any) => part.type);
+        expect(result.content.some((part: any) => part.type === 'tool-result')).toBe(false);
+        expect(kinds).toContain('text');
+        expect(
+          result.content.some(
+            (part: any) => part.type === 'tool-call' && part.toolCallId === keptToolId
+          )
+        ).toBe(true);
+      });
+
+      it('removes retracted Task tools from fallback-parent inference', async () => {
+        const retractedTaskId = 'toolu_gen_retracted_task';
+        const laterToolId = 'toolu_gen_later_tool';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            // Refused message contains a Task tool whose result never arrives
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-refused-task',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: retractedTaskId,
+                    name: 'Task',
+                    input: { objective: 'refused work' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-replacement',
+              supersedes: ['uuid-refused-task'],
+              message: { content: [{ type: 'text', text: 'Replacement' }] },
+            };
+            // A later top-level tool with no parent info must NOT be
+            // attributed to the retracted (never-emitted) Task.
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-later',
+              message: {
+                content: [
+                  { type: 'tool_use', id: laterToolId, name: 'Bash', input: { command: 'ls' } },
+                ],
+              },
+            };
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: laterToolId,
+                    name: 'Bash',
+                    content: 'ok',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-retracted-task-session',
+              usage: { input_tokens: 5, output_tokens: 3 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        } as any);
+
+        const toolCalls = result.content.filter((part: any) => part.type === 'tool-call') as any[];
+        expect(toolCalls.map((part) => part.toolCallId)).toEqual([laterToolId]);
+        // No dangling parent reference to the retracted Task
+        expect(toolCalls[0]?.providerMetadata?.['claude-code']?.parentToolCallId).toBeNull();
+        const toolResult = result.content.find((part: any) => part.type === 'tool-result') as any;
+        expect(toolResult?.providerMetadata?.['claude-code']?.parentToolCallId).toBeNull();
+      });
+
+      it('drops late tool results for retracted tool calls instead of emitting orphans', async () => {
+        const retractedToolId = 'toolu_gen_late_result';
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-refused-call',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: retractedToolId,
+                    name: 'Bash',
+                    input: { command: 'echo refused' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'assistant',
+              uuid: 'uuid-replacement',
+              supersedes: ['uuid-refused-call'],
+              message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+            };
+            // tool_result arrives AFTER the supersede: it must be dropped,
+            // not paired with a synthesized call or left as an orphan
+            // (AI SDK core's asContent throws on unpaired tool-results).
+            yield {
+              type: 'user',
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: retractedToolId,
+                    name: 'Bash',
+                    content: 'late result',
+                    is_error: false,
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-late-result-session',
+              usage: { input_tokens: 5, output_tokens: 3 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        } as any);
+
+        expect(result.content).toEqual([{ type: 'text', text: 'Replacement answer' }]);
+      });
     });
   });
 
@@ -4257,6 +6182,2389 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const finishChunk = chunks.find((c) => c.type === 'finish');
       expect(finishChunk.providerMetadata['claude-code'].modelUsage).toBeUndefined();
+    });
+  });
+
+  describe('SDK 0.3.x stream handling and metadata enrichment', () => {
+    it('should include SDK timing metadata in doGenerate providerMetadata', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'timing-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+            ttft_ms: 120,
+            ttft_stream_ms: 80,
+            time_to_request_ms: 40,
+            warm_spare_claimed: true,
+            terminal_reason: 'completed',
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      const metadata = result.providerMetadata?.['claude-code'] as Record<string, unknown>;
+      expect(metadata.ttftMs).toBe(120);
+      expect(metadata.ttftStreamMs).toBe(80);
+      expect(metadata.timeToRequestMs).toBe(40);
+      expect(metadata.warmSpareClaimed).toBe(true);
+      expect(metadata.terminalReason).toBe('completed');
+      // Existing fields are untouched
+      expect(metadata.costUsd).toBe(0.001);
+      expect(metadata.durationMs).toBe(500);
+    });
+
+    it('should omit timing metadata in doGenerate when absent on the result message', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'no-timing-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      const metadata = result.providerMetadata?.['claude-code'] as Record<string, unknown>;
+      expect(metadata.ttftMs).toBeUndefined();
+      expect(metadata.ttftStreamMs).toBeUndefined();
+      expect(metadata.timeToRequestMs).toBeUndefined();
+      expect(metadata.warmSpareClaimed).toBeUndefined();
+      expect(metadata.terminalReason).toBeUndefined();
+    });
+
+    it('should include SDK timing metadata in doStream finish providerMetadata', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Hello' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'stream-timing-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+            ttft_ms: 150,
+            ttft_stream_ms: 95,
+            time_to_request_ms: 55,
+            warm_spare_claimed: false,
+            terminal_reason: 'completed',
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      const metadata = finishChunk.providerMetadata['claude-code'];
+      expect(metadata.ttftMs).toBe(150);
+      expect(metadata.ttftStreamMs).toBe(95);
+      expect(metadata.timeToRequestMs).toBe(55);
+      // false (not just true) is surfaced so consumers can distinguish
+      // "reported as not claimed" from "not reported at all"
+      expect(metadata.warmSpareClaimed).toBe(false);
+      expect(metadata.terminalReason).toBe('completed');
+      // Existing fields are untouched
+      expect(metadata.costUsd).toBe(0.001);
+      expect(metadata.durationMs).toBe(500);
+    });
+
+    it('should count api_retry messages into apiRetries in doStream finish metadata', async () => {
+      const debug = vi.fn();
+      const logger: Logger = { debug, info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const modelWithLogger = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { logger, verbose: true },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'api_retry',
+            attempt: 1,
+            max_retries: 3,
+            retry_delay_ms: 1000,
+            error_status: 529,
+            error: 'overloaded',
+            session_id: 'retry-session',
+          };
+          yield {
+            type: 'system',
+            subtype: 'api_retry',
+            attempt: 2,
+            max_retries: 3,
+            retry_delay_ms: 2000,
+            error_status: 529,
+            error: 'overloaded',
+            session_id: 'retry-session',
+          };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Recovered' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'retry-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await modelWithLogger.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      expect(finishChunk.providerMetadata['claude-code'].apiRetries).toBe(2);
+      expect(debug).toHaveBeenCalledWith(expect.stringContaining('API retry 1/3'));
+      expect(debug).toHaveBeenCalledWith(expect.stringContaining('API retry 2/3'));
+    });
+
+    it('should record permission_denied messages in doStream finish metadata and warn', async () => {
+      const warn = vi.fn();
+      const logger: Logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+      const modelWithLogger = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { logger },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'permission_denied',
+            tool_name: 'Bash',
+            tool_use_id: 'tool-1',
+            decision_reason_type: 'rule',
+            decision_reason: 'Matched deny rule',
+            message: 'Permission denied by rule',
+            session_id: 'denied-session',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'denied-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await modelWithLogger.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      expect(finishChunk.providerMetadata['claude-code'].permissionDenials).toEqual([
+        { toolName: 'Bash', toolUseId: 'tool-1', reason: 'Matched deny rule' },
+      ]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Permission denied - Tool: Bash'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Matched deny rule'));
+    });
+
+    it('should record api_retry and permission_denied in doGenerate providerMetadata', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'api_retry',
+            attempt: 1,
+            max_retries: 3,
+            retry_delay_ms: 1000,
+            error_status: 529,
+            error: 'overloaded',
+            session_id: 'gen-meta-session',
+          };
+          yield {
+            type: 'system',
+            subtype: 'permission_denied',
+            tool_name: 'Write',
+            tool_use_id: 'tool-2',
+            message: 'Auto-denied in dontAsk mode',
+            session_id: 'gen-meta-session',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'gen-meta-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      const metadata = result.providerMetadata?.['claude-code'] as Record<string, unknown>;
+      expect(metadata.apiRetries).toBe(1);
+      expect(metadata.permissionDenials).toEqual([
+        { toolName: 'Write', toolUseId: 'tool-2', reason: 'Auto-denied in dontAsk mode' },
+      ]);
+    });
+
+    it('should surface PreToolUse-hook denials from the result permission_denials list', async () => {
+      // Hook denies bypass canUseTool and emit NO permission_denied system
+      // event (SDK docs on SDKPermissionDeniedMessage) — the result message's
+      // permission_denials list is the only place they appear.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'hook-denial-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+            permission_denials: [
+              { tool_name: 'Bash', tool_use_id: 'hook-tool-1', tool_input: { command: 'rm -rf' } },
+            ],
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      const metadata = result.providerMetadata?.['claude-code'] as Record<string, unknown>;
+      expect(metadata.permissionDenials).toEqual([{ toolName: 'Bash', toolUseId: 'hook-tool-1' }]);
+    });
+
+    it('should dedupe result permission_denials against stream-recorded denials by tool_use_id', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'permission_denied',
+            tool_name: 'Write',
+            tool_use_id: 'tool-9',
+            message: 'Auto-denied in dontAsk mode',
+            session_id: 'dedupe-session',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'dedupe-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+            permission_denials: [
+              // Same denial as the stream event — must not duplicate
+              { tool_name: 'Write', tool_use_id: 'tool-9', tool_input: {} },
+              // Hook-only denial — must be appended
+              { tool_name: 'Edit', tool_use_id: 'tool-10', tool_input: {} },
+            ],
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      expect(finishChunk.providerMetadata['claude-code'].permissionDenials).toEqual([
+        { toolName: 'Write', toolUseId: 'tool-9', reason: 'Auto-denied in dontAsk mode' },
+        { toolName: 'Edit', toolUseId: 'tool-10' },
+      ]);
+    });
+
+    it('should invoke onPromptSuggestion for the post-result message in doStream', async () => {
+      const onPromptSuggestion = vi.fn();
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion } as any,
+      });
+
+      // Use a true generator so iteration continues past the result message,
+      // matching the real Query async-generator behavior.
+      const mockResponse = (async function* () {
+        yield {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'Done' }] },
+        };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'suggestion-session',
+          usage: { input_tokens: 10, output_tokens: 5 },
+          total_cost_usd: 0.001,
+          duration_ms: 500,
+        };
+        yield {
+          type: 'prompt_suggestion',
+          suggestion: 'Run the test suite next',
+          session_id: 'suggestion-session',
+        };
+      })();
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await modelWithCallback.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // Stream finished normally before the suggestion arrived
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+
+      // The suggestion is drained after the stream closes
+      await vi.waitFor(() => {
+        expect(onPromptSuggestion).toHaveBeenCalledWith('Run the test suite next');
+      });
+      expect(onPromptSuggestion).toHaveBeenCalledTimes(1);
+    });
+
+    it('should invoke onPromptSuggestion in doGenerate', async () => {
+      const onPromptSuggestion = vi.fn();
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion } as any,
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'gen-suggestion-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+          };
+          yield {
+            type: 'prompt_suggestion',
+            suggestion: 'Try asking about tests',
+            session_id: 'gen-suggestion-session',
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      await modelWithCallback.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      expect(onPromptSuggestion).toHaveBeenCalledTimes(1);
+      expect(onPromptSuggestion).toHaveBeenCalledWith('Try asking about tests');
+    });
+
+    it('should emit the canonical replacement as a new text part for superseding assistant messages in doStream', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          yield {
+            type: 'system',
+            subtype: 'model_refusal_fallback',
+            trigger: 'refusal',
+            direction: 'retry',
+            original_model: 'claude-opus-4-6',
+            fallback_model: 'claude-sonnet-4-5',
+            request_id: 'req-1',
+            content: 'Retried on fallback model',
+            session_id: 'supersede-session',
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'supersede-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // The retracted text was already emitted and cannot be un-streamed, but
+      // the canonical replacement must still reach the stream: the refused
+      // text part is closed and the replacement is emitted as a NEW text part.
+      const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+      expect(textDeltas.map((c) => c.delta)).toEqual([
+        'Refused partial answer',
+        'Replacement answer',
+      ]);
+      // The replacement uses a fresh text part, opened after the refused part closed.
+      expect(textDeltas[0].id).not.toBe(textDeltas[1].id);
+      const partEvents = chunks
+        .filter((c) => ['text-start', 'text-end'].includes(c.type))
+        .map((c) => `${c.type}:${c.id === textDeltas[0].id ? 'refused' : 'replacement'}`);
+      expect(partEvents).toEqual([
+        'text-start:refused',
+        'text-end:refused',
+        'text-start:replacement',
+        'text-end:replacement',
+      ]);
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
+    it('should keep earlier non-retracted text when a supersede arrives in doStream JSON mode', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-kept',
+            message: { content: [{ type: 'text', text: 'Kept intro. ' }] },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'supersede-json-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        responseFormat: { type: 'json' },
+      } as any);
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // JSON mode without schema falls back to emitting the accumulated text,
+      // which must contain the kept segment plus the replacement - only the
+      // retracted segment is dropped (matches doGenerate).
+      const streamedText = chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join('');
+      expect(streamedText).toBe('Kept intro. Replacement answer');
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
+    it('should retract superseded segments even when the superseding message carries no text', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-kept',
+            message: { content: [{ type: 'text', text: 'Kept intro. ' }] },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          // The SDK does not guarantee the canonical replacement carries text
+          // blocks - here it is tool_use-only, and the retraction must still
+          // happen on arrival (matches doGenerate).
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: {
+              content: [{ type: 'tool_use', id: 'tool-supersede-1', name: 'Read', input: {} }],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'supersede-no-text-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        responseFormat: { type: 'json' },
+      } as any);
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // JSON mode without schema falls back to emitting the accumulated text,
+      // which must no longer contain the retracted segment - only the kept one.
+      const streamedText = chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join('');
+      expect(streamedText).toBe('Kept intro. ');
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
+    it('should not re-emit the replacement when it was already streamed via stream_events', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'stream_event',
+            event: {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'text_delta', text: 'Refused partial answer' },
+            },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          yield {
+            type: 'stream_event',
+            event: {
+              type: 'content_block_delta',
+              index: 1,
+              delta: { type: 'text_delta', text: 'Replacement answer' },
+            },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'supersede-stream-events-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // The replacement already arrived via stream_event deltas, so the
+      // superseding assistant message must not emit it a second time.
+      const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+      expect(textDeltas.map((c) => c.delta)).toEqual([
+        'Refused partial answer',
+        'Replacement answer',
+      ]);
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
+    it('should emit unstreamed replacement text even when earlier stream events occurred', async () => {
+      // A tool-input stream event sets hasReceivedStreamEvents, but the
+      // superseding message's replacement text below never arrives as deltas.
+      // The skip decision must gate on the replacement text actually having
+      // been streamed, not on the global stream-events flag.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          yield {
+            type: 'stream_event',
+            event: {
+              type: 'content_block_start',
+              index: 1,
+              content_block: {
+                type: 'tool_use',
+                id: 'tool-pre-supersede',
+                name: 'Read',
+                input: {},
+              },
+            },
+          };
+          yield {
+            type: 'stream_event',
+            event: {
+              type: 'content_block_stop',
+              index: 1,
+            },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'supersede-tool-event-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // The canonical replacement was never streamed, so it must be emitted
+      // as a new text part despite stream events having occurred.
+      const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+      expect(textDeltas.map((c) => c.delta)).toEqual([
+        'Refused partial answer',
+        'Replacement answer',
+      ]);
+      expect(textDeltas[0].id).not.toBe(textDeltas[1].id);
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
+    it('should emit an unstreamed replacement even when it is a substring of the refused text', async () => {
+      // The replacement text is contained verbatim in the already-emitted
+      // refused text. A transcript-wide substring search would false-positive
+      // and skip the canonical replacement; the streamed-replacement check
+      // must be scoped to deltas attributable to the superseding message.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: {
+              content: [
+                {
+                  type: 'text',
+                  text: 'The answer is 4. Actually, I cannot continue with that request.',
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'The answer is 4.' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'supersede-substring-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const textDeltas = chunks.filter((c) => c.type === 'text-delta');
+      expect(textDeltas.map((c) => c.delta)).toEqual([
+        'The answer is 4. Actually, I cannot continue with that request.',
+        'The answer is 4.',
+      ]);
+      expect(textDeltas[0].id).not.toBe(textDeltas[1].id);
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
+    it('emits only the unstreamed suffix when a prefix of the replacement already streamed', async () => {
+      // A stream_event delta emits a PREFIX of the replacement ('Replace'),
+      // then the superseding assistant message carries the full text
+      // ('Replacement answer'). Emitting the full text again would duplicate
+      // the prefix ('ReplaceReplacement answer'); only the suffix should ship.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          // Partial replacement streamed as a delta (a prefix of the full text).
+          yield {
+            type: 'stream_event',
+            uuid: 'uuid-replacement',
+            event: {
+              type: 'content_block_delta',
+              index: 1,
+              delta: { type: 'text_delta', text: 'Replace' },
+            },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'partial-suffix-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // The refused text streamed live and cannot be un-streamed, but the
+      // REPLACEMENT must not duplicate its already-streamed prefix: the deltas
+      // after the prefix must be the suffix ('ment answer'), so the joined
+      // stream contains 'Replacement answer' once and never 'ReplaceReplacement'.
+      const deltas = chunks.filter((c) => c.type === 'text-delta').map((c) => c.delta);
+      const streamed = deltas.join('');
+      expect(streamed).not.toContain('ReplaceReplacement');
+      expect(streamed.endsWith('Replacement answer')).toBe(true);
+      expect(deltas).toContain('ment answer');
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+    });
+
+    it('uses the partial-message envelope parent_tool_use_id for stream-event tool parts', async () => {
+      // Stream-event tool parts are emitted immediately, before the final
+      // assistant message could retroactively fix parents - the envelope's
+      // parent_tool_use_id is the authoritative source at that moment.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'stream_event',
+            parent_tool_use_id: 'toolu_subagent_parent',
+            uuid: 'uuid-partial-1',
+            event: {
+              type: 'content_block_start',
+              index: 0,
+              content_block: { type: 'tool_use', id: 'toolu_nested', name: 'Bash', input: {} },
+            },
+          };
+          yield {
+            type: 'stream_event',
+            parent_tool_use_id: 'toolu_subagent_parent',
+            uuid: 'uuid-partial-1',
+            event: { type: 'content_block_stop', index: 0 },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'partial-parent-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const inputStart = chunks.find((c) => c.type === 'tool-input-start');
+      const toolCall = chunks.find((c) => c.type === 'tool-call');
+      expect(inputStart?.providerMetadata?.['claude-code']?.parentToolCallId).toBe(
+        'toolu_subagent_parent'
+      );
+      expect(toolCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBe(
+        'toolu_subagent_parent'
+      );
+    });
+
+    it('retracts pending stream-event tool calls from superseded messages', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          // Tool input started via stream events (no content_block_stop) on
+          // the message that gets refused...
+          yield {
+            type: 'stream_event',
+            parent_tool_use_id: null,
+            uuid: 'uuid-refused',
+            event: {
+              type: 'content_block_start',
+              index: 0,
+              content_block: { type: 'tool_use', id: 'toolu_retracted', name: 'Bash', input: {} },
+            },
+          };
+          // ...then the canonical replacement supersedes it.
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'retract-tool-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // The open input part is closed, but the retracted call is NOT emitted
+      // by finalizeToolCalls at stream end.
+      expect(chunks.some((c) => c.type === 'tool-input-end' && c.id === 'toolu_retracted')).toBe(
+        true
+      );
+      expect(chunks.some((c) => c.type === 'tool-call' && c.toolCallId === 'toolu_retracted')).toBe(
+        false
+      );
+      const textDeltas = chunks.filter((c) => c.type === 'text-delta').map((c) => c.delta);
+      expect(textDeltas).toEqual(['Replacement answer']);
+    });
+
+    it('removes retracted Task tools from stream fallback-parent inference', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          // A Task tool starts streaming on the refused message...
+          yield {
+            type: 'stream_event',
+            parent_tool_use_id: null,
+            uuid: 'uuid-refused',
+            event: {
+              type: 'content_block_start',
+              index: 0,
+              content_block: { type: 'tool_use', id: 'toolu_stale_task', name: 'Task', input: {} },
+            },
+          };
+          // ...gets superseded...
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement' }] },
+          };
+          // ...and a later top-level tool must NOT be parented to the stale Task.
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-later',
+            message: {
+              content: [
+                { type: 'tool_use', id: 'toolu_later', name: 'Read', input: { file: 'x' } },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'stale-task-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const laterCall = chunks.find(
+        (c) => c.type === 'tool-call' && c.toolCallId === 'toolu_later'
+      );
+      expect(laterCall?.providerMetadata?.['claude-code']?.parentToolCallId).toBeNull();
+      expect(
+        chunks.some((c) => c.type === 'tool-call' && c.toolCallId === 'toolu_stale_task')
+      ).toBe(false);
+    });
+
+    it('drops late tool results for retracted pending tool calls instead of resurrecting them', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          // Pending tool (input started, never finalized) on the refused message...
+          yield {
+            type: 'stream_event',
+            parent_tool_use_id: null,
+            uuid: 'uuid-refused',
+            event: {
+              type: 'content_block_start',
+              index: 0,
+              content_block: { type: 'tool_use', id: 'toolu_zombie', name: 'Bash', input: {} },
+            },
+          };
+          // ...superseded by the canonical replacement...
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement' }] },
+          };
+          // ...then a LATE tool_result for the retracted call arrives. The
+          // unknown-tool path must not synthesize a new call/result pair.
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: 'toolu_zombie',
+                  content: 'late output',
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'zombie-tool-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // No synthesized resurrection: nothing for the zombie id after the
+      // retraction's input-end (one input-start from before the supersede,
+      // one input-end at retraction, and nothing else).
+      const zombieParts = chunks.filter(
+        (c) => c.id === 'toolu_zombie' || c.toolCallId === 'toolu_zombie'
+      );
+      expect(zombieParts.map((c) => c.type)).toEqual(['tool-input-start', 'tool-input-end']);
+      expect(chunks.some((c) => c.type === 'tool-result' && c.toolCallId === 'toolu_zombie')).toBe(
+        false
+      );
+    });
+
+    it('evicts uuids named only by the model_refusal_fallback notice (not assistant supersedes)', async () => {
+      // The refused assistant message arrives WITHOUT a superseding assistant
+      // frame; the end-of-turn fallback notice is the only retraction signal,
+      // and it must still evict the refused content.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            // NOTE: no `supersedes` here - only the notice below names the uuid
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'system',
+            subtype: 'model_refusal_fallback',
+            trigger: 'refusal',
+            direction: 'retry',
+            original_model: 'claude-opus-4-6',
+            fallback_model: 'claude-sonnet-4-5',
+            request_id: 'req-notice',
+            retracted_message_uuids: ['uuid-refused'],
+            content: 'Retried on fallback model',
+            session_id: 'fallback-notice-session',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'fallback-notice-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      // The notice-only retraction runs without error and the stream finishes;
+      // the refused text already streamed live cannot be un-streamed, but the
+      // eviction path is exercised (accumulator cleared) and the replacement
+      // is delivered.
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+      const deltas = chunks.filter((c) => c.type === 'text-delta').map((c) => c.delta);
+      expect(deltas).toContain('Replacement answer');
+    });
+
+    it('should drop superseded thinking traces in doGenerate', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: {
+              content: [
+                { type: 'thinking', thinking: 'Refused thinking trace' },
+                { type: 'text', text: 'Refused partial answer' },
+              ],
+            },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: {
+              content: [
+                { type: 'thinking', thinking: 'Replacement thinking trace' },
+                { type: 'text', text: 'Replacement answer' },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'gen-supersede-thinking-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      // Reasoning from the retracted (refused) message is evicted along with
+      // its text; only the replacement's thinking survives.
+      const reasoningParts = result.content.filter((c: any) => c.type === 'reasoning') as any[];
+      expect(reasoningParts.map((c) => c.text)).toEqual(['Replacement thinking trace']);
+      expect(result.providerMetadata?.['claude-code']?.thinkingTraces).toEqual([
+        'Replacement thinking trace',
+      ]);
+      const textContent = result.content.find((c: any) => c.type === 'text') as any;
+      expect(textContent.text).toBe('Replacement answer');
+    });
+
+    it('should drop superseded text segments in doGenerate', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-refused',
+            message: { content: [{ type: 'text', text: 'Refused partial answer' }] },
+          };
+          yield {
+            type: 'assistant',
+            uuid: 'uuid-replacement',
+            supersedes: ['uuid-refused'],
+            message: { content: [{ type: 'text', text: 'Replacement answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'gen-supersede-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      const textContent = result.content.find((c: any) => c.type === 'text') as any;
+      expect(textContent.text).toBe('Replacement answer');
+    });
+
+    it('should debug-log and ignore informational SDK 0.3.x system messages in doStream', async () => {
+      const debug = vi.fn();
+      const logger: Logger = { debug, info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const modelWithLogger = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { logger, verbose: true },
+      });
+
+      const informationalMessages = [
+        { subtype: 'notification', key: 'k', text: 'note', priority: 'low' },
+        { subtype: 'status', status: 'requesting' },
+        { subtype: 'status', status: null, compact_result: 'failed', compact_error: 'boom' },
+        { subtype: 'task_updated', task_id: 't1', patch: { status: 'running' } },
+        { subtype: 'session_state_changed', state: 'running' },
+        { subtype: 'commands_changed', commands: [] },
+        { subtype: 'memory_recall', mode: 'select', memories: [] },
+        { subtype: 'plugin_install', status: 'started' },
+      ];
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          for (const informational of informationalMessages) {
+            yield { type: 'system', session_id: 'info-session', ...informational };
+          }
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Still working' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'info-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await modelWithLogger.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // The stream completes normally with no error chunks
+      expect(chunks.find((c) => c.type === 'error')).toBeUndefined();
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
+      const streamedText = chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join('');
+      expect(streamedText).toBe('Still working');
+
+      // Each informational subtype is debug-logged as intentionally ignored
+      for (const informational of informationalMessages) {
+        expect(debug).toHaveBeenCalledWith(
+          expect.stringContaining(`Ignoring informational system message: ${informational.subtype}`)
+        );
+      }
+    });
+
+    it('surfaces mirror_error (dropped transcript batch) as a warning and in providerMetadata', async () => {
+      const warn = vi.fn();
+      const logger: Logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+      const modelWithLogger = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { logger },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'mirror_error',
+            error: 'append failed after retries',
+            key: { projectKey: 'p', sessionId: 'mirror-sess' },
+            session_id: 'mirror-sess',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'mirror-sess',
+            usage: { input_tokens: 5, output_tokens: 2 },
+            total_cost_usd: 0.001,
+            duration_ms: 100,
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await modelWithLogger.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('SessionStore mirror error'));
+      const finish = chunks.find((c) => c.type === 'finish');
+      expect(finish.providerMetadata['claude-code'].mirrorErrors).toEqual([
+        { error: 'append failed after retries', sessionId: 'mirror-sess' },
+      ]);
+    });
+
+    it('should accumulate thinking_tokens deltas into estimatedThinkingTokens in doStream finish metadata', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          // First thinking block: running total grows 40 -> 100
+          yield {
+            type: 'system',
+            subtype: 'thinking_tokens',
+            estimated_tokens: 40,
+            estimated_tokens_delta: 40,
+            session_id: 'thinking-session',
+          };
+          yield {
+            type: 'system',
+            subtype: 'thinking_tokens',
+            estimated_tokens: 100,
+            estimated_tokens_delta: 60,
+            session_id: 'thinking-session',
+          };
+          // Second thinking block: per-block running total resets, so only
+          // summing deltas yields the correct cross-block estimate (125).
+          yield {
+            type: 'system',
+            subtype: 'thinking_tokens',
+            estimated_tokens: 25,
+            estimated_tokens_delta: 25,
+            session_id: 'thinking-session',
+          };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Answer' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'thinking-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      expect(finishChunk.providerMetadata['claude-code'].estimatedThinkingTokens).toBe(125);
+      // The estimate is not authoritative billed output tokens, so usage is untouched.
+      expect(finishChunk.usage.outputTokens.reasoning).toBeUndefined();
+    });
+
+    it('should surface estimatedThinkingTokens in doGenerate providerMetadata', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'thinking_tokens',
+            estimated_tokens: 100,
+            estimated_tokens_delta: 100,
+            session_id: 'gen-thinking-session',
+          };
+          yield {
+            type: 'system',
+            subtype: 'thinking_tokens',
+            estimated_tokens: 150,
+            estimated_tokens_delta: 50,
+            session_id: 'gen-thinking-session',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'gen-thinking-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+          };
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      const metadata = result.providerMetadata?.['claude-code'] as Record<string, unknown>;
+      expect(metadata.estimatedThinkingTokens).toBe(150);
+      expect(result.usage.outputTokens.reasoning).toBeUndefined();
+    });
+
+    it('should include apiRetries and permissionDenials in the truncation-recovery finish metadata', async () => {
+      // Long enough to pass the truncation-detection length threshold
+      const longText = 'A'.repeat(600);
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'api_retry',
+            attempt: 1,
+            max_retries: 3,
+            retry_delay_ms: 1000,
+            error_status: 529,
+            error: 'overloaded',
+            session_id: 'truncated-session',
+          };
+          yield {
+            type: 'system',
+            subtype: 'permission_denied',
+            tool_name: 'Bash',
+            tool_use_id: 'tool-1',
+            decision_reason: 'Matched deny rule',
+            session_id: 'truncated-session',
+          };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: longText }] },
+          };
+          throw new SyntaxError('Unexpected end of JSON input');
+        },
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: any[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((c) => c.type === 'finish');
+      const metadata = finishChunk.providerMetadata['claude-code'];
+      expect(metadata.truncated).toBe(true);
+      expect(metadata.apiRetries).toBe(1);
+      expect(metadata.permissionDenials).toEqual([
+        { toolName: 'Bash', toolUseId: 'tool-1', reason: 'Matched deny rule' },
+      ]);
+    });
+
+    it('should stop the post-result drain after the first prompt_suggestion', async () => {
+      const onPromptSuggestion = vi.fn();
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion } as any,
+      });
+
+      let yieldedAfterSuggestion = false;
+      let generatorClosed = false;
+      const mockResponse = (async function* () {
+        try {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Done' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'bounded-drain-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+          yield {
+            type: 'prompt_suggestion',
+            suggestion: 'Run the test suite next',
+            session_id: 'bounded-drain-session',
+          };
+          yieldedAfterSuggestion = true;
+          // Simulate a lingering CLI that never exits on its own.
+          await new Promise(() => {});
+        } finally {
+          generatorClosed = true;
+        }
+      })();
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await modelWithCallback.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+
+      await vi.waitFor(() => {
+        expect(onPromptSuggestion).toHaveBeenCalledWith('Run the test suite next');
+        // The drain closes the SDK iterator after the (at most one per turn)
+        // suggestion instead of holding the subprocess open indefinitely.
+        expect(generatorClosed).toBe(true);
+      });
+      expect(yieldedAfterSuggestion).toBe(false);
+    });
+
+    it('should time out the post-result drain when no prompt_suggestion arrives', async () => {
+      const debug = vi.fn();
+      const logger: Logger = { debug, info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const onPromptSuggestion = vi.fn();
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion, logger, verbose: true } as any,
+      });
+
+      const mockResponse = (async function* () {
+        yield {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'Done' }] },
+        };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'drain-timeout-session',
+          usage: { input_tokens: 10, output_tokens: 5 },
+          total_cost_usd: 0.001,
+          duration_ms: 500,
+        };
+        // Lingering CLI: never emits a prompt_suggestion and never exits.
+        await new Promise(() => {});
+      })();
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      vi.useFakeTimers();
+      try {
+        const result = await modelWithCallback.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done } = await reader.read();
+          if (done) break;
+        }
+
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(onPromptSuggestion).not.toHaveBeenCalled();
+        expect(debug).toHaveBeenCalledWith(
+          expect.stringContaining('Post-result drain timed out; closing SDK iterator')
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('should time out the doGenerate post-result drain when no prompt_suggestion arrives', async () => {
+      const debug = vi.fn();
+      const logger: Logger = { debug, info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const onPromptSuggestion = vi.fn();
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion, logger, verbose: true } as any,
+      });
+
+      const mockResponse = (async function* () {
+        yield {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'Done' }] },
+        };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'gen-drain-timeout-session',
+          usage: { input_tokens: 10, output_tokens: 5 },
+          total_cost_usd: 0.001,
+          duration_ms: 500,
+        };
+        // Lingering CLI: never emits a prompt_suggestion and never exits.
+        await new Promise(() => {});
+      })();
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      vi.useFakeTimers();
+      try {
+        const resultPromise = modelWithCallback.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        } as any);
+
+        // Let doGenerate's microtask chain reach the drain and register its
+        // timeout timer before advancing the fake clock.
+        for (let i = 0; i < 50 && vi.getTimerCount() === 0; i++) {
+          await Promise.resolve();
+        }
+        expect(vi.getTimerCount()).toBeGreaterThan(0);
+        await vi.advanceTimersByTimeAsync(10_000);
+        const result = await resultPromise;
+
+        // generateText is unblocked by the bounded drain despite the wedged CLI.
+        expect(result.content).toContainEqual(
+          expect.objectContaining({ type: 'text', text: 'Done' })
+        );
+        expect(onPromptSuggestion).not.toHaveBeenCalled();
+        expect(debug).toHaveBeenCalledWith(
+          expect.stringContaining('Post-result drain timed out; closing SDK iterator')
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('should return doGenerate immediately at result when no suggestion callback is set', async () => {
+      let generatorClosed = false;
+      const mockResponse = (async function* () {
+        try {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Done' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'gen-no-drain-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+          };
+          // Lingering CLI after the result: must NOT block doGenerate.
+          await new Promise(() => {});
+        } finally {
+          generatorClosed = true;
+        }
+      })();
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      // No fake timers: this resolves immediately via break, or the test times out.
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      expect(result.content).toContainEqual(
+        expect.objectContaining({ type: 'text', text: 'Done' })
+      );
+      await vi.waitFor(() => expect(generatorClosed).toBe(true));
+    });
+  });
+
+  describe('unsupported call option warnings', () => {
+    const mockSimpleResponse = () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Hello' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'warnings-session',
+            usage: { input_tokens: 5, output_tokens: 2 },
+          };
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+    };
+
+    it('should warn when AI SDK tools are provided', async () => {
+      mockSimpleResponse();
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        tools: [
+          {
+            type: 'function',
+            name: 'getWeather',
+            description: 'Get the weather',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ],
+      } as any);
+
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({
+          type: 'unsupported',
+          feature: 'tools',
+          details: expect.stringContaining('createAiSdkMcpServer'),
+        })
+      );
+      const toolsWarning = result.warnings.find(
+        (w: any) => w.type === 'unsupported' && w.feature === 'tools'
+      ) as any;
+      expect(toolsWarning?.details).toContain('mcpServers');
+    });
+
+    it('should not warn when tools array is empty', async () => {
+      mockSimpleResponse();
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        tools: [],
+      } as any);
+
+      expect(result.warnings).not.toContainEqual(
+        expect.objectContaining({ type: 'unsupported', feature: 'tools' })
+      );
+    });
+
+    it('should warn when toolChoice is set to a non-auto value', async () => {
+      mockSimpleResponse();
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        toolChoice: { type: 'required' },
+      } as any);
+
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({
+          type: 'unsupported',
+          feature: 'toolChoice',
+          details: expect.stringContaining("'required'"),
+        })
+      );
+    });
+
+    it('should warn when toolChoice requests a specific tool', async () => {
+      mockSimpleResponse();
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        toolChoice: { type: 'tool', toolName: 'getWeather' },
+      } as any);
+
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({
+          type: 'unsupported',
+          feature: 'toolChoice',
+        })
+      );
+    });
+
+    it('should not warn when toolChoice is auto or unset', async () => {
+      mockSimpleResponse();
+
+      const autoResult = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        toolChoice: { type: 'auto' },
+      } as any);
+
+      expect(autoResult.warnings).not.toContainEqual(
+        expect.objectContaining({ type: 'unsupported', feature: 'toolChoice' })
+      );
+
+      mockSimpleResponse();
+
+      const unsetResult = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      } as any);
+
+      expect(unsetResult.warnings).not.toContainEqual(
+        expect.objectContaining({ type: 'unsupported', feature: 'toolChoice' })
+      );
+    });
+
+    it('should warn when maxOutputTokens is set', async () => {
+      mockSimpleResponse();
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        maxOutputTokens: 1024,
+      } as any);
+
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({
+          type: 'unsupported',
+          feature: 'maxOutputTokens',
+          details: expect.stringContaining('output token cap'),
+        })
+      );
+    });
+
+    it('should emit the warnings on the doStream stream-start event', async () => {
+      mockSimpleResponse();
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        tools: [
+          {
+            type: 'function',
+            name: 'getWeather',
+            description: 'Get the weather',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ],
+        toolChoice: { type: 'none' },
+        maxOutputTokens: 256,
+      } as any);
+
+      const reader = result.stream.getReader();
+      const { value: first } = await reader.read();
+      await reader.cancel();
+
+      expect(first).toMatchObject({ type: 'stream-start' });
+      const warnings = (first as any).warnings;
+      expect(warnings).toContainEqual(
+        expect.objectContaining({ type: 'unsupported', feature: 'tools' })
+      );
+      expect(warnings).toContainEqual(
+        expect.objectContaining({ type: 'unsupported', feature: 'toolChoice' })
+      );
+      expect(warnings).toContainEqual(
+        expect.objectContaining({ type: 'unsupported', feature: 'maxOutputTokens' })
+      );
+    });
+  });
+});
+
+describe('structured output hardening', () => {
+  let model: ClaudeCodeLanguageModel;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    model = new ClaudeCodeLanguageModel({
+      id: 'sonnet',
+      settings: { logger: false },
+    });
+  });
+
+  const successResult = (overrides: Record<string, unknown> = {}) => ({
+    type: 'result',
+    subtype: 'success',
+    session_id: 'structured-hardening-session',
+    usage: { input_tokens: 10, output_tokens: 5 },
+    total_cost_usd: 0.001,
+    duration_ms: 100,
+    ...overrides,
+  });
+
+  describe('outputFormat schema sanitization', () => {
+    it('strips format keywords and folds descriptions before passing the schema to query()', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield successResult({ structured_output: { email: 'a@b.co', createdAt: 'now' } });
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const schema = {
+        type: 'object',
+        properties: {
+          email: { type: 'string', format: 'email' },
+          createdAt: {
+            type: 'string',
+            format: 'date-time',
+            description: 'Creation timestamp',
+          },
+          nested: {
+            type: 'object',
+            properties: {
+              link: { type: 'string', format: 'uri' },
+            },
+          },
+          code: { type: 'string', pattern: '^[A-Z]+$' },
+        },
+        required: ['email'],
+      };
+
+      await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema },
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as {
+        options: { outputFormat?: { type: string; schema: Record<string, any> } };
+      };
+      expect(call.options?.outputFormat?.type).toBe('json_schema');
+      const sentSchema = call.options!.outputFormat!.schema;
+      expect(sentSchema.properties.email).toEqual({
+        type: 'string',
+        description: 'Expected format: email',
+      });
+      expect(sentSchema.properties.createdAt).toEqual({
+        type: 'string',
+        description: 'Creation timestamp (expected format: date-time)',
+      });
+      expect(sentSchema.properties.nested.properties.link).toEqual({
+        type: 'string',
+        description: 'Expected format: uri',
+      });
+      // pattern is real enforcement and must be passed through untouched
+      expect(sentSchema.properties.code).toEqual({ type: 'string', pattern: '^[A-Z]+$' });
+      expect(sentSchema.required).toEqual(['email']);
+      // The user's schema object is not mutated
+      expect(schema.properties.email).toEqual({ type: 'string', format: 'email' });
+    });
+
+    it('passes a format-free schema through by reference', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield successResult({ structured_output: { name: 'x' } });
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+      };
+
+      await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema },
+      } as any);
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as {
+        options: { outputFormat?: { schema: unknown } };
+      };
+      expect(call.options?.outputFormat?.schema).toBe(schema);
+    });
+  });
+
+  describe('doGenerate missing structured_output handling', () => {
+    it('recovers by parsing prose JSON when the result lacks structured_output', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: '{"name":"Alice","age":30}' }] },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const textPart = result.content.find((part) => part.type === 'text') as
+        | { type: 'text'; text: string }
+        | undefined;
+      expect(textPart).toBeDefined();
+      expect(JSON.parse(textPart!.text)).toEqual({ name: 'Alice', age: 30 });
+      expect(result.finishReason.unified).toBe('stop');
+    });
+
+    it('recovers JSON from a fenced code block in the prose', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'text',
+                  text: 'Here is the result:\n```json\n{"name":"Bob"}\n```\nDone.',
+                },
+              ],
+            },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const textPart = result.content.find((part) => part.type === 'text') as
+        | { type: 'text'; text: string }
+        | undefined;
+      expect(textPart).toBeDefined();
+      expect(JSON.parse(textPart!.text)).toEqual({ name: 'Bob' });
+    });
+
+    it('treats scalar JSON prose (null, numbers) as unrecoverable and fails loudly', async () => {
+      // 'null' parses as JSON but is not an object/array; letting it through
+      // would just fail downstream with the opaque AI_NoObjectGeneratedError
+      // this path exists to eliminate.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'null' }] },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const promise = model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      await expect(promise).rejects.toThrow(/structured_output/);
+      await promise.catch((error: unknown) => {
+        expect(APICallError.isInstance(error)).toBe(true);
+        expect((error as APICallError).isRetryable).toBe(false);
+      });
+    });
+
+    it('recovers JSON from the final assistant turn in multi-turn tool runs', async () => {
+      // Earlier-turn chatter ('Let me check...') concatenated with the final
+      // JSON does not parse as a whole; the final turn alone must be tried
+      // (mirrors doStream, which resets its accumulator on user messages).
+      const toolUseId = 'toolu_recovery_multiturn';
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                { type: 'text', text: 'Let me check the data first.' },
+                { type: 'tool_use', id: toolUseId, name: 'Read', input: { file_path: '/x' } },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                { type: 'tool_result', tool_use_id: toolUseId, name: 'Read', content: 'data' },
+              ],
+            },
+          };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: '{"name":"Eve"}' }] },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const textPart = result.content.find((part) => part.type === 'text') as
+        | { type: 'text'; text: string }
+        | undefined;
+      expect(textPart).toBeDefined();
+      expect(JSON.parse(textPart!.text)).toEqual({ name: 'Eve' });
+    });
+
+    it('throws a descriptive non-retryable APICallError when the prose is not JSON', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: 'Sorry, I can only answer in plain language.' }],
+            },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const promise = model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      await expect(promise).rejects.toThrow(/structured_output/);
+      await promise.catch((error: unknown) => {
+        expect(APICallError.isInstance(error)).toBe(true);
+        expect((error as APICallError).isRetryable).toBe(false);
+        expect((error as APICallError).message).toContain('schema');
+        expect((error as APICallError).message).toContain('README');
+      });
+    });
+
+    it('does not throw for non-stop finish reasons (preserves max-turns behavior)', async () => {
+      const proseText = 'Partial answer before hitting the turn limit';
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: proseText }] },
+          };
+          yield successResult({ subtype: 'error_max_turns' });
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      expect(result.finishReason.unified).toBe('length');
+      const textPart = result.content.find((part) => part.type === 'text') as
+        | { type: 'text'; text: string }
+        | undefined;
+      expect(textPart?.text).toBe(proseText);
+    });
+  });
+
+  describe('doStream missing structured_output handling', () => {
+    const readAll = async (stream: ReadableStream<unknown>) => {
+      const chunks: any[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      return chunks;
+    };
+
+    it('recovers by parsing accumulated prose JSON when the result lacks structured_output', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: 'Sure:\n```json\n{"name":"Carol"}\n```' }],
+            },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const chunks = await readAll(result.stream);
+
+      expect(chunks.some((c) => c.type === 'error')).toBe(false);
+      const streamedText = chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join('');
+      expect(JSON.parse(streamedText)).toEqual({ name: 'Carol' });
+      expect(chunks.find((c) => c.type === 'finish')).toMatchObject({
+        finishReason: { unified: 'stop' },
+      });
+    });
+
+    it('recovers the final object when prose preceded a tool call in streaming JSON mode', async () => {
+      // Prose accumulated before a tool call must be discarded at the
+      // user/tool-result boundary even though JSON mode never opens a text
+      // part (textPartId stays undefined) - otherwise the recovery parses
+      // "prose + JSON" and fails.
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                { type: 'text', text: 'Let me look that up first.' },
+                { type: 'tool_use', id: 'toolu_json_1', name: 'Read', input: { file: 'x' } },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: 'toolu_json_1',
+                  content: 'data',
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: '{"name":"Dave"}' }] },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const chunks = await readAll(result.stream);
+
+      expect(chunks.some((c) => c.type === 'error')).toBe(false);
+      const streamedText = chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join('');
+      expect(JSON.parse(streamedText)).toEqual({ name: 'Dave' });
+    });
+
+    it('emits a descriptive non-retryable error when the prose is not JSON', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [{ type: 'text', text: 'I cannot answer that as JSON, sorry.' }],
+            },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const chunks = await readAll(result.stream);
+
+      const errorChunk = chunks.find((c) => c.type === 'error');
+      expect(errorChunk).toBeDefined();
+      expect(APICallError.isInstance(errorChunk.error)).toBe(true);
+      expect((errorChunk.error as APICallError).isRetryable).toBe(false);
+      expect((errorChunk.error as APICallError).message).toContain('structured_output');
+      expect((errorChunk.error as APICallError).message).toContain('README');
+      // No finish event - the stream fails instead of delivering prose
+      expect(chunks.some((c) => c.type === 'finish')).toBe(false);
+    });
+
+    it('treats scalar JSON prose as unrecoverable and emits the loud error', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: '42' }] },
+          };
+          yield successResult(); // no structured_output
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const chunks = await readAll(result.stream);
+
+      const errorChunk = chunks.find((c) => c.type === 'error');
+      expect(errorChunk).toBeDefined();
+      expect(APICallError.isInstance(errorChunk.error)).toBe(true);
+      expect((errorChunk.error as APICallError).isRetryable).toBe(false);
+      expect(chunks.some((c) => c.type === 'finish')).toBe(false);
+    });
+
+    it('does not interfere when structured output was already streamed via input_json_delta', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'stream_event',
+            event: {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'input_json_delta', partial_json: '{"name":"Dave"}' },
+            },
+          };
+          yield successResult(); // no structured_output on the result message
+        },
+      };
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      } as any);
+
+      const chunks = await readAll(result.stream);
+
+      expect(chunks.some((c) => c.type === 'error')).toBe(false);
+      const streamedText = chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join('');
+      expect(JSON.parse(streamedText)).toEqual({ name: 'Dave' });
+      expect(chunks.find((c) => c.type === 'finish')).toBeDefined();
     });
   });
 });

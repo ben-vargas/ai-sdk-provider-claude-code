@@ -6,6 +6,17 @@ import { existsSync } from 'fs';
  * Uses Zod for type-safe validation following AI SDK patterns.
  */
 
+/**
+ * The SDK/CLI treats a blank or whitespace-only resume id as absent (there is
+ * no session to resume). This is the single source of truth for that rule so
+ * the "blank means no resume" predicate lives in exactly one place, shared by
+ * both query-time resolution (claude-code-language-model.ts) and
+ * construction-time validation (effectiveResumeId below).
+ */
+export function isBlankResume(value: unknown): boolean {
+  return typeof value === 'string' && value.trim() === '';
+}
+
 // Helper for Zod v3/v4 compatibility
 // Use a simple z.any() for functions to work with both versions
 const loggerFunctionSchema = z.object({
@@ -35,10 +46,12 @@ export const claudeCodeSettingsSchema = z
     systemPrompt: z
       .union([
         z.string(),
+        z.array(z.string()),
         z.object({
           type: z.literal('preset'),
           preset: z.literal('claude_code'),
           append: z.string().optional(),
+          excludeDynamicSections: z.boolean().optional(),
         }),
       ])
       .optional(),
@@ -46,17 +59,23 @@ export const claudeCodeSettingsSchema = z
     maxThinkingTokens: z.number().int().positive().max(100000).optional(),
     thinking: z
       .union([
-        z.object({ type: z.literal('adaptive') }).strict(),
+        z
+          .object({
+            type: z.literal('adaptive'),
+            display: z.enum(['summarized', 'omitted']).optional(),
+          })
+          .strict(),
         z
           .object({
             type: z.literal('enabled'),
             budgetTokens: z.number().int().positive().optional(),
+            display: z.enum(['summarized', 'omitted']).optional(),
           })
           .strict(),
         z.object({ type: z.literal('disabled') }).strict(),
       ])
       .optional(),
-    effort: z.enum(['low', 'medium', 'high', 'max']).optional(),
+    effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
     promptSuggestions: z.boolean().optional(),
     cwd: z
       .string()
@@ -73,13 +92,25 @@ export const claudeCodeSettingsSchema = z
       .optional(),
     executable: z.enum(['bun', 'deno', 'node']).optional(),
     executableArgs: z.array(z.string()).optional(),
+    // Mirrors the SDK 0.3.x PermissionMode union ('auto' and 'dontAsk' were
+    // added in 0.3.x; 'delegate' was dropped AND is rejected by the CLI's
+    // --permission-mode flag parser, so it is rejected here too).
     permissionMode: z
-      .enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'delegate', 'dontAsk'])
+      .enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'])
       .optional(),
     permissionPromptToolName: z.string().optional(),
     continue: z.boolean().optional(),
     resume: z.string().optional(),
-    sessionId: z.string().optional(),
+    // The CLI rejects --session-id values that are not valid UUIDs, so
+    // enforce the UUID shape here instead of failing at query time.
+    sessionId: z
+      .string()
+      .refine(
+        (val) =>
+          /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(val),
+        { message: 'sessionId must be a valid UUID (the CLI rejects non-UUID session IDs)' }
+      )
+      .optional(),
     allowedTools: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional(),
     betas: z.array(z.string()).optional(),
@@ -90,7 +121,9 @@ export const claudeCodeSettingsSchema = z
       .array(
         z
           .object({
-            type: z.string(),
+            // SDK SdkPluginConfig: only 'local' is supported; the SDK throws
+            // 'Unsupported plugin type' at query time for anything else.
+            type: z.literal('local'),
             path: z.string(),
           })
           .passthrough()
@@ -112,6 +145,46 @@ export const claudeCodeSettingsSchema = z
         }),
       ])
       .optional(),
+    skills: z.union([z.array(z.string()), z.literal('all')]).optional(),
+    settings: z
+      .union([
+        z.string(),
+        z.record(z.string(), z.any()), // inline Settings object
+      ])
+      .optional(),
+    managedSettings: z.record(z.string(), z.any()).optional(),
+    toolAliases: z.record(z.string(), z.string()).optional(),
+    toolConfig: z
+      .object({
+        askUserQuestion: z
+          .object({
+            previewFormat: z.enum(['markdown', 'html']).optional(),
+          })
+          .passthrough()
+          .optional(),
+      })
+      .passthrough()
+      .optional(),
+    planModeInstructions: z.string().optional(),
+    title: z.string().optional(),
+    forwardSubagentText: z.boolean().optional(),
+    agentProgressSummaries: z.boolean().optional(),
+    includeHookEvents: z.boolean().optional(),
+    taskBudget: z.object({ total: z.number().positive() }).strict().optional(),
+    sessionStore: z
+      .any()
+      .refine(
+        (val) =>
+          val === undefined ||
+          (typeof val === 'object' &&
+            val !== null &&
+            typeof (val as { append?: unknown }).append === 'function' &&
+            typeof (val as { load?: unknown }).load === 'function'),
+        { message: 'sessionStore must be an object with append() and load() functions' }
+      )
+      .optional(),
+    sessionStoreFlush: z.enum(['batched', 'eager']).optional(),
+    loadTimeoutMs: z.number().int().positive().optional(),
     settingSources: z.array(z.enum(['user', 'project', 'local'])).optional(),
     streamingInput: z.enum(['auto', 'always', 'off']).optional(),
     // Hooks and tool-permission callback (permissive validation of shapes)
@@ -121,6 +194,13 @@ export const claudeCodeSettingsSchema = z
         message: 'canUseTool must be a function',
       })
       .optional(),
+    onUserDialog: z
+      .any()
+      .refine((v) => v === undefined || typeof v === 'function', {
+        message: 'onUserDialog must be a function',
+      })
+      .optional(),
+    supportedDialogKinds: z.array(z.string()).optional(),
     hooks: z
       .record(
         z.string(),
@@ -179,7 +259,8 @@ export const claudeCodeSettingsSchema = z
             tools: z.array(z.string()).optional(),
             disallowedTools: z.array(z.string()).optional(),
             prompt: z.string(),
-            model: z.enum(['sonnet', 'opus', 'haiku', 'inherit']).optional(),
+            // SDK 0.3.x AgentDefinition accepts any model alias or full model ID
+            model: z.string().optional(),
             mcpServers: z
               .array(
                 z.union([
@@ -226,6 +307,13 @@ export const claudeCodeSettingsSchema = z
         message: 'onStreamStart must be a function',
       })
       .optional(),
+    // Callback invoked with the predicted next user prompt (active unless promptSuggestions: false)
+    onPromptSuggestion: z
+      .any()
+      .refine((val) => val === undefined || typeof val === 'function', {
+        message: 'onPromptSuggestion must be a function',
+      })
+      .optional(),
   })
   .strict();
 
@@ -236,7 +324,7 @@ export const claudeCodeSettingsSchema = z
  * @returns Warning message if model is unknown, undefined otherwise
  */
 export function validateModelId(modelId: string): string | undefined {
-  const knownModels = ['opus', 'sonnet', 'haiku'];
+  const knownModels = ['opus', 'sonnet', 'haiku', 'fable'];
 
   // Check for empty or whitespace-only
   if (!modelId || modelId.trim() === '') {
@@ -287,6 +375,96 @@ export function validateSettings(settings: unknown): {
     // Additional validation warnings
     const validSettings = result.data;
 
+    // sdkOptions escape-hatch values are merged over explicit settings at
+    // query time (undefined-valued keys are skipped by the merge), so every
+    // cross-option SDK-constraint check below must inspect the EFFECTIVE
+    // value - the sdkOptions override when defined, the first-class setting
+    // otherwise - on BOTH sides of each constraint.
+    const sdkOptionsRecord = validSettings.sdkOptions as Record<string, unknown> | undefined;
+    const effective = (key: string): unknown => {
+      const override = sdkOptionsRecord?.[key];
+      return override !== undefined ? override : (validSettings as Record<string, unknown>)[key];
+    };
+    const effSessionStore = effective('sessionStore');
+    // The SDK treats a blank/whitespace resume id as absent (no session to
+    // resume), so normalize it for the cross-option checks below.
+    const effectiveResumeId = (): string | undefined => {
+      // Mirror the runtime's getEffectiveResume: pick the first NON-BLANK
+      // candidate (sdkOptions overlay, then first-class setting). Using
+      // effective('resume') alone would let a blank sdkOptions.resume shadow a
+      // real settings.resume, wrongly rejecting a config the query accepts.
+      for (const candidate of [sdkOptionsRecord?.resume, validSettings.resume]) {
+        if (typeof candidate === 'string' && !isBlankResume(candidate)) {
+          return candidate;
+        }
+      }
+      return undefined;
+    };
+
+    // SDK constraint: sessionStore mirroring requires local session writes,
+    // so it cannot be combined with persistSession: false.
+    if (effSessionStore !== undefined && effective('persistSession') === false) {
+      errors.push(
+        'sessionStore cannot be combined with persistSession: false. Transcript mirroring requires local session writes; remove persistSession: false or drop sessionStore.'
+      );
+      return { valid: false, warnings, errors };
+    }
+
+    // SDK constraint: checkpoint backup blobs are not mirrored to a sessionStore,
+    // so rewindFiles() would fail after a store-backed resume. The SDK throws at
+    // query time; reject early here instead.
+    if (effSessionStore !== undefined && effective('enableFileCheckpointing') === true) {
+      errors.push(
+        'sessionStore cannot be combined with enableFileCheckpointing: true. Checkpoint backup blobs are not mirrored to the store (rewindFiles() fails after a store-backed resume); remove enableFileCheckpointing or drop sessionStore.'
+      );
+      return { valid: false, warnings, errors };
+    }
+
+    // SDK constraint: continue with a sessionStore needs store.listSessions()
+    // to discover the most recent session (unless a resume id is given).
+    // The SDK throws at query time; reject early here instead.
+    if (
+      effective('continue') === true &&
+      effSessionStore !== undefined &&
+      effectiveResumeId() === undefined &&
+      typeof (effSessionStore as { listSessions?: unknown }).listSessions !== 'function'
+    ) {
+      errors.push(
+        'continue: true with sessionStore requires the store to implement listSessions() (used to discover the most recent session). Implement listSessions(), pass resume with an explicit session ID, or drop continue.'
+      );
+      return { valid: false, warnings, errors };
+    }
+
+    // SDK constraint: the sandbox option cannot be combined with a settings
+    // FILE PATH (inline Settings objects are fine - the SDK serializes them
+    // to inline JSON). The SDK throws at query time; reject early here instead.
+    const effSettingsOption = effective('settings');
+    if (
+      effective('sandbox') !== undefined &&
+      typeof effSettingsOption === 'string' &&
+      !(effSettingsOption.trim().startsWith('{') && effSettingsOption.trim().endsWith('}'))
+    ) {
+      errors.push(
+        'sandbox cannot be combined with a settings file path. Pass settings as an inline Settings object, or move the sandbox configuration into the settings file and drop the sandbox option.'
+      );
+      return { valid: false, warnings, errors };
+    }
+
+    // CLI constraint: --session-id cannot be combined with --continue or
+    // --resume unless --fork-session is also set (to name the forked
+    // session's ID). The CLI rejects the flags at argv parsing; reject early
+    // here instead.
+    if (
+      effective('sessionId') !== undefined &&
+      effective('forkSession') !== true &&
+      (effective('continue') === true || effectiveResumeId() !== undefined)
+    ) {
+      errors.push(
+        "sessionId cannot be combined with continue or resume unless forkSession: true is also set (it then names the forked session's ID). Remove sessionId, remove continue/resume, or add forkSession: true."
+      );
+      return { valid: false, warnings, errors };
+    }
+
     // Warn about high turn limits
     if (validSettings.maxTurns && validSettings.maxTurns > 20) {
       warnings.push(
@@ -326,11 +504,56 @@ export function validateSettings(settings: unknown): {
       validateToolNames(validSettings.disallowedTools, 'disallowed');
     }
 
-    // Warn about Skills configuration issues
-    if (validSettings.allowedTools?.includes('Skill') && !validSettings.settingSources) {
+    // SDK constraint: a non-empty supportedDialogKinds without an onUserDialog
+    // handler throws at option intake ("declaring dialog kinds without a
+    // handler would park dialogs nothing can answer"), so reject it instead
+    // of warning - the query would fail at startup anyway. An empty list does
+    // not throw, and onUserDialog may arrive via the sdkOptions escape hatch.
+    const effDialogKinds = effective('supportedDialogKinds');
+    if (
+      Array.isArray(effDialogKinds) &&
+      effDialogKinds.length > 0 &&
+      effective('onUserDialog') == null
+    ) {
+      errors.push(
+        'supportedDialogKinds is set without onUserDialog. The SDK requires the onUserDialog callback to render declared dialog kinds and throws when a non-empty list is passed without it; provide onUserDialog or remove supportedDialogKinds.'
+      );
+      return { valid: false, warnings, errors };
+    }
+
+    // Warn about Skills configuration issues. Both allowedTools and
+    // settingSources can arrive via the sdkOptions escape hatch, so inspect
+    // the EFFECTIVE (sdkOptions-overlaid) values to avoid a spurious warning
+    // when settingSources (or allowedTools) is supplied through sdkOptions.
+    const effAllowedTools = effective('allowedTools');
+    if (
+      Array.isArray(effAllowedTools) &&
+      effAllowedTools.includes('Skill') &&
+      !effective('settingSources')
+    ) {
       warnings.push(
         "allowedTools includes 'Skill' but settingSources is not set. Skills require settingSources (e.g., ['user', 'project']) to load skill definitions."
       );
+    }
+
+    // SDK 0.3.x accepts any string for agents[].model (alias or full model ID),
+    // so the schema no longer rejects typos. Warn (but allow) when a value looks
+    // like neither a known alias nor a full model ID, to catch typo'd aliases
+    // at validation time instead of failing later in the CLI.
+    if (validSettings.agents) {
+      const knownAgentModelAliases = ['sonnet', 'opus', 'haiku', 'fable', 'inherit'];
+      for (const [agentName, agent] of Object.entries(validSettings.agents)) {
+        const agentModel = agent.model;
+        if (
+          agentModel !== undefined &&
+          !knownAgentModelAliases.includes(agentModel) &&
+          !agentModel.includes('-')
+        ) {
+          warnings.push(
+            `Unknown model alias '${agentModel}' for agent '${agentName}'. Known aliases are: ${knownAgentModelAliases.join(', ')}; full model IDs (e.g. 'claude-sonnet-4-5') are also accepted.`
+          );
+        }
+      }
     }
 
     return { valid: true, warnings, errors };

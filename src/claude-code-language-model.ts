@@ -1,7 +1,10 @@
 import type {
   LanguageModelV3,
+  LanguageModelV3Content,
   LanguageModelV3FinishReason,
   LanguageModelV3StreamPart,
+  LanguageModelV3ToolCall,
+  LanguageModelV3ToolResult,
   LanguageModelV3Usage,
   SharedV3Warning,
   JSONValue,
@@ -13,11 +16,23 @@ import type { ClaudeCodeSettings, Logger, MessageInjector } from './types.js';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
 import { createAPICallError, createAuthenticationError, createTimeoutError } from './errors.js';
 import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
-import { validateModelId, validatePrompt, validateSessionId } from './validation.js';
+import { validateModelId, validatePrompt, validateSessionId, isBlankResume } from './validation.js';
+import { sanitizeJsonSchemaForOutputFormat } from './sanitize-json-schema.js';
 import { getLogger, createVerboseLogger } from './logger.js';
 
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKUserMessage, SDKPartialAssistantMessage } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  SDKMessage,
+  SDKUserMessage,
+  SDKPartialAssistantMessage,
+} from '@anthropic-ai/claude-agent-sdk';
+
+/**
+ * Provider version reported to the Agent SDK via CLAUDE_AGENT_SDK_CLIENT_APP.
+ * Keep in sync with package.json (kept as a constant to avoid a build step).
+ */
+const PROVIDER_VERSION = '3.5.0';
+const DEFAULT_CLIENT_APP = `ai-sdk-provider-claude-code/${PROVIDER_VERSION}`;
 
 const CLAUDE_CODE_TRUNCATION_WARNING =
   'Claude Code SDK output ended unexpectedly; returning truncated response from buffered text. Await upstream fix to avoid data loss.';
@@ -43,6 +58,7 @@ const MIN_TRUNCATION_LENGTH = 512;
  * @param bufferedText - Accumulated assistant text content (measured in UTF-16 code units)
  * @returns true if error indicates SDK truncation; false otherwise
  */
+// Re-validated against SDK 0.3.170 on 2026-06-09: kept as defensive detection.
 function isClaudeCodeTruncationError(error: unknown, bufferedText: string): boolean {
   // Check for SyntaxError by instanceof or by name (for cross-realm errors)
   const isSyntaxError =
@@ -92,6 +108,78 @@ function isClaudeCodeTruncationError(error: unknown, bufferedText: string): bool
   return true;
 }
 
+/**
+ * Error message thrown when structured output was requested but the CLI
+ * returned neither `structured_output` nor parseable JSON prose. The usual
+ * cause is a schema construct the CLI's constrained decoder cannot enforce
+ * (the CLI then silently falls back to prose instead of erroring).
+ */
+const MISSING_STRUCTURED_OUTPUT_ERROR_MESSAGE =
+  'Structured output was requested (responseFormat with a JSON schema) but the Claude Code CLI returned no structured_output, and the prose response could not be parsed as JSON. ' +
+  'This usually means the schema contains constructs the CLI cannot enforce (e.g. complex regex patterns with lookaheads/backreferences), causing it to silently fall back to prose. ' +
+  "Simplify the generation schema and validate strictly client-side. See the 'Structured Outputs' section of the ai-sdk-provider-claude-code README for the list of known limitations.";
+
+/**
+ * Attempts to recover a JSON object/array from prose text returned when the
+ * CLI silently skipped structured output. Tries the trimmed text first, then
+ * the contents of fenced code blocks (```json ... ``` or ``` ... ```),
+ * last-to-first — when several blocks are present, the final one is most
+ * likely the model's actual answer.
+ *
+ * Only candidates that parse to a JSON object or array count: this recovery
+ * path only runs when `responseFormat.schema` is present (always an
+ * object/array schema in practice), and accepting scalars (prose that trims
+ * to `null`, `true`, or a bare number) would bypass the loud failure only to
+ * fail downstream with the opaque AI_NoObjectGeneratedError this path exists
+ * to eliminate.
+ *
+ * @param text - Accumulated assistant prose text
+ * @returns The valid JSON text (as emitted by the model) or undefined
+ */
+function extractJsonObjectText(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const candidates: string[] = [trimmed];
+  const fencedBlocks = Array.from(trimmed.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/gi))
+    .map((match) => match[1]?.trim())
+    .filter((block): block is string => block !== undefined && block.length > 0);
+  candidates.push(...fencedBlocks.reverse());
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return candidate;
+      }
+      // Scalar JSON (null, booleans, numbers, bare strings) - not a valid
+      // structured output; try the next candidate.
+    } catch {
+      // Try the next candidate
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Extracts the structured error kind attached to errors thrown from result
+ * handling. SDK 0.3.x delivers API failure kinds (SDKAssistantMessageError,
+ * e.g. 'overloaded', 'model_not_found', 'oauth_org_not_allowed') as structured
+ * fields on assistant messages rather than in thrown error text, so
+ * classification must not rely on message substrings alone.
+ */
+function getStructuredErrorKind(error: unknown): string | undefined {
+  if (typeof error === 'object' && error !== null && 'errorKind' in error) {
+    const kind = (error as { errorKind?: unknown }).errorKind;
+    if (typeof kind === 'string') return kind;
+  }
+  return undefined;
+}
+
 function isAbortError(err: unknown): boolean {
   if (err && typeof err === 'object') {
     const e = err as { name?: unknown; code?: unknown };
@@ -105,6 +193,7 @@ const DEFAULT_INHERITED_ENV_VARS =
   process.platform === 'win32'
     ? [
         'APPDATA',
+        'COMSPEC',
         'HOMEDRIVE',
         'HOMEPATH',
         'LOCALAPPDATA',
@@ -122,21 +211,57 @@ const DEFAULT_INHERITED_ENV_VARS =
 
 const CLAUDE_ENV_VARS = ['CLAUDE_CONFIG_DIR'];
 
+// Proxy and TLS configuration needed for the subprocess to reach the API.
+const NETWORK_ENV_VARS = [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+];
+
+// Bedrock/Vertex configuration not covered by the AWS_/GOOGLE_ prefixes.
+const CLOUD_ENV_VARS = ['GCLOUD_PROJECT', 'CLOUD_ML_REGION'];
+
+// Prefix-matched inheritance for auth and cloud-provider configuration
+// (e.g. ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, AWS_PROFILE, GOOGLE_APPLICATION_CREDENTIALS).
+const INHERITED_ENV_PREFIXES = ['ANTHROPIC_', 'CLAUDE_', 'AWS_', 'GOOGLE_'];
+
 function getBaseProcessEnv(): Record<string, string> {
   const env: Record<string, string> = {};
-  const allowedKeys = new Set([...DEFAULT_INHERITED_ENV_VARS, ...CLAUDE_ENV_VARS]);
+  const allowedKeys = new Set([
+    ...DEFAULT_INHERITED_ENV_VARS,
+    ...CLAUDE_ENV_VARS,
+    ...NETWORK_ENV_VARS,
+    ...CLOUD_ENV_VARS,
+  ]);
 
-  for (const key of allowedKeys) {
+  const addIfSafe = (key: string): void => {
     const value = process.env[key];
     if (typeof value !== 'string') {
-      continue;
+      return;
     }
 
+    // Skip exported shell functions (Shellshock-style values).
     if (value.startsWith('()')) {
-      continue;
+      return;
     }
 
     env[key] = value;
+  };
+
+  for (const key of allowedKeys) {
+    addIfSafe(key);
+  }
+
+  for (const key of Object.keys(process.env)) {
+    if (INHERITED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+      addIfSafe(key);
+    }
   }
 
   return env;
@@ -146,6 +271,208 @@ const STREAMING_FEATURE_WARNING =
   "Claude Agent SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
 
 const SDK_OPTIONS_BLOCKLIST = new Set(['model', 'abortController', 'prompt', 'outputFormat']);
+
+/**
+ * Tool names the CLI uses to launch subagents. The CLI bundled with the
+ * pinned SDK (2.1.170) names the tool 'Task' (verified via the init tool
+ * list), while current Agent SDK docs name it 'Agent' with 'Task' as a
+ * backwards-compatible alias — recognize both so parent-hierarchy tracking
+ * survives the upstream rename.
+ */
+const SUBAGENT_TOOL_NAMES = new Set(['Task', 'Agent']);
+
+function isSubagentToolName(name: string): boolean {
+  return SUBAGENT_TOOL_NAMES.has(name);
+}
+
+/**
+ * Resolve a tool's parentToolCallId. SDK 0.3 messages carry a REQUIRED
+ * `parent_tool_use_id: string | null` (string = subagent parent, null =
+ * top-level), so an explicit value — INCLUDING null — is authoritative and
+ * wins over timing inference. The single-active-Task inference is only a
+ * legacy fallback for older CLIs that omit the field (undefined). A `?? `
+ * chain would wrongly treat an explicit null as "missing" and infer a parent,
+ * nesting a top-level tool under an unrelated active Task.
+ */
+function resolveToolParentId(
+  messageLevel: string | null | undefined,
+  blockLevel: string | null | undefined,
+  inferFallback: () => string | null
+): string | null {
+  if (messageLevel !== undefined) return messageLevel;
+  if (typeof blockLevel === 'string') return blockLevel;
+  return inferFallback();
+}
+
+/* ---------------------------------------------------------------------------
+ * Refusal-fallback retraction policy (shared by doGenerate + doStream)
+ *
+ * SDK 0.3.x can RETRACT content the model already produced when a refusal
+ * fallback swaps the answering model mid-turn. Two retraction signals feed the
+ * SAME eviction routine, and the policy below is IDENTICAL in both loops:
+ *
+ *  (P1) Two signals compose idempotently:
+ *         - an assistant message's `supersedes[]` (named on the replacement,
+ *           applied on arrival), and
+ *         - the end-of-turn `model_refusal_fallback` notice's
+ *           `retracted_message_uuids` (the SDK's complete, resolution-time
+ *           eviction record for the turn).
+ *       Re-evicting an already-removed uuid is a no-op, so replaying both is safe.
+ *  (P2) A retracted uuid evicts: text/reasoning segments tagged with it;
+ *       tool-CALL segments tagged with it (and TRANSITIVELY their
+ *       tool-result/tool-error); AND tool-result/tool-error frames tagged with
+ *       THEIR OWN frame uuid even when the originating tool_use was not retracted.
+ *  (P3) A retracted tool-call id becomes a TOMBSTONE so LATE tool_result/
+ *       tool_error frames for that id are DROPPED (not re-synthesized into an
+ *       orphan tool-call), preventing AI SDK asContent() 'Tool call not found.'
+ *  (P4) Retracted Task/subagent tools are removed from activeTaskTools so
+ *       fallback-parent inference is not polluted by a dangling parent.
+ *  (P5) Retraction must NOT depend on the superseding message carrying text of
+ *       its own.
+ *
+ * The MECHANISM differs and is intentionally NOT unified (see evictBuffered /
+ * evictLive at the two call sites):
+ *  - doGenerate buffers a uniform, ordered `contentSegments` array and can
+ *    splice retracted entries out, restoring exact document order; its tool-id
+ *    set is derived from tool-CALL own-uuid AND tool-result/error own-uuid
+ *    membership (a result frame may be named directly).
+ *  - doStream operates on already-emitted wire parts + live toolStates + index
+ *    maps and can only DROP pending (not-yet-callEmitted) state; its tool-id set
+ *    is derived from toolState.messageUuid (results are not buffered as segments).
+ *
+ * The shareable unit is the POLICY (which uuids retract which tool ids), not the
+ * mechanism. {@link computeRetractedToolCallIds} expresses that policy over a
+ * uniform `{ toolCallId, uuid }` descriptor stream so BOTH call sites derive the
+ * tombstone set identically while applying removal in their own structure.
+ * ------------------------------------------------------------------------- */
+
+/** A retraction candidate: a tool id paired with the frame uuid that owns it. */
+type RetractionToolDescriptor = { toolCallId: string; uuid: string | undefined };
+
+/**
+ * Policy (P2/P3): given the retracted uuid set and the tool descriptors a path
+ * exposes, return the set of tool-call ids that must be tombstoned. A descriptor
+ * retracts its tool id iff its own uuid is in the retracted set. doGenerate feeds
+ * tool-call AND tool-result/error descriptors (so a directly-named result frame
+ * tombstones its call); doStream feeds one descriptor per live toolState keyed on
+ * messageUuid. Callers then perform structure-specific removal + activeTaskTools
+ * cleanup (P4).
+ */
+function computeRetractedToolCallIds(
+  retracted: Set<string>,
+  descriptors: Iterable<RetractionToolDescriptor>
+): Set<string> {
+  const ids = new Set<string>();
+  for (const { toolCallId, uuid } of descriptors) {
+    if (uuid !== undefined && retracted.has(uuid)) {
+      ids.add(toolCallId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Policy (P1/P5): the supersede-on-arrival trigger, shared by both loops. When a
+ * superseding assistant message names prior messages in `supersedes[]`, debug-log
+ * and replay them through the path's eviction routine. Returns whether a
+ * supersede was applied (the stream path branches its text-emission on this).
+ * Deliberately does NOT inspect the message's own text — retraction must not
+ * depend on the replacement carrying text (P5).
+ */
+function applySupersede(
+  message: { supersedes?: string[] },
+  evict: (retracted: Set<string>) => void,
+  logger: Logger,
+  // The two loops historically guarded this branch differently for malformed
+  // (out-of-contract) `supersedes` values, and that divergence is preserved
+  // deliberately. doGenerate used a truthiness check
+  // (`message.supersedes && message.supersedes.length > 0`); doStream used an
+  // Array.isArray check. For well-formed `string[] | undefined` SDK values the
+  // two modes are identical — they only diverge on non-array truthy inputs.
+  guard: 'truthy' | 'array' = 'array'
+): boolean {
+  const supersedes = message.supersedes;
+  const triggered =
+    guard === 'truthy'
+      ? Boolean(supersedes && supersedes.length > 0)
+      : Array.isArray(supersedes) && supersedes.length > 0;
+  if (!triggered) {
+    return false;
+  }
+  logger.debug(`[claude-code] Assistant message supersedes ${supersedes!.length} prior message(s)`);
+  evict(new Set<string>(supersedes!));
+  return true;
+}
+
+/**
+ * Policy (P1): build the `onRetractedUuids` thunk handed to handleSystemMessage.
+ * Both loops pass an identical `(uuids) => evict(new Set(uuids))`, replaying the
+ * end-of-turn model_refusal_fallback notice's retracted_message_uuids through the
+ * SAME eviction routine that supersedes uses. Defined once so the "compose the
+ * two retraction signals" contract lives in one place.
+ */
+function buildRetractionEvictor(
+  evict: (retracted: Set<string>) => void
+): (uuids: string[]) => void {
+  return (uuids) => evict(new Set(uuids));
+}
+
+/**
+ * SDK 0.3.x system-message subtypes that are intentionally informational.
+ * The provider debug-logs and ignores them: they carry host/UI telemetry
+ * with no AI SDK stream-part equivalent.
+ *
+ * - 'notification'           REPL-style text notifications (key/priority/timeout)
+ * - 'status'                 spinner status ('requesting'/'compacting' and compact_result/compact_error)
+ * - 'task_updated'           background-task state patches
+ * - 'session_state_changed'  idle/running/requires_action transitions
+ * - 'commands_changed'       mid-session slash-command list refresh
+ * - 'memory_recall'          surfaced memory files/synthesis
+ * - 'plugin_install'         headless plugin installation progress
+ */
+const INFORMATIONAL_SYSTEM_SUBTYPES = new Set<string>([
+  'notification',
+  'status',
+  'task_updated',
+  'session_state_changed',
+  'commands_changed',
+  'memory_recall',
+  'plugin_install',
+]);
+
+/** Narrowed union of SDK system messages (init, api_retry, permission_denied, ...). */
+type SDKSystemMessageVariant = Extract<SDKMessage, { type: 'system' }>;
+
+/**
+ * A tool denial recorded from a `permission_denied` system message or from
+ * the result message's `permission_denials` list (the latter is the only
+ * place PreToolUse-hook denials appear — they bypass canUseTool and emit no
+ * `permission_denied` system event).
+ */
+type PermissionDenialRecord = {
+  toolName: string;
+  toolUseId?: string;
+  reason?: string;
+};
+
+/** Mutable per-request counters surfaced in providerMetadata at finish. */
+type RequestMetadataTracking = {
+  apiRetries: number;
+  permissionDenials: PermissionDenialRecord[];
+  /**
+   * SessionStore transcript-mirror append failures (`mirror_error`). Each is a
+   * DROPPED transcript batch after retries — surfaced (warn-logged + here) so
+   * `sessionStore` consumers aren't told the mirror is intact when it lost
+   * entries. `{ error, sessionId }` per occurrence.
+   */
+  mirrorErrors: Array<{ error: string; sessionId: string }>;
+  /**
+   * Accumulated `thinking_tokens` estimate. The SDK's `estimated_tokens` is a
+   * per-thinking-block running total (not authoritative billed output tokens),
+   * so the per-frame deltas are summed across blocks instead.
+   */
+  estimatedThinkingTokens: number;
+};
 
 type ClaudeToolUse = {
   id: string;
@@ -168,11 +495,38 @@ type ToolErrorPart = {
   toolName: string;
   error: string;
   providerExecuted: true;
+  dynamic: true;
   providerMetadata?: Record<string, JSONValue>;
 };
 
 // Local extension of the AI SDK stream part union to include tool-error.
 type ExtendedStreamPart = LanguageModelV3StreamPart | ToolErrorPart;
+
+/**
+ * `tool-result` part shape shared by doGenerate content and doStream parts.
+ * The V3 type does not declare `providerExecuted` on tool results, but this
+ * provider has always emitted it on the stream path; keep both paths aligned.
+ */
+type ProviderToolResultPart = LanguageModelV3ToolResult & { providerExecuted: true };
+
+/**
+ * Ordered content collected by doGenerate, tagged with the originating
+ * assistant message uuid so refusal-fallback `supersedes` retractions can
+ * drop already-collected parts (text, thinking, AND tool calls) instead of
+ * duplicating or orphaning them.
+ */
+type GenerateContentSegment =
+  | { kind: 'text'; uuid?: string; text: string }
+  | { kind: 'reasoning'; uuid?: string; text: string }
+  | { kind: 'tool-call'; uuid?: string; toolCallId: string; part: LanguageModelV3ToolCall }
+  | { kind: 'tool-result'; uuid?: string; toolCallId: string; part: ProviderToolResultPart }
+  // tool_error blocks carry a V3 `tool-result` part with `isError: true`:
+  // the V3 CONTENT union has no `tool-error` member and AI SDK core's
+  // asContent() silently drops unknown part types, whereas an isError
+  // tool-result round-trips into a proper tool-error content part visible
+  // in generateText steps content. (doStream keeps the provider-extension
+  // tool-error STREAM part, which AI SDK core handles natively.)
+  | { kind: 'tool-error'; uuid?: string; toolCallId: string; part: ProviderToolResultPart };
 
 type ContentBlock = { type: string; [key: string]: unknown };
 
@@ -285,6 +639,8 @@ type ToolStreamState = {
   inputClosed: boolean;
   callEmitted: boolean;
   parentToolCallId?: string | null;
+  /** Uuid of the assistant message this tool belongs to (for supersede retraction). */
+  messageUuid?: string;
 };
 
 /**
@@ -631,6 +987,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
   private static readonly MAX_TOOL_INPUT_WARN = 102_400; // 100KB warning threshold
   private static readonly MAX_DELTA_CALC_SIZE = 10_000; // 10KB delta computation threshold
 
+  // Upper bound for draining post-result messages (prompt_suggestion) so a
+  // lingering CLI subprocess cannot be held open indefinitely after finish.
+  private static readonly PROMPT_SUGGESTION_DRAIN_TIMEOUT_MS = 10_000;
+
   readonly modelId: ClaudeCodeModelId;
   readonly settings: ClaudeCodeSettings;
 
@@ -693,32 +1053,89 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
   }
 
   private getEffectiveResume(sdkOptions?: Partial<Options>): string | undefined {
-    return sdkOptions?.resume ?? this.settings.resume ?? this.sessionId;
-  }
-
-  private extractTextAndThinking(content: unknown): { text: string; thinking: string[] } {
-    if (!Array.isArray(content)) return { text: '', thinking: [] };
-
-    let text = '';
-    const thinking: string[] = [];
-
-    for (const part of content) {
-      if (!isContentBlock(part)) continue;
-      if (part.type === 'text' && typeof part.text === 'string') {
-        text += part.text;
-      } else if (part.type === 'thinking' && typeof part.thinking === 'string') {
-        thinking.push(part.thinking as string);
+    // The SDK treats a blank/whitespace resume id as absent, so skip blanks
+    // rather than letting one shadow a real later candidate or reach the CLI
+    // as `--resume ''`.
+    for (const candidate of [sdkOptions?.resume, this.settings.resume, this.sessionId]) {
+      if (typeof candidate === 'string' && !isBlankResume(candidate)) {
+        return candidate;
       }
     }
+    return undefined;
+  }
 
-    if (text.length > 0 && typeof text !== 'string') {
-      throw new Error('extractTextAndThinking: accumulated text must be a string');
-    }
-    if (thinking.some((t) => typeof t !== 'string')) {
-      throw new Error('extractTextAndThinking: all thinking entries must be strings');
+  /**
+   * Single source of truth for the CLI's `--session-id` exclusivity rule.
+   *
+   * The CLI rejects `--session-id` together with `--resume`/`--continue`
+   * unless `--fork-session` is also set (forkSession then names the forked
+   * session's own ID). This predicate captures "there IS a resume/continue
+   * target AND we are not forking", i.e. the case where a session id must NOT
+   * coexist. It is referenced by both:
+   *   - the pre-merge forwarding guard (via its inverse), which decides whether
+   *     to forward `settings.sessionId` onto the base options, and
+   *   - the post-merge exclusivity drop, which removes any session id that the
+   *     generic sdkOptions overlay (or the auto-resume turn) re-introduced.
+   *
+   * Keeping one definition guarantees both sites agree on what "conflicts with
+   * a session id" means. The mirror in validation.ts (construction-time)
+   * intentionally stays separate: it reads settings+sdkOptions, not a built
+   * opts object.
+   */
+  private static sessionIdConflictsWithResumeOrContinue(args: {
+    resumePresent: boolean;
+    continue: boolean;
+    forkSession: boolean;
+  }): boolean {
+    return (args.resumePresent || args.continue) && !args.forkSession;
+  }
+
+  /**
+   * Owns ALL session-id / resume cross-option resolution on the FINAL merged
+   * options, in the single correct order. Called once, immediately after the
+   * generic sdkOptions overlay in createQueryOptions.
+   *
+   * Two concerns, in this exact order (order matters: step 1 can change whether
+   * step 2 sees a resume target):
+   *
+   *  1. Blank-resume restoration. The overlay copies the raw `sdkOptions.resume`
+   *     verbatim, which can re-introduce a blank/whitespace value over the
+   *     base `resume` that getEffectiveResume already normalized. The SDK treats
+   *     a blank resume as absent, so a blank must NOT clobber the computed
+   *     fallback — restore `effectiveResume` (already blank-stripped; may itself
+   *     be undefined for a genuinely new session) rather than leaving '' or
+   *     forcing undefined, which would erase a real settings.resume / captured
+   *     session id.
+   *
+   *  2. Session-id exclusivity. Drop `opts.sessionId` whenever it conflicts with
+   *     a resume/continue target (see sessionIdConflictsWithResumeOrContinue).
+   *     This runs on the merged opts so it catches a sessionId re-added by the
+   *     sdkOptions overlay AND the auto-resumed second turn (where resume was
+   *     populated from the captured session id). It complements — does not
+   *     replace — the pre-merge forwarding guard, which governs whether
+   *     settings.sessionId was forwarded BEFORE the overlay could mutate
+   *     forkSession/continue/resume.
+   */
+  private applySessionResolution(
+    opts: Partial<Options> & Record<string, unknown>,
+    effectiveResume?: string
+  ): void {
+    // Step 1: restore blank-stripped resume (see doc comment).
+    if (isBlankResume(opts.resume)) {
+      opts.resume = effectiveResume;
     }
 
-    return { text, thinking };
+    // Step 2: enforce --session-id exclusivity on the merged opts.
+    if (
+      opts.sessionId !== undefined &&
+      ClaudeCodeLanguageModel.sessionIdConflictsWithResumeOrContinue({
+        resumePresent: opts.resume !== undefined,
+        continue: opts.continue === true,
+        forkSession: opts.forkSession === true,
+      })
+    ) {
+      opts.sessionId = undefined;
+    }
   }
 
   private extractToolUses(content: unknown): ClaudeToolUse[] {
@@ -857,6 +1274,192 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     return result;
   }
 
+  /**
+   * Builds a provider-executed `tool-call` part from an assistant `tool_use`
+   * block. Shared by doGenerate (content part) and doStream (stream part) so
+   * the two paths cannot drift in field shape.
+   */
+  private buildToolCallPart(
+    toolCallId: string,
+    toolName: string,
+    input: string,
+    parentToolCallId: string | null | undefined
+  ): LanguageModelV3ToolCall {
+    return {
+      type: 'tool-call',
+      toolCallId,
+      toolName,
+      input,
+      providerExecuted: true,
+      dynamic: true, // V3 field: indicates tool is provider-defined (not in user's tools map)
+      providerMetadata: {
+        'claude-code': {
+          // rawInput preserves the original serialized format before AI SDK normalization.
+          // Use this if you need the exact string sent to the Claude CLI, which may differ
+          // from the `input` field after AI SDK processing.
+          rawInput: input,
+          parentToolCallId: parentToolCallId ?? null,
+        },
+      },
+    };
+  }
+
+  /**
+   * Builds a provider-executed `tool-result` part from a user-message
+   * `tool_result` block, applying normalization and `maxToolResultSize`
+   * truncation. Shared by doGenerate and doStream.
+   */
+  private buildToolResultPart(
+    toolCallId: string,
+    toolName: string,
+    result: unknown,
+    isError: boolean,
+    parentToolCallId: string | null | undefined
+  ): ProviderToolResultPart {
+    const normalizedResult = this.normalizeToolResult(result);
+    const rawResult =
+      typeof result === 'string'
+        ? result
+        : result === undefined
+          ? // tool_result blocks may omit `content` entirely; '' keeps both
+            // `result` (NonNullable<JSONValue>) and rawResult (JSONValue) valid.
+            ''
+          : (() => {
+              try {
+                // JSON.stringify returns undefined (not a string) for
+                // non-serializable values such as functions or symbols.
+                return JSON.stringify(result) ?? String(result);
+              } catch {
+                return String(result);
+              }
+            })();
+    const maxToolResultSize = this.settings.maxToolResultSize;
+    const truncatedResult = truncateToolResultForStream(normalizedResult, maxToolResultSize);
+    const truncatedRawResult = truncateToolResultForStream(rawResult, maxToolResultSize) as string;
+    const rawResultTruncated = truncatedRawResult !== rawResult;
+
+    return {
+      type: 'tool-result',
+      toolCallId,
+      toolName,
+      // `?? ''`: absent `content` (undefined) and string results that
+      // normalize to JSON null (e.g. the string "null") must not violate the
+      // NonNullable<JSONValue> contract of LanguageModelV3ToolResult.result.
+      result: (truncatedResult ?? '') as NonNullable<JSONValue>,
+      isError,
+      providerExecuted: true,
+      dynamic: true, // V3 field: indicates tool is provider-defined
+      providerMetadata: {
+        'claude-code': {
+          // rawResult preserves the original CLI output string before JSON parsing.
+          // Use this when you need the exact string returned by the tool, especially
+          // if the `result` field has been parsed/normalized and you need the original format.
+          rawResult: truncatedRawResult,
+          rawResultTruncated,
+          parentToolCallId: parentToolCallId ?? null,
+        },
+      },
+    };
+  }
+
+  private serializeToolError(error: unknown): string {
+    return typeof error === 'string'
+      ? error
+      : typeof error === 'object' && error !== null
+        ? (() => {
+            try {
+              return JSON.stringify(error) ?? String(error);
+            } catch {
+              return String(error);
+            }
+          })()
+        : String(error);
+  }
+
+  /**
+   * Builds a provider-executed `tool-error` STREAM part from a user-message
+   * `tool_error` block (doStream only; AI SDK core handles tool-error stream
+   * parts natively).
+   */
+  private buildToolErrorPart(
+    toolCallId: string,
+    toolName: string,
+    error: unknown,
+    parentToolCallId: string | null | undefined
+  ): ToolErrorPart {
+    const rawError = this.serializeToolError(error);
+
+    return {
+      type: 'tool-error',
+      toolCallId,
+      toolName,
+      error: rawError,
+      providerExecuted: true,
+      dynamic: true, // V3 field: indicates tool is provider-defined
+      providerMetadata: {
+        'claude-code': {
+          rawError,
+          parentToolCallId: parentToolCallId ?? null,
+        },
+      },
+    };
+  }
+
+  /**
+   * Builds a V3 `tool-result` CONTENT part with `isError: true` from a
+   * user-message `tool_error` block (doGenerate only). The V3 content union
+   * has no `tool-error` member and AI SDK core's asContent() silently drops
+   * unknown content part types, so an extension tool-error part would never
+   * reach `generateText` users — an isError tool-result, by contrast,
+   * round-trips into a proper tool-error part in steps content.
+   */
+  private buildToolErrorResultPart(
+    toolCallId: string,
+    toolName: string,
+    error: unknown,
+    parentToolCallId: string | null | undefined
+  ): ProviderToolResultPart {
+    const rawError = this.serializeToolError(error);
+
+    return {
+      type: 'tool-result',
+      toolCallId,
+      toolName,
+      result: rawError,
+      isError: true,
+      providerExecuted: true,
+      dynamic: true, // V3 field: indicates tool is provider-defined
+      providerMetadata: {
+        'claude-code': {
+          rawError,
+          parentToolCallId: parentToolCallId ?? null,
+        },
+      },
+    };
+  }
+
+  /**
+   * Policy (P3): late-frame drop guard, shared by all four tool_result/tool_error
+   * sites (doGenerate result+error, doStream result+error). When a frame's tool
+   * id is tombstoned (its tool-call was retracted by a supersede/refusal-fallback
+   * signal), the frame must be DROPPED rather than re-synthesized into an orphan
+   * tool-call. Centralizing the predicate + debug message keeps the four sites in
+   * lockstep so a future tombstone change can't be applied to only some of them.
+   */
+  private isRetractedToolFrame(
+    id: string,
+    tombstone: Set<string>,
+    frameKind: 'result' | 'error'
+  ): boolean {
+    if (!tombstone.has(id)) {
+      return false;
+    }
+    this.logger.debug(
+      `[claude-code] Dropping tool ${frameKind} for retracted (superseded) tool ID: ${id}`
+    );
+    return true;
+  }
+
   private generateAllWarnings(
     options:
       | Parameters<LanguageModelV3['doGenerate']>[0]
@@ -885,6 +1488,35 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           details: `Claude Code SDK does not support the ${param} parameter. It will be ignored.`,
         });
       }
+    }
+
+    // AI SDK tool definitions cannot be auto-bridged: the Claude Code CLI
+    // executes its own tools, and at the provider layer `options.tools` only
+    // carries declarations (the execute functions never reach the provider).
+    if (options.tools !== undefined && options.tools.length > 0) {
+      warnings.push({
+        type: 'unsupported',
+        feature: 'tools',
+        details:
+          'The Claude Code CLI executes its own tools; AI SDK tools cannot be auto-bridged at the provider layer and will be ignored. To expose custom tools to the CLI, build an in-process MCP server with the createAiSdkMcpServer helper (exported by this package) and pass it via the mcpServers setting (plus allowedTools).',
+      });
+    }
+
+    if (options.toolChoice !== undefined && options.toolChoice.type !== 'auto') {
+      warnings.push({
+        type: 'unsupported',
+        feature: 'toolChoice',
+        details: `Claude Code CLI does not support toolChoice '${options.toolChoice.type}'. Only automatic tool selection is available; the toolChoice parameter will be ignored.`,
+      });
+    }
+
+    if (options.maxOutputTokens !== undefined) {
+      warnings.push({
+        type: 'unsupported',
+        feature: 'maxOutputTokens',
+        details:
+          'Claude Code CLI does not accept an output token cap. The maxOutputTokens parameter will be ignored.',
+      });
     }
 
     // Add model validation warning if present
@@ -936,7 +1568,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     const opts: Partial<Options> & Record<string, unknown> = {
       model: this.getModel(),
       abortController,
-      resume: effectiveResume ?? this.settings.resume ?? this.sessionId,
+      resume: effectiveResume,
       pathToClaudeCodeExecutable: this.settings.pathToClaudeCodeExecutable,
       maxTurns: this.settings.maxTurns,
       maxThinkingTokens: this.settings.maxThinkingTokens,
@@ -962,6 +1594,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       mcpServers: this.settings.mcpServers,
       canUseTool: this.settings.canUseTool,
     };
+    // Blocking user-dialog handling (SDK fails closed without these: the CLI
+    // never emits a dialog kind that is not declared in supportedDialogKinds,
+    // and the dialog-gated flow degrades to its no-dialog behavior).
+    if (this.settings.onUserDialog !== undefined) {
+      opts.onUserDialog = this.settings.onUserDialog;
+    }
+    if (this.settings.supportedDialogKinds !== undefined) {
+      opts.supportedDialogKinds = this.settings.supportedDialogKinds;
+    }
     // NEW: Agent SDK options with legacy mapping
     if (this.settings.systemPrompt !== undefined) {
       opts.systemPrompt = this.settings.systemPrompt;
@@ -984,12 +1625,61 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     }
     if (this.settings.settingSources !== undefined) {
       opts.settingSources = this.settings.settingSources;
+    } else {
+      // SDK 0.3.x flipped the default: omitting settingSources now loads ALL
+      // filesystem settings (CLI behavior). Pin to [] to preserve the provider's
+      // documented isolation default. Users can opt in via settings.settingSources
+      // or override through sdkOptions (applied after this block).
+      opts.settingSources = [];
     }
     if (this.settings.additionalDirectories !== undefined) {
       opts.additionalDirectories = this.settings.additionalDirectories;
     }
     if (this.settings.agents !== undefined) {
       opts.agents = this.settings.agents;
+    }
+    if (this.settings.skills !== undefined) {
+      opts.skills = this.settings.skills;
+    }
+    if (this.settings.settings !== undefined) {
+      opts.settings = this.settings.settings;
+    }
+    if (this.settings.managedSettings !== undefined) {
+      opts.managedSettings = this.settings.managedSettings;
+    }
+    if (this.settings.toolAliases !== undefined) {
+      opts.toolAliases = this.settings.toolAliases;
+    }
+    if (this.settings.toolConfig !== undefined) {
+      opts.toolConfig = this.settings.toolConfig;
+    }
+    if (this.settings.planModeInstructions !== undefined) {
+      opts.planModeInstructions = this.settings.planModeInstructions;
+    }
+    if (this.settings.title !== undefined) {
+      opts.title = this.settings.title;
+    }
+    if (this.settings.forwardSubagentText !== undefined) {
+      opts.forwardSubagentText = this.settings.forwardSubagentText;
+    }
+    if (this.settings.agentProgressSummaries !== undefined) {
+      opts.agentProgressSummaries = this.settings.agentProgressSummaries;
+    }
+    if (this.settings.includeHookEvents !== undefined) {
+      opts.includeHookEvents = this.settings.includeHookEvents;
+    }
+    // Alpha Agent SDK options (subject to upstream change)
+    if (this.settings.taskBudget !== undefined) {
+      opts.taskBudget = this.settings.taskBudget;
+    }
+    if (this.settings.sessionStore !== undefined) {
+      opts.sessionStore = this.settings.sessionStore;
+    }
+    if (this.settings.sessionStoreFlush !== undefined) {
+      opts.sessionStoreFlush = this.settings.sessionStoreFlush;
+    }
+    if (this.settings.loadTimeoutMs !== undefined) {
+      opts.loadTimeoutMs = this.settings.loadTimeoutMs;
     }
     if (this.settings.includePartialMessages !== undefined) {
       opts.includePartialMessages = this.settings.includePartialMessages;
@@ -1016,7 +1706,31 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     if (this.settings.hooks) {
       opts.hooks = this.settings.hooks;
     }
-    if (this.settings.sessionId !== undefined) {
+    // The CLI rejects --session-id combined with --resume/--continue unless
+    // --fork-session is also set. On multi-turn conversations the provider
+    // auto-resumes via the captured session ID (which already IS the custom
+    // ID), so only forward sessionId while no resume/continue target exists —
+    // or when the user opted into forking (sessionId then names the fork's
+    // ID). forkSession and continue may arrive via the sdkOptions escape
+    // hatch (merged below, after this decision), so honor the effective
+    // values here. (opts.resume already reflects sdkOptions.resume via
+    // effectiveResume.)
+    // Read the EFFECTIVE fork/continue values (sdkOptions override settings via
+    // `??`, so an explicit `sdkOptions.forkSession: false` correctly overrides
+    // `settings.forkSession: true`). opts.resume already reflects sdkOptions via
+    // effectiveResume. Forward settings.sessionId only when it would NOT conflict
+    // with a resume/continue target — i.e. the inverse of the same exclusivity
+    // predicate the post-merge drop uses, so the rule has one textual home.
+    const effectiveForkSession = sdkOptions?.forkSession ?? this.settings.forkSession;
+    const effectiveContinue = sdkOptions?.continue ?? this.settings.continue;
+    if (
+      this.settings.sessionId !== undefined &&
+      !ClaudeCodeLanguageModel.sessionIdConflictsWithResumeOrContinue({
+        resumePresent: opts.resume !== undefined,
+        continue: effectiveContinue === true,
+        forkSession: effectiveForkSession === true,
+      })
+    ) {
       opts.sessionId = this.settings.sessionId;
     }
     if (this.settings.debug !== undefined) {
@@ -1041,7 +1755,29 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       const rest = { ...sdkOverrides };
       delete rest.env;
       delete rest.stderr;
-      Object.assign(opts, rest);
+      // Skip undefined-valued keys: conditionally-built sdkOptions (e.g.
+      // `{ settingSources: maybeSources }` with maybeSources === undefined) must
+      // not clobber pinned defaults. On SDK 0.3.x an undefined settingSources
+      // loads ALL filesystem settings, silently defeating the isolation default.
+      for (const [key, value] of Object.entries(rest)) {
+        if (value !== undefined) {
+          opts[key] = value;
+        }
+      }
+    }
+
+    // Resolve all session-id / resume cross-option rules on the FINAL merged
+    // options: blank-resume restoration then --session-id exclusivity, in that
+    // order. See applySessionResolution for the full rationale.
+    this.applySessionResolution(opts, effectiveResume);
+
+    // SDK constraint: fallbackModel must differ from the main model (the SDK
+    // throws while building CLI args at query time). Reject early with
+    // guidance instead. Mirrors the SDK's naive string equality check.
+    if (typeof opts.fallbackModel === 'string' && opts.fallbackModel === opts.model) {
+      throw new Error(
+        `fallbackModel cannot be the same as the model ('${String(opts.model)}'). Specify a different model for fallbackModel, or remove it.`
+      );
     }
 
     // Wrap stderr callback to also collect data for error reporting
@@ -1053,16 +1789,42 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       };
     }
 
-    if (this.settings.env !== undefined || sdkEnv !== undefined) {
-      const baseEnv = getBaseProcessEnv();
-      opts.env = { ...baseEnv, ...this.settings.env, ...sdkEnv };
+    // SDK 0.3.x: Options.env REPLACES the subprocess environment entirely (0.2.x
+    // effectively merged with process.env). The provider always constructs the full
+    // environment from a sanitizing allowlist so behavior is deterministic.
+    // Merge order: allowlisted process env, then settings.env, then sdkOptions.env
+    // (user values win; explicit `undefined` removes a variable).
+    const mergedEnv: Record<string, string | undefined> = {
+      ...getBaseProcessEnv(),
+      ...this.settings.env,
+      ...sdkEnv,
+    };
+    // Identify this provider to the SDK (User-Agent) unless already set via
+    // process env (inherited above), settings.env, or sdkOptions.env.
+    if (!('CLAUDE_AGENT_SDK_CLIENT_APP' in mergedEnv)) {
+      mergedEnv.CLAUDE_AGENT_SDK_CLIENT_APP = DEFAULT_CLIENT_APP;
     }
+    opts.env = mergedEnv;
 
-    // Native structured outputs (SDK 0.1.45+)
+    // Native structured outputs (SDK 0.1.45+). The schema is sanitized first:
+    // the CLI silently drops structured_output entirely when the schema
+    // contains `format` keywords (date-time, email, uri, uuid, ...), so they
+    // are stripped client-side with the hint folded into descriptions. This
+    // loses nothing: generateObject/streamObject validate against the user's
+    // original Zod schema client-side, so .email()/.datetime() enforcement is
+    // preserved.
     if (responseFormat?.type === 'json' && responseFormat.schema) {
+      const { schema: sanitizedSchema, strippedFormatPaths } = sanitizeJsonSchemaForOutputFormat(
+        responseFormat.schema as Record<string, unknown>
+      );
+      if (strippedFormatPaths.length > 0) {
+        this.logger.debug(
+          `[claude-code] Stripped unsupported 'format' keywords from outputFormat schema (hints folded into descriptions; client-side Zod validation still enforces them) at: ${strippedFormatPaths.join(', ')}`
+        );
+      }
       opts.outputFormat = {
         type: 'json_schema',
-        schema: responseFormat.schema as Record<string, unknown>,
+        schema: sanitizedSchema,
       };
     }
 
@@ -1078,6 +1840,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     if (isAbortError(error)) {
       // Return the abort reason if available, otherwise the error itself
       throw error;
+    }
+
+    // Already-classified provider errors (e.g. the missing-structured-output
+    // failure thrown from result handling) pass through unchanged instead of
+    // being re-wrapped with their metadata dropped.
+    if (error instanceof APICallError || error instanceof LoadAPIKeyError) {
+      return error;
     }
 
     // Type guard for error with properties
@@ -1102,16 +1871,24 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       'claude auth login',
       '/login', // CLI returns "Please run /login"
       'invalid api key',
+      'oauth_org_not_allowed', // SDK 0.3.x assistant error kind: OAuth org not permitted
     ];
 
     const errorMessage =
       isErrorWithMessage(error) && error.message ? error.message.toLowerCase() : '';
 
+    // Structured kind (SDKAssistantMessageError) propagated from result handling;
+    // preferred over substring matching since SDK error text need not contain it.
+    const errorKind = getStructuredErrorKind(error);
+
     const exitCode =
       isErrorWithCode(error) && typeof error.exitCode === 'number' ? error.exitCode : undefined;
 
     const isAuthError =
-      authErrorPatterns.some((pattern) => errorMessage.includes(pattern)) || exitCode === 401;
+      errorKind === 'authentication_failed' ||
+      errorKind === 'oauth_org_not_allowed' ||
+      authErrorPatterns.some((pattern) => errorMessage.includes(pattern)) ||
+      exitCode === 401;
 
     if (isAuthError) {
       return createAuthenticationError({
@@ -1134,17 +1911,54 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       });
     }
 
+    // Use error.stderr if available from SDK, otherwise use collected stderr
+    const stderrFromError =
+      isErrorWithCode(error) && typeof error.stderr === 'string' ? error.stderr : undefined;
+    const stderr = stderrFromError || collectedStderr || undefined;
+
+    // SDK 0.3.x assistant error kinds: API overload / rate limit — transient, safe to retry.
+    if (
+      errorKind === 'overloaded' ||
+      errorKind === 'rate_limit' ||
+      errorMessage.includes('overloaded')
+    ) {
+      return createAPICallError({
+        message:
+          isErrorWithMessage(error) && error.message
+            ? error.message
+            : 'Anthropic API is overloaded. Please retry.',
+        code: errorCode || undefined,
+        exitCode,
+        stderr,
+        promptExcerpt: messagesPrompt.substring(0, 200),
+        isRetryable: true,
+      });
+    }
+
+    // SDK 0.3.x assistant error kind: requested model does not exist — not retryable.
+    if (
+      errorKind === 'model_not_found' ||
+      errorMessage.includes('model_not_found') ||
+      errorMessage.includes('no such model')
+    ) {
+      const originalMessage =
+        isErrorWithMessage(error) && error.message ? error.message : 'Model not found';
+      return createAPICallError({
+        message: `${originalMessage}. The requested model was not found. Verify the model id passed to the provider (e.g. 'opus', 'sonnet', 'haiku', or a full model name) and that your account has access to it.`,
+        code: errorCode || undefined,
+        exitCode,
+        stderr,
+        promptExcerpt: messagesPrompt.substring(0, 200),
+        isRetryable: false,
+      });
+    }
+
     // Create general API call error with appropriate retry flag
     const isRetryable =
       errorCode === 'ENOENT' ||
       errorCode === 'ECONNREFUSED' ||
       errorCode === 'ETIMEDOUT' ||
       errorCode === 'ECONNRESET';
-
-    // Use error.stderr if available from SDK, otherwise use collected stderr
-    const stderrFromError =
-      isErrorWithCode(error) && typeof error.stderr === 'string' ? error.stderr : undefined;
-    const stderr = stderrFromError || collectedStderr || undefined;
 
     return createAPICallError({
       message: isErrorWithMessage(error) && error.message ? error.message : 'Claude Code SDK error',
@@ -1201,6 +2015,182 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     this.logger.warn(`[claude-code] MCP servers not connected: ${details}`);
   }
 
+  /**
+   * Handles SDK 0.3.x system messages other than 'init', shared by doGenerate
+   * and doStream:
+   * - 'api_retry' is counted into providerMetadata (`apiRetries`) and debug-logged.
+   * - 'permission_denied' is warn-logged and recorded into providerMetadata
+   *   (`permissionDenials`); without this a denial is invisible until the
+   *   model talks about it.
+   * - 'model_refusal_fallback' is debug-logged (the superseding assistant
+   *   message is handled by the text-dedup guard in the message loops).
+   * - 'thinking_tokens' deltas are accumulated into providerMetadata
+   *   (`estimatedThinkingTokens`); the estimate is explicitly not the
+   *   authoritative billed output tokens, so it is surfaced as metadata
+   *   instead of feeding `usage.outputTokens.reasoning`.
+   * - The subtypes in {@link INFORMATIONAL_SYSTEM_SUBTYPES} are intentionally
+   *   informational and only debug-logged.
+   */
+  private handleSystemMessage(
+    message: SDKSystemMessageVariant,
+    tracking: RequestMetadataTracking,
+    onRetractedUuids?: (uuids: string[]) => void
+  ): void {
+    switch (message.subtype) {
+      case 'api_retry':
+        tracking.apiRetries += 1;
+        this.logger.debug(
+          `[claude-code] API retry ${message.attempt}/${message.max_retries} in ${message.retry_delay_ms}ms - Status: ${message.error_status ?? 'unknown'}, Error: ${message.error}`
+        );
+        break;
+      case 'permission_denied': {
+        const reason = message.decision_reason ?? message.message;
+        tracking.permissionDenials.push({
+          toolName: message.tool_name,
+          toolUseId: message.tool_use_id,
+          ...(reason !== undefined && { reason }),
+        });
+        this.logger.warn(
+          `[claude-code] Permission denied - Tool: ${message.tool_name}${reason ? `, Reason: ${reason}` : ''}`
+        );
+        break;
+      }
+      case 'mirror_error': {
+        // SessionStore.append() failed after retries and the transcript batch
+        // was DROPPED. Not informational: the response still succeeds, so warn
+        // and record it in providerMetadata so sessionStore consumers can
+        // detect the gap instead of trusting a silently-incomplete mirror.
+        const mirrorError = (message as { error?: string }).error ?? 'unknown error';
+        const mirrorSessionId =
+          (message as { key?: { sessionId?: string } }).key?.sessionId ??
+          (message as { session_id?: string }).session_id ??
+          'unknown';
+        tracking.mirrorErrors.push({ error: mirrorError, sessionId: mirrorSessionId });
+        this.logger.warn(
+          `[claude-code] SessionStore mirror error (transcript batch dropped) - Session: ${mirrorSessionId}, Error: ${mirrorError}`
+        );
+        break;
+      }
+      case 'model_refusal_fallback': {
+        this.logger.debug(
+          `[claude-code] Model refusal fallback - ${message.original_model} -> ${message.fallback_model} (direction: ${message.direction})`
+        );
+        // The end-of-turn notice carries retracted_message_uuids - the
+        // complete, resolution-time eviction record for the turn (including
+        // tombstoned tool_result frames the per-message `supersedes` may not
+        // have named). Replay it through the caller's eviction routine;
+        // eviction is idempotent so already-retracted uuids are a no-op.
+        const retractedUuids = (message as { retracted_message_uuids?: string[] })
+          .retracted_message_uuids;
+        if (onRetractedUuids && retractedUuids && retractedUuids.length > 0) {
+          this.logger.debug(
+            `[claude-code] Refusal fallback retracts ${retractedUuids.length} message uuid(s)`
+          );
+          onRetractedUuids(retractedUuids);
+        }
+        break;
+      }
+      case 'thinking_tokens':
+        // `estimated_tokens` is a running total for the current thinking block
+        // only, so accumulate the per-frame delta to cover multi-block requests.
+        tracking.estimatedThinkingTokens += message.estimated_tokens_delta;
+        this.logger.debug(
+          `[claude-code] Thinking tokens estimate - block total: ${message.estimated_tokens}, delta: ${message.estimated_tokens_delta}, accumulated: ${tracking.estimatedThinkingTokens}`
+        );
+        break;
+      default:
+        if (INFORMATIONAL_SYSTEM_SUBTYPES.has(message.subtype)) {
+          this.logger.debug(
+            `[claude-code] Ignoring informational system message: ${message.subtype}`
+          );
+        } else {
+          this.logger.debug(`[claude-code] Unhandled system message subtype: ${message.subtype}`);
+        }
+        break;
+    }
+  }
+
+  /**
+   * Merges the result message's `permission_denials` list into the tracked
+   * denials. PreToolUse-hook denies bypass canUseTool and emit no
+   * `permission_denied` system event (per the SDK docs on
+   * SDKPermissionDeniedMessage), so the result list is the only place they
+   * surface. Entries already recorded from stream-time events are deduped by
+   * `tool_use_id`.
+   */
+  private mergeResultPermissionDenials(
+    message: { permission_denials?: Array<{ tool_name: string; tool_use_id: string }> },
+    tracking: RequestMetadataTracking
+  ): void {
+    for (const denial of message.permission_denials ?? []) {
+      const alreadyTracked = tracking.permissionDenials.some(
+        (d) => d.toolUseId !== undefined && d.toolUseId === denial.tool_use_id
+      );
+      if (!alreadyTracked) {
+        tracking.permissionDenials.push({
+          toolName: denial.tool_name,
+          toolUseId: denial.tool_use_id,
+        });
+      }
+    }
+  }
+
+  /**
+   * Bounded post-result drain for the `prompt_suggestion` message
+   * (promptSuggestions: true), shared by doGenerate and doStream. The
+   * suggestion arrives AFTER the result message; the SDK emits at most one
+   * per turn, so stop once it is delivered, and a timeout closes the
+   * iterator (tearing down the subprocess) if the CLI lingers after the
+   * result without emitting one. Advances the response's own generator, so
+   * the caller's surrounding loop resumes to a finished iterator.
+   */
+  private async drainPromptSuggestion(
+    response: AsyncIterable<SDKMessage>,
+    onPromptSuggestion: (suggestion: string) => void
+  ): Promise<void> {
+    const iterator = response[Symbol.asyncIterator]();
+    let drainTimer: ReturnType<typeof setTimeout> | undefined;
+    const drainTimeout = new Promise<'timeout'>((resolve) => {
+      drainTimer = setTimeout(
+        () => resolve('timeout'),
+        ClaudeCodeLanguageModel.PROMPT_SUGGESTION_DRAIN_TIMEOUT_MS
+      );
+      (drainTimer as { unref?: () => void }).unref?.();
+    });
+    try {
+      while (true) {
+        const winner = await Promise.race([iterator.next(), drainTimeout]);
+        if (winner === 'timeout') {
+          this.logger.debug('[claude-code] Post-result drain timed out; closing SDK iterator');
+          // Fire-and-forget: return() may not settle while the subprocess is
+          // wedged, and the response has already been produced.
+          void iterator.return?.().catch(() => {});
+          break;
+        }
+        if (winner.done) {
+          break;
+        }
+        const trailingMessage = winner.value;
+        this.logger.debug(`[claude-code] Post-result message type: ${trailingMessage.type}`);
+        if (trailingMessage.type === 'prompt_suggestion') {
+          onPromptSuggestion(trailingMessage.suggestion);
+          // At most one prompt_suggestion per turn (SDK contract).
+          void iterator.return?.().catch(() => {});
+          break;
+        }
+      }
+    } catch (drainError: unknown) {
+      // Never fail the (already produced) response over post-result drain issues.
+      this.logger.debug(
+        `[claude-code] Error draining post-result messages: ${drainError instanceof Error ? drainError.message : String(drainError)}`
+      );
+    } finally {
+      if (drainTimer !== undefined) {
+        clearTimeout(drainTimer);
+      }
+    }
+  }
+
   async doGenerate(
     options: Parameters<LanguageModelV3['doGenerate']>[0]
   ): Promise<Awaited<ReturnType<LanguageModelV3['doGenerate']>>> {
@@ -1223,9 +2213,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     if (options.abortSignal?.aborted) {
       // Propagate already-aborted state immediately with original reason
       abortController.abort(options.abortSignal.reason);
-    } else if (options.abortSignal) {
-      abortListener = () => abortController.abort(options.abortSignal?.reason);
-      options.abortSignal.addEventListener('abort', abortListener, { once: true });
     }
 
     // Collect stderr for error reporting (SDK may not include it in errors)
@@ -1236,6 +2223,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
     const sdkOptions = this.getSanitizedSdkOptions();
     const effectiveResume = this.getEffectiveResume(sdkOptions);
+    // createQueryOptions can throw (e.g. fallbackModel === model); attach the
+    // abort listener only AFTER it succeeds so an early throw cannot leave a
+    // listener on a long-lived caller AbortSignal.
     const queryOptions = this.createQueryOptions(
       abortController,
       options.responseFormat,
@@ -1243,16 +2233,127 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       sdkOptions,
       effectiveResume
     );
+    if (options.abortSignal && !options.abortSignal.aborted) {
+      abortListener = () => abortController.abort(options.abortSignal?.reason);
+      options.abortSignal.addEventListener('abort', abortListener, { once: true });
+    }
 
     let text = '';
-    const thinkingTraces: string[] = [];
+    // Ordered, uuid-tagged content segments (text, thinking, tool parts) in
+    // arrival order, so refusal-fallback `supersedes` retractions can drop
+    // already-collected content instead of duplicating it, and so tool parts
+    // interleave with text/reasoning in the final content array.
+    const contentSegments: GenerateContentSegment[] = [];
+    const joinTextSegments = () =>
+      contentSegments
+        .filter((segment) => segment.kind === 'text')
+        .map((segment) => segment.text)
+        .join('');
+    // Text of the final assistant turn only: segments after the last
+    // user-message-derived segment (tool-result/tool-error). Mirrors
+    // doStream's accumulator reset on user messages, so JSON recovery in
+    // multi-turn tool runs is not defeated by earlier-turn chatter.
+    const joinFinalTurnTextSegments = () => {
+      let start = 0;
+      for (let i = 0; i < contentSegments.length; i++) {
+        const kind = contentSegments[i]?.kind;
+        if (kind === 'tool-result' || kind === 'tool-error') {
+          start = i + 1;
+        }
+      }
+      return contentSegments
+        .slice(start)
+        .filter((segment) => segment.kind === 'text')
+        .map((segment) => segment.text)
+        .join('');
+    };
+    // Known tools by ID so tool_result/tool_error blocks can resolve the tool
+    // name and parent context (mirrors doStream's toolStates).
+    const knownTools = new Map<string, { name: string; parentToolCallId: string | null }>();
+    // Tool call IDs whose tool-call segment was retracted by a refusal-fallback
+    // `supersedes` message. Late tool_result/tool_error frames for these IDs
+    // are dropped: their call no longer exists in content, so emitting them
+    // would create an orphan that makes AI SDK core's asContent() throw
+    // ('Tool call ${id} not found.').
+    const retractedToolIds = new Set<string>();
+    // evictBuffered: the doGenerate half of the shared retraction policy (P1-P5,
+    // see computeRetractedToolCallIds). MECHANISM = splice an ordered, uniform
+    // contentSegments array, so retracted entries are removed entirely and the
+    // surviving order is exact. Its parallel is doStream's evictLive, which can
+    // only drop pending live state. Idempotent: re-evicting an already-removed
+    // uuid is a no-op, so supersedes + model_refusal_fallback compose safely (P1).
+    const evictBuffered = (retracted: Set<string>): void => {
+      if (retracted.size === 0) return;
+      // P2/P3 policy: derive tombstoned tool ids from tool-CALL own-uuid AND
+      // tool-result/error OWN-uuid membership (a result frame may be named
+      // directly even when its tool_use was not retracted).
+      const retractedToolCallIds = computeRetractedToolCallIds(
+        retracted,
+        contentSegments
+          .filter(
+            (segment) =>
+              segment.kind === 'tool-call' ||
+              segment.kind === 'tool-result' ||
+              segment.kind === 'tool-error'
+          )
+          .map((segment) => ({
+            toolCallId: (segment as { toolCallId: string }).toolCallId,
+            uuid: segment.uuid,
+          }))
+      );
+      // P3/P4: a retracted Task must not remain "active" (it would pollute
+      // getFallbackParentId with a dangling parent), and late results for
+      // retracted IDs must be dropped (tombstone) rather than re-paired.
+      for (const toolCallId of retractedToolCallIds) {
+        retractedToolIds.add(toolCallId);
+        knownTools.delete(toolCallId);
+        activeTaskTools.delete(toolCallId);
+      }
+      for (let i = contentSegments.length - 1; i >= 0; i--) {
+        const segment = contentSegments[i];
+        if (segment === undefined) continue;
+        const segmentUuid = 'uuid' in segment ? segment.uuid : undefined;
+        const retractsSegment =
+          (segmentUuid !== undefined && retracted.has(segmentUuid)) ||
+          ((segment.kind === 'tool-result' || segment.kind === 'tool-error') &&
+            retractedToolCallIds.has(segment.toolCallId));
+        if (retractsSegment) {
+          contentSegments.splice(i, 1);
+        }
+      }
+    };
+    // Track active Task tools for subagent hierarchy (mirrors doStream).
+    // Using a Map instead of stack to correctly handle parallel agents
+    const activeTaskTools = new Map<string, { startTime: number }>();
+
+    // Helper to get fallback parent - only returns a parent when exactly ONE Task is active
+    // This prevents incorrect grouping when parallel agents run simultaneously
+    const getFallbackParentId = (): string | null => {
+      if (activeTaskTools.size === 1) {
+        return activeTaskTools.keys().next().value ?? null;
+      }
+      return null;
+    };
     let structuredOutput: unknown | undefined;
+    let receivedResultMessage = false;
     let usage: LanguageModelV3Usage = createEmptyUsage();
     let finishReason: LanguageModelV3FinishReason = { unified: 'stop', raw: undefined };
     let wasTruncated = false;
     let costUsd: number | undefined;
     let durationMs: number | undefined;
     let modelUsage: Record<string, unknown> | undefined;
+    let ttftMs: number | undefined;
+    let ttftStreamMs: number | undefined;
+    let timeToRequestMs: number | undefined;
+    let warmSpareClaimed: boolean | undefined;
+    let terminalReason: string | undefined;
+    // SDK 0.3.x informational counters surfaced in providerMetadata
+    const metadataTracking: RequestMetadataTracking = {
+      apiRetries: 0,
+      permissionDenials: [],
+      mirrorErrors: [],
+      estimatedThinkingTokens: 0,
+    };
     const warnings: SharedV3Warning[] = this.generateAllWarnings(options, messagesPrompt);
 
     // Add warnings from message conversion
@@ -1291,6 +2392,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       }
       // hold input stream open until results
       // see: https://github.com/anthropics/claude-code/issues/4775
+      // Re-validated against SDK 0.3.170 on 2026-06-09: kept as defensive workaround.
       const sdkPrompt = wantsStreamInput
         ? toAsyncIterablePrompt(
             messagesPrompt,
@@ -1314,29 +2416,266 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       // like mid-stream message injection via query.streamInput()
       this.settings.onQueryCreated?.(response);
 
-      for await (const message of response) {
+      let lastAssistantErrorKind: string | undefined;
+      // for-await's implicit cleanup AWAITS iterator.return(), which never
+      // settles when the CLI is wedged mid-await after the result (the exact
+      // case the bounded prompt-suggestion drain exists for). Iterate via a
+      // wrapper whose return() detaches fire-and-forget so `break` can never
+      // block generateText on a lingering subprocess.
+      const sdkIterator = response[Symbol.asyncIterator]();
+      const detachableResponse: AsyncIterable<SDKMessage> = {
+        [Symbol.asyncIterator]: () => ({
+          next: () => sdkIterator.next(),
+          return: () => {
+            void sdkIterator.return?.().catch(() => {});
+            return Promise.resolve({ done: true as const, value: undefined });
+          },
+        }),
+      };
+      for await (const message of detachableResponse) {
         this.logger.debug(`[claude-code] Received message type: ${message.type}`);
         if (message.type === 'assistant') {
-          const { text: messageText, thinking: messageThinking } = this.extractTextAndThinking(
-            message.message.content
-          );
-          text += messageText;
-          thinkingTraces.push(...messageThinking);
+          // SDK 0.3.x delivers API error kinds (e.g. 'overloaded',
+          // 'model_not_found') as a structured field on assistant messages.
+          if (typeof message.error === 'string') {
+            lastAssistantErrorKind = message.error;
+          }
+          // Refusal-fallback replacement (SDK 0.3.x): drop retracted segments
+          // (text, thinking, AND tool calls) so superseded content is not
+          // duplicated in the final output. Tool results/errors whose call was
+          // retracted are dropped too so they don't survive as orphans. (P5: the
+          // trigger ignores this message's own text — see applySupersede.)
+          // doGenerate uses the 'truthy' guard to match af38c07's original
+          // `message.supersedes && message.supersedes.length > 0` semantics.
+          applySupersede(message, evictBuffered, this.logger, 'truthy');
+
+          const messageUuid = typeof message.uuid === 'string' ? message.uuid : undefined;
+          // Extract parent_tool_use_id from SDK message - this is the authoritative source
+          // SDK provides this field when tool is executed within a subagent context
+          const sdkParentToolUseId = (message as { parent_tool_use_id?: string | null })
+            .parent_tool_use_id;
+          const content = message.message.content;
+
+          // Walk content blocks in document order so text, thinking, and
+          // tool_use parts interleave in the final content array exactly as
+          // the model produced them.
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (!isContentBlock(block)) continue;
+              if (block.type === 'text' && typeof block.text === 'string') {
+                if (block.text.length > 0) {
+                  contentSegments.push({
+                    kind: 'text',
+                    ...(messageUuid !== undefined && { uuid: messageUuid }),
+                    text: block.text,
+                  });
+                }
+              } else if (block.type === 'thinking' && typeof block.thinking === 'string') {
+                contentSegments.push({
+                  kind: 'reasoning',
+                  ...(messageUuid !== undefined && { uuid: messageUuid }),
+                  text: block.thinking,
+                });
+              } else if (block.type === 'tool_use') {
+                const [tool] = this.extractToolUses([block]);
+                if (!tool) continue;
+                // Prefer SDK message-level parent (works for parallel agents)
+                // Fall back to content-level parent, then timing-based inference
+                // Task tools never have a parent (they're top-level)
+                const parentToolCallId = isSubagentToolName(tool.name)
+                  ? null
+                  : resolveToolParentId(
+                      sdkParentToolUseId,
+                      tool.parentToolUseId,
+                      getFallbackParentId
+                    );
+                this.logger.debug(
+                  `[claude-code] Tool use detected - Tool: ${tool.name}, ID: ${tool.id}, SDK parent: ${sdkParentToolUseId}, resolved parent: ${parentToolCallId}`
+                );
+                knownTools.set(tool.id, { name: tool.name, parentToolCallId });
+                // Track Task tools as active so nested tools can reference them as parent
+                if (isSubagentToolName(tool.name)) {
+                  activeTaskTools.set(tool.id, { startTime: Date.now() });
+                }
+                contentSegments.push({
+                  kind: 'tool-call',
+                  ...(messageUuid !== undefined && { uuid: messageUuid }),
+                  toolCallId: tool.id,
+                  part: this.buildToolCallPart(
+                    tool.id,
+                    tool.name,
+                    this.serializeToolInput(tool.input),
+                    parentToolCallId
+                  ),
+                });
+              }
+            }
+          }
+          text = joinTextSegments();
+        } else if (message.type === 'user') {
+          if (!message.message?.content) {
+            this.logger.warn(
+              `[claude-code] Unexpected user message structure: missing content field. Message type: ${message.type}. This may indicate an SDK protocol violation.`
+            );
+            continue;
+          }
+
+          // Extract parent_tool_use_id from SDK message for late-arriving tool results
+          const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string | null })
+            .parent_tool_use_id;
+          // tool_result/tool_error frames are their own normalized SDK messages
+          // with their own uuid; tag segments with it so a refusal-fallback
+          // retraction that names the tool_result uuid DIRECTLY (per the SDK,
+          // retracted_message_uuids can include tombstoned tool_results) evicts
+          // them even when the originating tool_use was not itself retracted.
+          const resultMessageUuid =
+            typeof (message as { uuid?: unknown }).uuid === 'string'
+              ? (message as { uuid: string }).uuid
+              : undefined;
+
+          const content = message.message.content;
+          for (const result of this.extractToolResults(content)) {
+            if (this.isRetractedToolFrame(result.id, retractedToolIds, 'result')) {
+              continue;
+            }
+            const known = knownTools.get(result.id);
+            const toolName =
+              result.name ?? known?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
+
+            this.logger.debug(
+              `[claude-code] Tool result received - Tool: ${toolName}, ID: ${result.id}`
+            );
+
+            let parentToolCallId: string | null;
+            if (known) {
+              known.name = toolName;
+              parentToolCallId = known.parentToolCallId;
+            } else {
+              this.logger.warn(
+                `[claude-code] Received tool result for unknown tool ID: ${result.id}`
+              );
+              // Use SDK parent if available, otherwise fall back to timing-based inference
+              parentToolCallId = isSubagentToolName(toolName)
+                ? null
+                : resolveToolParentId(sdkParentToolUseIdForResults, undefined, getFallbackParentId);
+              knownTools.set(result.id, { name: toolName, parentToolCallId });
+              // Synthesize the tool-call part to preserve call/result pairing
+              // when no prior tool_use block was seen (mirrors doStream).
+              contentSegments.push({
+                kind: 'tool-call',
+                toolCallId: result.id,
+                part: this.buildToolCallPart(result.id, toolName, '', parentToolCallId),
+              });
+            }
+
+            // Remove Task tools from active set when they complete
+            if (isSubagentToolName(toolName)) {
+              activeTaskTools.delete(result.id);
+            }
+
+            contentSegments.push({
+              kind: 'tool-result',
+              ...(resultMessageUuid !== undefined && { uuid: resultMessageUuid }),
+              toolCallId: result.id,
+              part: this.buildToolResultPart(
+                result.id,
+                toolName,
+                result.result,
+                result.isError,
+                parentToolCallId
+              ),
+            });
+          }
+          // Handle tool errors
+          for (const error of this.extractToolErrors(content)) {
+            if (this.isRetractedToolFrame(error.id, retractedToolIds, 'error')) {
+              continue;
+            }
+            const known = knownTools.get(error.id);
+            const toolName = error.name ?? known?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
+
+            this.logger.debug(
+              `[claude-code] Tool error received - Tool: ${toolName}, ID: ${error.id}`
+            );
+
+            let parentToolCallId: string | null;
+            if (known) {
+              known.name = toolName;
+              parentToolCallId = known.parentToolCallId;
+            } else {
+              this.logger.warn(
+                `[claude-code] Received tool error for unknown tool ID: ${error.id}`
+              );
+              // Use SDK parent if available, otherwise fall back to timing-based inference
+              parentToolCallId = isSubagentToolName(toolName)
+                ? null
+                : resolveToolParentId(sdkParentToolUseIdForResults, undefined, getFallbackParentId);
+              knownTools.set(error.id, { name: toolName, parentToolCallId });
+              // Ensure a tool-call part precedes the tool-error (mirrors doStream)
+              contentSegments.push({
+                kind: 'tool-call',
+                toolCallId: error.id,
+                part: this.buildToolCallPart(error.id, toolName, '', parentToolCallId),
+              });
+            }
+
+            // Remove Task tools from active set when they error
+            if (isSubagentToolName(toolName)) {
+              activeTaskTools.delete(error.id);
+            }
+
+            contentSegments.push({
+              kind: 'tool-error',
+              ...(resultMessageUuid !== undefined && { uuid: resultMessageUuid }),
+              toolCallId: error.id,
+              part: this.buildToolErrorResultPart(
+                error.id,
+                toolName,
+                error.error,
+                parentToolCallId
+              ),
+            });
+          }
         } else if (message.type === 'result') {
           done();
+          receivedResultMessage = true;
           this.setSessionId(message.session_id);
           costUsd = message.total_cost_usd;
           durationMs = message.duration_ms;
           modelUsage = message.modelUsage;
+          // SDK 0.3.x timing metadata (only present on SDKResultSuccess)
+          if ('ttft_ms' in message) {
+            ttftMs = message.ttft_ms;
+          }
+          if ('ttft_stream_ms' in message) {
+            ttftStreamMs = message.ttft_stream_ms;
+          }
+          if ('time_to_request_ms' in message) {
+            timeToRequestMs = message.time_to_request_ms;
+          }
+          if ('warm_spare_claimed' in message) {
+            warmSpareClaimed = message.warm_spare_claimed;
+          }
+          terminalReason = message.terminal_reason;
+          this.mergeResultPermissionDenials(message, metadataTracking);
 
-          // Handle is_error flag in result message (e.g., auth failures)
-          // The CLI returns successful JSON with is_error: true and error message in result field
+          // Handle is_error flag in result message (e.g., auth failures).
+          // SDKResultSuccess carries the error text in `result`; SDKResultError
+          // has no `result` field and carries details in `errors` instead.
           if ('is_error' in message && message.is_error === true) {
-            const errorMessage =
+            const resultText =
               'result' in message && typeof message.result === 'string'
                 ? message.result
-                : 'Claude Code CLI returned an error';
-            throw Object.assign(new Error(errorMessage), { exitCode: 1 });
+                : undefined;
+            const errorsText =
+              'errors' in message && Array.isArray(message.errors)
+                ? message.errors.filter((e): e is string => typeof e === 'string').join('; ')
+                : '';
+            const errorMessage = resultText ?? (errorsText || 'Claude Code CLI returned an error');
+            throw Object.assign(new Error(errorMessage), {
+              exitCode: 1,
+              errorKind: lastAssistantErrorKind,
+            });
           }
 
           // Handle structured output errors (SDK 0.1.45+)
@@ -1371,10 +2710,32 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               : undefined;
           finishReason = mapClaudeCodeFinishReason(message.subtype, stopReason);
           this.logger.debug(`[claude-code] Finish reason: ${finishReason.unified}`);
+
+          // The result message is terminal. Mirror doStream: when a
+          // prompt_suggestion callback is registered, drain for it with the
+          // shared bounded drain (10s timeout, stops at the first suggestion);
+          // otherwise stop iterating immediately so a lingering CLI cannot
+          // block generateText after the result is already available.
+          // Drain for the post-result prompt_suggestion only when suggestions
+          // can actually be emitted. The SDK enables them when promptSuggestions
+          // is absent OR true and disables them only when explicitly false, so
+          // skip the (up to 10s) drain solely in the explicit-false case.
+          const effectivePromptSuggestions =
+            sdkOptions?.promptSuggestions ?? this.settings.promptSuggestions;
+          if (this.settings.onPromptSuggestion && effectivePromptSuggestions !== false) {
+            await this.drainPromptSuggestion(response, this.settings.onPromptSuggestion);
+          }
+          break;
         } else if (message.type === 'system' && message.subtype === 'init') {
           this.logMcpConnectionIssues(message.mcp_servers);
           this.setSessionId(message.session_id);
           this.logger.info(`[claude-code] Session initialized: ${message.session_id}`);
+        } else if (message.type === 'system') {
+          this.handleSystemMessage(
+            message,
+            metadataTracking,
+            buildRetractionEvictor(evictBuffered)
+          );
         }
       }
     } catch (error: unknown) {
@@ -1409,18 +2770,80 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       }
     }
 
-    // Use structured output from SDK if available (native JSON schema support)
-    // Otherwise fall back to accumulated text
-    const finalText = structuredOutput !== undefined ? JSON.stringify(structuredOutput) : text;
+    // Loud failure / graceful recovery for native structured outputs: the CLI
+    // can return a SUCCESSFUL result without structured_output when the schema
+    // contains constructs it cannot enforce, silently falling back to prose.
+    // Without this, the prose flows downstream and generateObject fails with an
+    // opaque AI_NoObjectGeneratedError. Try to recover JSON from the prose
+    // first; otherwise throw a descriptive, non-retryable error. Truncation
+    // and error_max_structured_output_retries handling above are unaffected.
+    if (
+      options.responseFormat?.type === 'json' &&
+      options.responseFormat.schema !== undefined &&
+      receivedResultMessage &&
+      structuredOutput === undefined &&
+      !wasTruncated &&
+      finishReason.unified === 'stop'
+    ) {
+      // Prefer the final assistant turn's prose (matches doStream, which
+      // resets its accumulator on user messages), then fall back to all
+      // turns joined (doGenerate never resets text segments).
+      const recoveredJsonText =
+        extractJsonObjectText(joinFinalTurnTextSegments()) ??
+        extractJsonObjectText(joinTextSegments());
+      if (recoveredJsonText !== undefined) {
+        this.logger.warn(
+          '[claude-code] outputFormat was requested but the CLI returned no structured_output; recovered JSON by parsing the prose response. The schema likely contains constructs the CLI cannot enforce - see the README structured-output limitations.'
+        );
+        structuredOutput = JSON.parse(recoveredJsonText);
+      } else {
+        throw createAPICallError({
+          message: MISSING_STRUCTURED_OUTPUT_ERROR_MESSAGE,
+          promptExcerpt: messagesPrompt.substring(0, 200),
+          isRetryable: false,
+        });
+      }
+    }
+
+    const thinkingTraces = contentSegments
+      .filter((segment) => segment.kind === 'reasoning')
+      .map((segment) => (segment as { text: string }).text);
+
+    // Build the ordered content array. Adjacent text segments collapse into a
+    // single text part (plain text responses keep their single-part shape),
+    // while tool parts interleave with text/reasoning in arrival order.
+    // When the SDK returned structured output (native JSON schema support),
+    // it replaces the accumulated text as a single trailing text part.
+    const contentParts: LanguageModelV3Content[] = [];
+    for (const segment of contentSegments) {
+      if (segment.kind === 'reasoning') {
+        contentParts.push({ type: 'reasoning', text: segment.text });
+      } else if (segment.kind === 'text') {
+        if (structuredOutput !== undefined) continue;
+        const last = contentParts[contentParts.length - 1];
+        if (last !== undefined && last.type === 'text') {
+          last.text += segment.text;
+        } else {
+          contentParts.push({ type: 'text', text: segment.text });
+        }
+      } else {
+        // tool-call and tool-result parts are V3 content union members.
+        // CLI tool_error blocks were mapped to tool-result parts with
+        // isError: true (see buildToolErrorResultPart) so they survive AI
+        // SDK core's asContent(), which drops unknown content part types.
+        contentParts.push(segment.part);
+      }
+    }
+    if (structuredOutput !== undefined) {
+      contentParts.push({ type: 'text', text: JSON.stringify(structuredOutput) });
+    } else if (!contentParts.some((part) => part.type === 'text')) {
+      // Preserve the long-standing invariant that doGenerate always returns
+      // a text part, even when the response produced no text.
+      contentParts.push({ type: 'text', text: '' });
+    }
 
     return {
-      content: [
-        ...thinkingTraces.map((trace) => ({
-          type: 'reasoning' as const,
-          text: trace,
-        })),
-        { type: 'text' as const, text: finalText },
-      ],
+      content: contentParts,
       usage,
       finishReason,
       warnings,
@@ -1438,6 +2861,21 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           ...(costUsd !== undefined && { costUsd }),
           ...(durationMs !== undefined && { durationMs }),
           ...(modelUsage !== undefined && { modelUsage: modelUsage as unknown as JSONValue }),
+          ...(ttftMs !== undefined && { ttftMs }),
+          ...(ttftStreamMs !== undefined && { ttftStreamMs }),
+          ...(timeToRequestMs !== undefined && { timeToRequestMs }),
+          ...(warmSpareClaimed !== undefined && { warmSpareClaimed }),
+          ...(terminalReason !== undefined && { terminalReason }),
+          ...(metadataTracking.apiRetries > 0 && { apiRetries: metadataTracking.apiRetries }),
+          ...(metadataTracking.permissionDenials.length > 0 && {
+            permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
+          }),
+          ...(metadataTracking.mirrorErrors.length > 0 && {
+            mirrorErrors: metadataTracking.mirrorErrors as unknown as JSONValue,
+          }),
+          ...(metadataTracking.estimatedThinkingTokens > 0 && {
+            estimatedThinkingTokens: metadataTracking.estimatedThinkingTokens,
+          }),
           ...(wasTruncated && { truncated: true }),
           ...(thinkingTraces.length > 0 && { thinkingTraces }),
         },
@@ -1467,9 +2905,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     if (options.abortSignal?.aborted) {
       // Propagate already-aborted state immediately with original reason
       abortController.abort(options.abortSignal.reason);
-    } else if (options.abortSignal) {
-      abortListener = () => abortController.abort(options.abortSignal?.reason);
-      options.abortSignal.addEventListener('abort', abortListener, { once: true });
     }
 
     // Collect stderr for error reporting (SDK may not include it in errors)
@@ -1480,6 +2915,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
     const sdkOptions = this.getSanitizedSdkOptions();
     const effectiveResume = this.getEffectiveResume(sdkOptions);
+    // createQueryOptions can throw (e.g. fallbackModel === model); attach the
+    // abort listener only AFTER it succeeds so an early throw cannot leave a
+    // listener on a long-lived caller AbortSignal.
     const queryOptions = this.createQueryOptions(
       abortController,
       options.responseFormat,
@@ -1487,6 +2925,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       sdkOptions,
       effectiveResume
     );
+    if (options.abortSignal && !options.abortSignal.aborted) {
+      abortListener = () => abortController.abort(options.abortSignal?.reason);
+      options.abortSignal.addEventListener('abort', abortListener, { once: true });
+    }
 
     // Enable partial messages for true streaming (token-by-token delivery)
     // This can be overridden by user settings, but we default to true for doStream
@@ -1527,6 +2969,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           done = () => resolve(undefined);
         });
         const toolStates = new Map<string, ToolStreamState>();
+        // Tombstones for pending tool calls dropped by supersede retraction:
+        // late tool_result/tool_error blocks for these IDs must be discarded,
+        // not synthesized back into a tool-call via the unknown-tool path
+        // (mirrors doGenerate's retractedToolIds).
+        const retractedStreamToolIds = new Set<string>();
         // Track active Task tools for subagent hierarchy
         // Using a Map instead of stack to correctly handle parallel agents
         const activeTaskTools = new Map<string, { startTime: number }>();
@@ -1559,23 +3006,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
           closeToolInput(toolId, state);
 
-          controller.enqueue({
-            type: 'tool-call',
-            toolCallId: toolId,
-            toolName: state.name,
-            input: state.lastSerializedInput ?? '',
-            providerExecuted: true,
-            dynamic: true, // V3 field: indicates tool is provider-defined (not in user's tools map)
-            providerMetadata: {
-              'claude-code': {
-                // rawInput preserves the original serialized format before AI SDK normalization.
-                // Use this if you need the exact string sent to the Claude CLI, which may differ
-                // from the `input` field after AI SDK processing.
-                rawInput: state.lastSerializedInput ?? '',
-                parentToolCallId: state.parentToolCallId ?? null,
-              },
-            },
-          } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+          controller.enqueue(
+            this.buildToolCallPart(
+              toolId,
+              state.name,
+              state.lastSerializedInput ?? '',
+              state.parentToolCallId
+            )
+          );
           state.callEmitted = true;
         };
 
@@ -1588,10 +3026,31 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
         let usage: LanguageModelV3Usage = createEmptyUsage();
         let accumulatedText = '';
+        // Per-message text segments mirroring `accumulatedText` so refusal-fallback
+        // `supersedes` retractions keep non-retracted text (matches doGenerate).
+        const textSegments: Array<{ uuid?: string; text: string }> = [];
         let textPartId: string | undefined;
         let streamedTextLength = 0; // Track text already emitted via stream_events to avoid duplication
+        // Model text delivered to the client as text-delta parts (non-JSON mode)
+        // SINCE THE LAST ASSISTANT MESSAGE was processed. Each assistant message
+        // "claims" the stream-event deltas that preceded it, so this window holds
+        // exactly the deltas attributable to the upcoming assistant message. Used
+        // to decide whether a superseding message's replacement text was already
+        // streamed or must be emitted as a new part — scoping the check to this
+        // window prevents false positives when the replacement happens to be a
+        // substring of earlier (e.g. refused) output.
+        let emittedTextSinceLastAssistant = '';
         let hasReceivedStreamEvents = false; // Track if we've received any stream_events
         let hasStreamedJson = false; // Track if JSON has been streamed via input_json_delta
+        // SDK 0.3.x structured error kind from assistant messages (e.g. 'overloaded')
+        let lastAssistantErrorKind: string | undefined;
+        // SDK 0.3.x informational counters surfaced in providerMetadata at finish
+        const metadataTracking: RequestMetadataTracking = {
+          apiRetries: 0,
+          permissionDenials: [],
+          mirrorErrors: [],
+          estimatedThinkingTokens: 0,
+        };
 
         // Content block streaming: Map block indices to tool IDs and accumulated JSON
         const toolBlocksByIndex = new Map<number, string>();
@@ -1607,6 +3066,64 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         const reasoningBlocksByIndex = new Map<number, string>();
         let currentReasoningPartId: string | undefined;
 
+        // evictLive: the doStream half of the shared retraction policy (P1-P5,
+        // see computeRetractedToolCallIds). MECHANISM = drop live state, since
+        // already-emitted text/tool parts CANNOT be un-streamed. Its parallel is
+        // doGenerate's evictBuffered, which splices ordered buffered segments.
+        // Differences from evictBuffered (intentional, see policy block):
+        //  - text: surviving textSegments are kept and accumulatedText is
+        //    recomputed from them (P2 over text) so JSON-mode/final tracking
+        //    excludes retracted text — but the wire deltas already sent stay sent.
+        //  - tools: the tombstone set is derived from toolState.messageUuid (P2;
+        //    results aren't buffered as segments here, unlike evictBuffered), and
+        //    only PENDING (not-yet-callEmitted) calls can be dropped + tombstoned
+        //    (P3); activeTaskTools is always cleaned (P4).
+        // Idempotent, so supersedes + model_refusal_fallback compose safely (P1).
+        const evictLive = (retracted: Set<string>): void => {
+          if (retracted.size === 0) return;
+          for (let i = textSegments.length - 1; i >= 0; i--) {
+            const segmentUuid = textSegments[i]?.uuid;
+            if (segmentUuid !== undefined && retracted.has(segmentUuid)) {
+              textSegments.splice(i, 1);
+            }
+          }
+          // Recompute alongside every textSegments mutation so JSON-mode final
+          // extraction never sees retracted text (kept in lockstep with the
+          // other textSegments writers below).
+          accumulatedText = textSegments.map((segment) => segment.text).join('');
+
+          // P2/P3 policy: derive tombstoned tool ids from each live toolState's
+          // owning messageUuid (the doStream descriptor shape).
+          const retractedToolCallIds = computeRetractedToolCallIds(
+            retracted,
+            [...toolStates].map(([toolId, state]) => ({
+              toolCallId: toolId,
+              uuid: state.messageUuid,
+            }))
+          );
+          for (const toolId of retractedToolCallIds) {
+            const state = toolStates.get(toolId);
+            if (!state) continue;
+            activeTaskTools.delete(toolId); // P4
+            if (!state.callEmitted) {
+              // P3: only pending calls can be dropped + tombstoned; an
+              // already-emitted tool-call is on the wire and cannot be retracted.
+              closeToolInput(toolId, state);
+              toolStates.delete(toolId);
+              retractedStreamToolIds.add(toolId);
+              toolInputAccumulators.delete(toolId);
+              for (const [blockIndex, mappedId] of toolBlocksByIndex) {
+                if (mappedId === toolId) {
+                  toolBlocksByIndex.delete(blockIndex);
+                }
+              }
+              this.logger.debug(
+                `[claude-code] Retracted pending tool call from superseded message - ID: ${toolId}`
+              );
+            }
+          }
+        };
+
         try {
           // Emit stream-start with warnings
           controller.enqueue({ type: 'stream-start', warnings });
@@ -1618,6 +3135,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           }
           // hold input stream open until results
           // see: https://github.com/anthropics/claude-code/issues/4775
+          // Re-validated against SDK 0.3.170 on 2026-06-09: kept as defensive workaround.
           const sdkPrompt = wantsStreamInput
             ? toAsyncIterablePrompt(
                 messagesPrompt,
@@ -1682,6 +3200,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 });
                 accumulatedText += deltaText;
                 streamedTextLength += deltaText.length;
+                emittedTextSinceLastAssistant += deltaText;
               }
               // Handle input_json_delta events for structured output streaming
               // The SDK uses a StructuredOutput tool internally, and JSON is streamed via input_json_delta
@@ -1782,14 +3301,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 // Create tool state if not exists
                 let state = toolStates.get(toolId);
                 if (!state) {
-                  // Use timing-based inference for parent (Task tools are top-level)
-                  const currentParentId = toolName === 'Task' ? null : getFallbackParentId();
+                  // The partial-message envelope carries the authoritative
+                  // subagent parent (SDKPartialAssistantMessage.parent_tool_use_id).
+                  // These parts are emitted immediately - before the final
+                  // assistant message could retro-update state - so relying on
+                  // timing inference alone would permanently mis-parent (or
+                  // null-parent) nested subagent tools.
+                  const partialParentId = (message as { parent_tool_use_id?: string | null })
+                    .parent_tool_use_id;
+                  const currentParentId = isSubagentToolName(toolName)
+                    ? null
+                    : resolveToolParentId(partialParentId, undefined, getFallbackParentId);
+                  const envelopeUuid = (message as { uuid?: unknown }).uuid;
                   state = {
                     name: toolName,
                     inputStarted: false,
                     inputClosed: false,
                     callEmitted: false,
                     parentToolCallId: currentParentId,
+                    ...(typeof envelopeUuid === 'string' && { messageUuid: envelopeUuid }),
                   };
                   toolStates.set(toolId, state);
                 }
@@ -1813,7 +3343,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
 
                   // Track Task tools as active so nested tools can reference them as parent
-                  if (toolName === 'Task') {
+                  if (isSubagentToolName(toolName)) {
                     activeTaskTools.set(toolId, { startTime: Date.now() });
                   }
                   state.inputStarted = true;
@@ -1934,20 +3464,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     // Emit tool-call immediately when input is complete (don't wait for result)
                     // This allows UI to show "running" state while tool executes
                     if (!state.callEmitted) {
-                      controller.enqueue({
-                        type: 'tool-call',
-                        toolCallId: toolId,
-                        toolName: state.name,
-                        input: effectiveInput,
-                        providerExecuted: true,
-                        dynamic: true,
-                        providerMetadata: {
-                          'claude-code': {
-                            rawInput: effectiveInput,
-                            parentToolCallId: state.parentToolCallId ?? null,
-                          },
-                        },
-                      } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                      controller.enqueue(
+                        this.buildToolCallPart(
+                          toolId,
+                          state.name,
+                          effectiveInput,
+                          state.parentToolCallId
+                        )
+                      );
                       state.callEmitted = true;
                     }
                   }
@@ -1996,6 +3520,20 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             }
 
             if (message.type === 'assistant') {
+              // SDK 0.3.x delivers API error kinds (e.g. 'overloaded',
+              // 'model_not_found') as a structured field on assistant messages.
+              if (typeof message.error === 'string') {
+                lastAssistantErrorKind = message.error;
+              }
+
+              // Refusal-fallback replacement (SDK 0.3.x): this message replaces
+              // previously-delivered messages whose text was already emitted and
+              // cannot be retracted from the stream. Evict retracted segments on
+              // arrival (matches doGenerate); the trigger does not depend on this
+              // message carrying text of its own (P5). The boolean drives the
+              // replacement-text emission sub-cases below.
+              const supersedesPriorMessages = applySupersede(message, evictLive, this.logger);
+
               if (!message.message?.content) {
                 this.logger.warn(
                   `[claude-code] Unexpected assistant message structure: missing content field. Message type: ${message.type}. This may indicate an SDK protocol violation.`
@@ -2005,7 +3543,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
               // Extract parent_tool_use_id from SDK message - this is the authoritative source
               // SDK provides this field when tool is executed within a subagent context
-              const sdkParentToolUseId = (message as { parent_tool_use_id?: string })
+              const sdkParentToolUseId = (message as { parent_tool_use_id?: string | null })
                 .parent_tool_use_id;
 
               const content = message.message.content;
@@ -2037,22 +3575,30 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   // Prefer SDK message-level parent (works for parallel agents)
                   // Fall back to content-level parent, then timing-based inference
                   // Task tools never have a parent (they're top-level)
-                  const currentParentId =
-                    tool.name === 'Task'
-                      ? null
-                      : (sdkParentToolUseId ?? tool.parentToolUseId ?? getFallbackParentId());
+                  const currentParentId = isSubagentToolName(tool.name)
+                    ? null
+                    : resolveToolParentId(
+                        sdkParentToolUseId,
+                        tool.parentToolUseId,
+                        getFallbackParentId
+                      );
                   state = {
                     name: tool.name,
                     inputStarted: false,
                     inputClosed: false,
                     callEmitted: false,
                     parentToolCallId: currentParentId,
+                    ...(typeof message.uuid === 'string' && { messageUuid: message.uuid }),
                   };
                   toolStates.set(toolId, state);
                   this.logger.debug(
                     `[claude-code] New tool use detected - Tool: ${tool.name}, ID: ${toolId}, SDK parent: ${sdkParentToolUseId}, resolved parent: ${currentParentId}`
                   );
-                } else if (!state.parentToolCallId && sdkParentToolUseId && tool.name !== 'Task') {
+                } else if (
+                  !state.parentToolCallId &&
+                  sdkParentToolUseId &&
+                  !isSubagentToolName(tool.name)
+                ) {
                   // RETROACTIVE PARENT CONTEXT: Tool state was created by streaming events
                   // but we now have authoritative parent from SDK message - update state
                   state.parentToolCallId = sdkParentToolUseId;
@@ -2080,7 +3626,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     },
                   } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
                   // Track Task tools as active so nested tools can reference them as parent
-                  if (tool.name === 'Task') {
+                  if (isSubagentToolName(tool.name)) {
                     activeTaskTools.set(toolId, { startTime: Date.now() });
                   }
                   state.inputStarted = true;
@@ -2126,13 +3672,103 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 // When we've received stream_events, assistant messages contain cumulative text
                 // that we've already emitted via stream_event deltas - skip duplicates
                 // When no stream_events received, assistant messages contain incremental text
-                if (hasReceivedStreamEvents) {
+                if (supersedesPriorMessages) {
+                  // Refusal-fallback replacement: the superseded segments were
+                  // already retracted on arrival (above); record the
+                  // replacement text so kept text from earlier assistant
+                  // messages survives in the accumulators (matches doGenerate).
+                  textSegments.push({
+                    ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
+                    text,
+                  });
+                  accumulatedText = textSegments.map((segment) => segment.text).join('');
+
+                  if (emittedTextSinceLastAssistant === text) {
+                    // The replacement text was fully streamed via stream_event
+                    // deltas attributable to THIS message (the window resets when
+                    // each assistant message is processed, so matches against
+                    // earlier/refused output cannot false-positive here); the
+                    // deltas were emitted and cannot be un-streamed, so
+                    // re-emitting the replacement here would duplicate output.
+                    streamedTextLength = Math.max(streamedTextLength, text.length);
+                    this.logger.debug(
+                      '[claude-code] Skipping text emission for superseding assistant message (replacement already streamed)'
+                    );
+                  } else if (
+                    emittedTextSinceLastAssistant.length > 0 &&
+                    text.startsWith(emittedTextSinceLastAssistant)
+                  ) {
+                    // A PREFIX of the replacement already streamed (e.g. deltas
+                    // emitted 'Replace' and the final message is 'Replacement
+                    // answer'). Emit only the unstreamed suffix on the SAME open
+                    // part - re-emitting the full text as a new part would
+                    // duplicate the prefix ('ReplaceReplacement answer').
+                    if (options.responseFormat?.type !== 'json') {
+                      const suffix = text.slice(emittedTextSinceLastAssistant.length);
+                      if (suffix) {
+                        if (!textPartId) {
+                          textPartId = generateId();
+                          controller.enqueue({ type: 'text-start', id: textPartId });
+                        }
+                        controller.enqueue({
+                          type: 'text-delta',
+                          id: textPartId,
+                          delta: suffix,
+                        });
+                        emittedTextSinceLastAssistant = text;
+                      }
+                    }
+                    streamedTextLength = Math.max(streamedTextLength, text.length);
+                    this.logger.debug(
+                      '[claude-code] Emitted unstreamed suffix of superseding assistant message'
+                    );
+                  } else if (options.responseFormat?.type !== 'json') {
+                    // Without stream_events the canonical replacement was never
+                    // emitted. The retracted text cannot be un-streamed, so close
+                    // the open text part and deliver the replacement as a NEW
+                    // text part instead of dropping the model's actual answer.
+                    if (textPartId) {
+                      const closedTextId = textPartId;
+                      controller.enqueue({
+                        type: 'text-end',
+                        id: closedTextId,
+                      });
+                      textPartId = undefined;
+                      // Prevent a later content_block_stop from closing the same text part twice.
+                      for (const [idx, blockTextId] of textBlocksByIndex) {
+                        if (blockTextId === closedTextId) {
+                          textBlocksByIndex.delete(idx);
+                          break;
+                        }
+                      }
+                    }
+                    textPartId = generateId();
+                    controller.enqueue({
+                      type: 'text-start',
+                      id: textPartId,
+                    });
+                    controller.enqueue({
+                      type: 'text-delta',
+                      id: textPartId,
+                      delta: text,
+                    });
+                    streamedTextLength = Math.max(streamedTextLength, text.length);
+                    this.logger.debug(
+                      '[claude-code] Emitted superseding assistant message as a new text part (canonical replacement)'
+                    );
+                  }
+                } else if (hasReceivedStreamEvents) {
                   // Calculate delta: only emit text that wasn't already streamed via stream_events
                   const newTextStart = streamedTextLength;
                   const deltaText = text.length > newTextStart ? text.slice(newTextStart) : '';
 
                   // Always accumulate for final result tracking
                   accumulatedText = text; // Replace with full text (assistant msg contains full content)
+                  textSegments.length = 0;
+                  textSegments.push({
+                    ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
+                    text,
+                  });
 
                   // In JSON mode, we accumulate the text and extract JSON at the end
                   // Otherwise, stream any new text
@@ -2158,6 +3794,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 } else {
                   // No stream_events - assistant messages contain incremental text chunks
                   accumulatedText += text;
+                  textSegments.push({
+                    ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
+                    text,
+                  });
 
                   // In JSON mode, we accumulate the text and extract JSON at the end
                   // Otherwise, stream the text as it comes
@@ -2179,6 +3819,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   }
                 }
               }
+              // This assistant message claims all stream-event deltas that
+              // preceded it — reset the attribution window for the next one.
+              emittedTextSinceLastAssistant = '';
             } else if (message.type === 'user') {
               if (!message.message?.content) {
                 this.logger.warn(
@@ -2204,17 +3847,28 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     break;
                   }
                 }
-                accumulatedText = '';
-                streamedTextLength = 0;
                 this.logger.debug('[claude-code] Closed text part due to user message');
               }
+              // Reset the accumulators unconditionally: in JSON mode no text
+              // part is ever opened (textPartId stays undefined), but prose
+              // accumulated before a tool call must still be discarded so the
+              // final-object extraction (and the missing-structured_output
+              // recovery) parse only the last assistant turn's text.
+              accumulatedText = '';
+              textSegments.length = 0;
+              streamedTextLength = 0;
+              emittedTextSinceLastAssistant = '';
 
               // Extract parent_tool_use_id from SDK message for late-arriving tool results
-              const sdkParentToolUseIdForResults = (message as { parent_tool_use_id?: string })
-                .parent_tool_use_id;
+              const sdkParentToolUseIdForResults = (
+                message as { parent_tool_use_id?: string | null }
+              ).parent_tool_use_id;
 
               const content = message.message.content;
               for (const result of this.extractToolResults(content)) {
+                if (this.isRetractedToolFrame(result.id, retractedStreamToolIds, 'result')) {
+                  continue;
+                }
                 let state = toolStates.get(result.id);
                 const toolName =
                   result.name ?? state?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
@@ -2228,10 +3882,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     `[claude-code] Received tool result for unknown tool ID: ${result.id}`
                   );
                   // Use SDK parent if available, otherwise fall back to timing-based inference
-                  const resolvedParentId =
-                    toolName === 'Task'
-                      ? null
-                      : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+                  const resolvedParentId = isSubagentToolName(toolName)
+                    ? null
+                    : resolveToolParentId(
+                        sdkParentToolUseIdForResults,
+                        undefined,
+                        getFallbackParentId
+                      );
                   state = {
                     name: toolName,
                     inputStarted: false,
@@ -2265,57 +3922,29 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   }
                 }
                 state.name = toolName;
-                const normalizedResult = this.normalizeToolResult(result.result);
-                const rawResult =
-                  typeof result.result === 'string'
-                    ? result.result
-                    : (() => {
-                        try {
-                          return JSON.stringify(result.result);
-                        } catch {
-                          return String(result.result);
-                        }
-                      })();
-                const maxToolResultSize = this.settings.maxToolResultSize;
-                const truncatedResult = truncateToolResultForStream(
-                  normalizedResult,
-                  maxToolResultSize
-                );
-                const truncatedRawResult = truncateToolResultForStream(
-                  rawResult,
-                  maxToolResultSize
-                ) as string;
-                const rawResultTruncated = truncatedRawResult !== rawResult;
 
                 emitToolCall(result.id, state);
 
                 // Remove Task tools from active set when they complete
-                if (toolName === 'Task') {
+                if (isSubagentToolName(toolName)) {
                   activeTaskTools.delete(result.id);
                 }
 
-                controller.enqueue({
-                  type: 'tool-result',
-                  toolCallId: result.id,
-                  toolName,
-                  result: truncatedResult,
-                  isError: result.isError,
-                  providerExecuted: true,
-                  dynamic: true, // V3 field: indicates tool is provider-defined
-                  providerMetadata: {
-                    'claude-code': {
-                      // rawResult preserves the original CLI output string before JSON parsing.
-                      // Use this when you need the exact string returned by the tool, especially
-                      // if the `result` field has been parsed/normalized and you need the original format.
-                      rawResult: truncatedRawResult,
-                      rawResultTruncated,
-                      parentToolCallId: state.parentToolCallId ?? null,
-                    },
-                  },
-                } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                controller.enqueue(
+                  this.buildToolResultPart(
+                    result.id,
+                    toolName,
+                    result.result,
+                    result.isError,
+                    state.parentToolCallId
+                  )
+                );
               }
               // Handle tool errors
               for (const error of this.extractToolErrors(content)) {
+                if (this.isRetractedToolFrame(error.id, retractedStreamToolIds, 'error')) {
+                  continue;
+                }
                 let state = toolStates.get(error.id);
                 const toolName =
                   error.name ?? state?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
@@ -2329,10 +3958,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     `[claude-code] Received tool error for unknown tool ID: ${error.id}`
                   );
                   // Use SDK parent if available, otherwise fall back to timing-based inference
-                  const errorResolvedParentId =
-                    toolName === 'Task'
-                      ? null
-                      : (sdkParentToolUseIdForResults ?? getFallbackParentId());
+                  const errorResolvedParentId = isSubagentToolName(toolName)
+                    ? null
+                    : resolveToolParentId(
+                        sdkParentToolUseIdForResults,
+                        undefined,
+                        getFallbackParentId
+                      );
                   state = {
                     name: toolName,
                     inputStarted: true,
@@ -2347,49 +3979,36 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 emitToolCall(error.id, state);
 
                 // Remove Task tools from active set when they error
-                if (toolName === 'Task') {
+                if (isSubagentToolName(toolName)) {
                   activeTaskTools.delete(error.id);
                 }
 
-                const rawError =
-                  typeof error.error === 'string'
-                    ? error.error
-                    : typeof error.error === 'object' && error.error !== null
-                      ? (() => {
-                          try {
-                            return JSON.stringify(error.error);
-                          } catch {
-                            return String(error.error);
-                          }
-                        })()
-                      : String(error.error);
-
-                controller.enqueue({
-                  type: 'tool-error',
-                  toolCallId: error.id,
-                  toolName,
-                  error: rawError,
-                  providerExecuted: true,
-                  dynamic: true, // V3 field: indicates tool is provider-defined
-                  providerMetadata: {
-                    'claude-code': {
-                      rawError,
-                      parentToolCallId: state.parentToolCallId ?? null,
-                    },
-                  },
-                } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                controller.enqueue(
+                  this.buildToolErrorPart(error.id, toolName, error.error, state.parentToolCallId)
+                );
               }
             } else if (message.type === 'result') {
               done();
+              this.mergeResultPermissionDenials(message, metadataTracking);
 
-              // Handle is_error flag in result message (e.g., auth failures)
-              // The CLI returns successful JSON with is_error: true and error message in result field
+              // Handle is_error flag in result message (e.g., auth failures).
+              // SDKResultSuccess carries the error text in `result`; SDKResultError
+              // has no `result` field and carries details in `errors` instead.
               if ('is_error' in message && message.is_error === true) {
-                const errorMessage =
+                const resultText =
                   'result' in message && typeof message.result === 'string'
                     ? message.result
-                    : 'Claude Code CLI returned an error';
-                throw Object.assign(new Error(errorMessage), { exitCode: 1 });
+                    : undefined;
+                const errorsText =
+                  'errors' in message && Array.isArray(message.errors)
+                    ? message.errors.filter((e): e is string => typeof e === 'string').join('; ')
+                    : '';
+                const errorMessage =
+                  resultText ?? (errorsText || 'Claude Code CLI returned an error');
+                throw Object.assign(new Error(errorMessage), {
+                  exitCode: 1,
+                  errorKind: lastAssistantErrorKind,
+                });
               }
 
               // Handle structured output errors (SDK 0.1.45+)
@@ -2461,6 +4080,49 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   type: 'text-end',
                   id: jsonTextId,
                 });
+              } else if (
+                options.responseFormat?.type === 'json' &&
+                options.responseFormat.schema !== undefined &&
+                finishReason.unified === 'stop'
+              ) {
+                // Loud failure / graceful recovery (mirrors doGenerate): the
+                // CLI can return a SUCCESSFUL result without structured_output
+                // when the schema contains constructs it cannot enforce,
+                // silently falling back to prose. Try to recover JSON from the
+                // accumulated prose; otherwise fail with a descriptive,
+                // non-retryable error instead of streaming prose that ends in
+                // an opaque AI_NoObjectGeneratedError downstream.
+                const recoveredJsonText = extractJsonObjectText(accumulatedText);
+                if (recoveredJsonText === undefined) {
+                  throw createAPICallError({
+                    message: MISSING_STRUCTURED_OUTPUT_ERROR_MESSAGE,
+                    promptExcerpt: messagesPrompt.substring(0, 200),
+                    isRetryable: false,
+                  });
+                }
+                this.logger.warn(
+                  '[claude-code] outputFormat was requested but the CLI returned no structured_output; recovered JSON by parsing the prose response. The schema likely contains constructs the CLI cannot enforce - see the README structured-output limitations.'
+                );
+                if (textPartId) {
+                  controller.enqueue({
+                    type: 'text-end',
+                    id: textPartId,
+                  });
+                }
+                const recoveredTextId = generateId();
+                controller.enqueue({
+                  type: 'text-start',
+                  id: recoveredTextId,
+                });
+                controller.enqueue({
+                  type: 'text-delta',
+                  id: recoveredTextId,
+                  delta: recoveredJsonText,
+                });
+                controller.enqueue({
+                  type: 'text-end',
+                  id: recoveredTextId,
+                });
               } else if (textPartId) {
                 // Close the text part if it was opened (non-JSON mode)
                 controller.enqueue({
@@ -2506,6 +4168,36 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     ...(message.modelUsage !== undefined && {
                       modelUsage: message.modelUsage as unknown as JSONValue,
                     }),
+                    // SDK 0.3.x timing metadata (ttft_* only present on SDKResultSuccess)
+                    ...('ttft_ms' in message &&
+                      message.ttft_ms !== undefined && { ttftMs: message.ttft_ms }),
+                    ...('ttft_stream_ms' in message &&
+                      message.ttft_stream_ms !== undefined && {
+                        ttftStreamMs: message.ttft_stream_ms,
+                      }),
+                    ...('time_to_request_ms' in message &&
+                      message.time_to_request_ms !== undefined && {
+                        timeToRequestMs: message.time_to_request_ms,
+                      }),
+                    ...('warm_spare_claimed' in message &&
+                      message.warm_spare_claimed !== undefined && {
+                        warmSpareClaimed: message.warm_spare_claimed,
+                      }),
+                    ...(message.terminal_reason !== undefined && {
+                      terminalReason: message.terminal_reason,
+                    }),
+                    ...(metadataTracking.apiRetries > 0 && {
+                      apiRetries: metadataTracking.apiRetries,
+                    }),
+                    ...(metadataTracking.permissionDenials.length > 0 && {
+                      permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
+                    }),
+                    ...(metadataTracking.mirrorErrors.length > 0 && {
+                      mirrorErrors: metadataTracking.mirrorErrors as unknown as JSONValue,
+                    }),
+                    ...(metadataTracking.estimatedThinkingTokens > 0 && {
+                      estimatedThinkingTokens: metadataTracking.estimatedThinkingTokens,
+                    }),
                     // JSON validation warnings are collected during streaming and included
                     // in providerMetadata since the AI SDK's finish event doesn't support
                     // a top-level warnings field (unlike stream-start which was already emitted)
@@ -2516,6 +4208,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 },
               });
               controller.close();
+
+              // The prompt_suggestion message (promptSuggestions: true) arrives
+              // AFTER the result message, so the AI SDK stream has already
+              // finished above. Drain the remaining SDK messages to deliver it
+              // via the callback; only done when a callback is registered so
+              // everyone else keeps the immediate return-on-result behavior.
+              // The drain is bounded: the SDK emits at most one prompt_suggestion
+              // per turn, so stop once it is delivered, and a timeout closes the
+              // iterator (tearing down the subprocess) if the CLI lingers after
+              // the result without emitting one.
+              // Drain for the post-result prompt_suggestion only when
+              // suggestions can be emitted (promptSuggestions absent or true;
+              // disabled only when explicitly false), skipping the up-to-10s
+              // drain in the explicit-false case.
+              const effectivePromptSuggestions =
+                sdkOptions?.promptSuggestions ?? this.settings.promptSuggestions;
+              if (this.settings.onPromptSuggestion && effectivePromptSuggestions !== false) {
+                await this.drainPromptSuggestion(response, this.settings.onPromptSuggestion);
+              }
               return;
             } else if (message.type === 'system' && message.subtype === 'init') {
               this.logMcpConnectionIssues(message.mcp_servers);
@@ -2532,6 +4243,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 timestamp: new Date(),
                 modelId: this.modelId,
               });
+            } else if (message.type === 'system') {
+              this.handleSystemMessage(
+                message,
+                metadataTracking,
+                buildRetractionEvictor(evictLive)
+              );
+            } else if (message.type === 'prompt_suggestion') {
+              // Defensive: normally arrives after the result message (handled by
+              // the post-finish drain above), but consume it here if it arrives early.
+              this.logger.debug('[claude-code] Received prompt suggestion');
+              this.settings.onPromptSuggestion?.(message.suggestion);
             }
           }
 
@@ -2589,6 +4311,18 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 'claude-code': {
                   ...(this.sessionId !== undefined && { sessionId: this.sessionId }),
                   truncated: true,
+                  ...(metadataTracking.apiRetries > 0 && {
+                    apiRetries: metadataTracking.apiRetries,
+                  }),
+                  ...(metadataTracking.permissionDenials.length > 0 && {
+                    permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
+                  }),
+                  ...(metadataTracking.mirrorErrors.length > 0 && {
+                    mirrorErrors: metadataTracking.mirrorErrors as unknown as JSONValue,
+                  }),
+                  ...(metadataTracking.estimatedThinkingTokens > 0 && {
+                    estimatedThinkingTokens: metadataTracking.estimatedThinkingTokens,
+                  }),
                   ...(streamWarnings.length > 0 && {
                     warnings: warningsJson as unknown as JSONValue,
                   }),

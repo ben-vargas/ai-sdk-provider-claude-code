@@ -1,5 +1,7 @@
 # Usage Guide
 
+> **Historical:** Covers legacy provider versions 0.x (AI SDK v4). See the [main README](../../README.md) for current documentation.
+
 ## Essential Examples
 
 ### Streaming Responses

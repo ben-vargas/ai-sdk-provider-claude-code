@@ -107,11 +107,14 @@ Do not call list_directory on "/" and do not access any path outside ${pathInstr
       case 'tool-error':
         console.error(`TOOL ERROR: ${part.toolName} -> ${part.error}`);
         break;
-      case 'text-delta':
-        if (typeof part.delta === 'string') {
-          process.stdout.write(part.delta);
+      case 'text-delta': {
+        // AI SDK v6 fullStream carries the chunk in `text` (older builds used `delta`).
+        const chunk = part.delta ?? part.text;
+        if (typeof chunk === 'string') {
+          process.stdout.write(chunk);
         }
         break;
+      }
       case 'finish':
         console.log('\n\nDone.');
         break;

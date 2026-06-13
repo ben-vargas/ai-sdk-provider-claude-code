@@ -9,9 +9,15 @@ import type {
   Options,
   SpawnedProcess,
   SpawnOptions,
-  AgentMcpServerSpec,
+  AgentDefinition,
   Query,
   ThinkingConfig,
+  EffortLevel,
+  Settings,
+  ToolConfig,
+  SessionStore,
+  SessionStoreFlush,
+  OnUserDialog,
 } from '@anthropic-ai/claude-agent-sdk';
 
 export type StreamingInputMode = 'auto' | 'always' | 'off';
@@ -91,9 +97,15 @@ export interface ClaudeCodeSettings {
   /**
    * Agent SDK system prompt configuration. Preferred over legacy fields.
    * - string: custom system prompt
-   * - preset object: Claude Code preset, with optional append
+   * - string[]: custom system prompt blocks; include the
+   *   `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` marker (re-exported by this package)
+   *   as a standalone element to split the static (cross-session cacheable)
+   *   prefix from the dynamic (session-specific) suffix
+   * - preset object: Claude Code preset, with optional `append` and
+   *   `excludeDynamicSections` (strips per-user dynamic sections such as
+   *   working directory and git status so the prompt caches across users)
    */
-  systemPrompt?: string | { type: 'preset'; preset: 'claude_code'; append?: string };
+  systemPrompt?: Options['systemPrompt'];
 
   /**
    * Maximum number of turns for the conversation
@@ -125,11 +137,12 @@ export interface ClaudeCodeSettings {
    * - `'low'` — Minimal thinking, fastest responses
    * - `'medium'` — Moderate thinking
    * - `'high'` — Deep reasoning (default)
+   * - `'xhigh'` — Extra-high effort
    * - `'max'` — Maximum effort (Opus 4.6 only)
    *
    * @see https://docs.anthropic.com/en/docs/build-with-claude/effort
    */
-  effort?: 'low' | 'medium' | 'high' | 'max';
+  effort?: EffortLevel;
 
   /**
    * Enable prompt suggestions. When true, the agent emits a predicted
@@ -154,7 +167,11 @@ export interface ClaudeCodeSettings {
   executableArgs?: string[];
 
   /**
-   * Permission mode for tool usage
+   * Permission mode for tool usage.
+   *
+   * Note: `'delegate'` was removed in Agent SDK 0.3.x — the CLI rejects
+   * `--permission-mode delegate` at argv parsing — so it is no longer
+   * accepted here either.
    * @default 'default'
    */
   permissionMode?: PermissionMode;
@@ -177,6 +194,13 @@ export interface ClaudeCodeSettings {
   /**
    * Use a specific session ID for this query.
    * Allows deterministic session identifiers for tracking and correlation.
+   *
+   * Must be a valid UUID (the CLI rejects other formats). Cannot be combined
+   * with `continue` or `resume` unless `forkSession` is also set (it then
+   * names the forked session's ID); the provider rejects those combinations
+   * at validation time. On multi-turn conversations the provider forwards
+   * `sessionId` only on the first turn — subsequent turns resume the captured
+   * session (which already carries the custom ID).
    */
   sessionId?: string;
 
@@ -224,6 +248,11 @@ export interface ClaudeCodeSettings {
 
   /**
    * Configure sandbox behavior programmatically.
+   *
+   * Cannot be combined with a `settings` FILE PATH (the SDK throws at query
+   * time); pass `settings` as an inline object instead, or move the sandbox
+   * configuration into the settings file. The provider rejects the
+   * combination at validation time.
    */
   sandbox?: SandboxSettings;
 
@@ -233,13 +262,102 @@ export interface ClaudeCodeSettings {
   tools?: Options['tools'];
 
   /**
+   * Skills to enable for the main session. This is the single place to turn
+   * skills on; you do not need to add `'Skill'` to `allowedTools` yourself
+   * when using this option.
+   *
+   * - `'all'`: enable every discovered skill
+   * - `string[]`: enable only the listed skills (SKILL.md `name`/directory
+   *   name, or `plugin:skill` for plugin-qualified skills)
+   * - omitted (default): no SDK auto-configuration
+   *
+   * Note: filesystem skills are discovered via `settingSources` — set it
+   * (e.g. `['user', 'project']`) so skill definitions can be loaded.
+   */
+  skills?: string[] | 'all';
+
+  /**
+   * Inline settings object or path to a settings JSON file.
+   * Applied as an additional settings layer for the session.
+   *
+   * A settings file path cannot be combined with the `sandbox` option (the
+   * SDK throws at query time; inline objects are fine). The provider rejects
+   * the combination at validation time.
+   */
+  settings?: string | Settings;
+
+  /**
+   * Policy-tier settings supplied by the spawning parent process.
+   * Filtered restrictive-only by the SDK; intended for embedding
+   * applications that need to enforce lockdown settings on the
+   * subprocess without writing root-owned files.
+   */
+  managedSettings?: Settings;
+
+  /**
+   * Map built-in tool names to replacement tools (e.g. MCP tools).
+   *
+   * @example
+   * ```typescript
+   * toolAliases: { Bash: 'mcp__workspace__bash' }
+   * ```
+   */
+  toolAliases?: Record<string, string>;
+
+  /**
+   * Per-tool configuration for built-in tools
+   * (e.g. `{ askUserQuestion: { previewFormat: 'html' } }`).
+   */
+  toolConfig?: ToolConfig;
+
+  /**
+   * Custom workflow instructions for plan mode. When `permissionMode` is
+   * `'plan'`, this string replaces the default code-implementation workflow
+   * body in the plan-mode system reminder.
+   */
+  planModeInstructions?: string;
+
+  /**
+   * Custom title for a new session. When provided, the session uses this
+   * title instead of auto-generating one from the first user message.
+   * When resuming, the resumed session's persisted title takes precedence.
+   */
+  title?: string;
+
+  /**
+   * Forward subagent text and thinking blocks as messages with
+   * `parent_tool_use_id` set so consumers can render a nested transcript.
+   * By default only tool_use/tool_result blocks from subagents are emitted.
+   */
+  forwardSubagentText?: boolean;
+
+  /**
+   * Enable periodic AI-generated progress summaries for running subagents,
+   * emitted on `task_progress` events via the `summary` field.
+   */
+  agentProgressSummaries?: boolean;
+
+  /**
+   * Include hook lifecycle events (`hook_started`, `hook_progress`,
+   * `hook_response`) in the output stream for all hook event types.
+   * @default false
+   */
+  includeHookEvents?: boolean;
+
+  /**
    * MCP server configuration
    */
   mcpServers?: Record<string, McpServerConfig>;
 
   /**
    * Filesystem settings sources to load (CLAUDE.md, settings.json, etc.)
-   * When omitted, the Agent SDK loads no filesystem settings.
+   * When omitted, the provider explicitly passes `[]` to the Agent SDK so that
+   * no filesystem settings are loaded (isolation mode).
+   *
+   * Note: Agent SDK 0.3.x changed the SDK-level default — omitting
+   * `settingSources` now loads ALL filesystem settings (matching CLI behavior).
+   * The provider pins isolation mode unless you set this option (or override
+   * `settingSources` via the `sdkOptions` escape hatch).
    *
    * Required for Skills support - skills are loaded from these sources.
    * @example ['user', 'project']
@@ -249,6 +367,17 @@ export interface ClaudeCodeSettings {
   /**
    * Hook callbacks for lifecycle events (e.g., PreToolUse, PostToolUse).
    * Note: typed loosely to support multiple SDK versions.
+   *
+   * Two verified upstream CLI behaviors to be aware of (CLI 2.1.172):
+   * - A `PreToolUse` hook returning `permissionDecision: 'defer'` combined
+   *   with a {@link canUseTool} callback fails the tool call before
+   *   `canUseTool` is ever consulted. Return no decision (or `'allow'`)
+   *   instead of `'defer'` when `canUseTool` should handle the call.
+   * - The `PermissionDenied` hook only fires for CLI-internal auto-mode
+   *   classifier denials (e.g. `permissionMode: 'auto'`). Denials issued by
+   *   `canUseTool` do NOT trigger it; they surface via the result message's
+   *   `permission_denials`, exposed as
+   *   `providerMetadata['claude-code'].permissionDenials`.
    */
   hooks?: Partial<
     Record<
@@ -260,8 +389,47 @@ export interface ClaudeCodeSettings {
   /**
    * Dynamic permission callback invoked before a tool is executed.
    * Allows runtime approval/denial and optional input mutation.
+   *
+   * Upstream CLI caveats (verified on CLI 2.1.172):
+   * - Do not combine with a `PreToolUse` hook that returns
+   *   `permissionDecision: 'defer'` — the CLI fails the tool call before
+   *   this callback is consulted.
+   * - Denials returned here do not fire the `PermissionDenied` hook (it only
+   *   fires for auto-mode classifier denials); they surface in
+   *   `providerMetadata['claude-code'].permissionDenials` instead.
    */
   canUseTool?: CanUseTool;
+
+  /**
+   * Callback for handling `request_user_dialog` control requests — blocking
+   * dialogs the CLI asks the host to render (e.g. the refusal-fallback
+   * prompt). Each `dialogKind` defines its own payload and result shape;
+   * answer unrecognized kinds with `{ behavior: 'cancelled' }` so the CLI
+   * applies the dialog's default behavior.
+   *
+   * The SDK fails closed around dialogs: when the CLI requests a dialog and
+   * no handler/declared kind exists, the dialog-gated flow degrades to its
+   * no-dialog behavior (for `'refusal_fallback_prompt'`, the classic refusal
+   * error ends the turn). Wire this callback together with
+   * `supportedDialogKinds` to opt in — providing the callback alone does NOT
+   * make the CLI emit dialogs.
+   */
+  onUserDialog?: OnUserDialog;
+
+  /**
+   * Dialog kinds (`request_user_dialog` `dialog_kind` values, e.g.
+   * `'refusal_fallback_prompt'`) that your `onUserDialog` callback can
+   * actually render. The CLI only emits dialog kinds declared here and
+   * fails closed on absence: an undeclared kind is never emitted and the
+   * flow behind it degrades to its no-dialog behavior instead. Omitting the
+   * option entirely means no dialogs are emitted, even with `onUserDialog`
+   * wired.
+   *
+   * Requires `onUserDialog` — the SDK throws at option intake when a
+   * non-empty list is passed without the callback (the provider also warns
+   * at validation time).
+   */
+  supportedDialogKinds?: string[];
 
   /**
    * Controls whether to send streaming input to the SDK (enables canUseTool).
@@ -310,7 +478,14 @@ export interface ClaudeCodeSettings {
   logger?: Logger | false;
 
   /**
-   * Environment variables to set
+   * Environment variables to set for the Claude Code subprocess.
+   *
+   * The provider always constructs the subprocess environment from a sanitizing
+   * allowlist of `process.env` (HOME, PATH, proxy/TLS vars, `ANTHROPIC_*`,
+   * `CLAUDE_*`, `AWS_*`, `GOOGLE_*`, etc.), then merges these values over it
+   * (set a key to `undefined` to remove it). Agent SDK 0.3.x treats
+   * `Options.env` as a full replacement for the subprocess environment, so
+   * variables outside the allowlist are not inherited unless set here.
    */
   env?: Record<string, string | undefined>;
 
@@ -321,26 +496,13 @@ export interface ClaudeCodeSettings {
 
   /**
    * Programmatically defined subagents.
+   *
+   * Uses the Agent SDK's `AgentDefinition` directly, which includes
+   * `effort`, `permissionMode`, `background`, `memory`, `initialPrompt`,
+   * `skills`, `maxTurns`, and full model ID strings in addition to the
+   * core `description`/`prompt`/`tools` fields.
    */
-  agents?: Record<
-    string,
-    {
-      /** Natural language description of when to use this agent */
-      description: string;
-      /** Array of allowed tool names. If omitted, inherits all tools from parent */
-      tools?: string[];
-      /** Array of tool names to explicitly disallow for this agent */
-      disallowedTools?: string[];
-      /** The agent's system prompt */
-      prompt: string;
-      /** Model to use for this agent. If omitted or 'inherit', uses the main model */
-      model?: 'sonnet' | 'opus' | 'haiku' | 'inherit';
-      /** MCP servers available to this agent (server names or inline configs) */
-      mcpServers?: AgentMcpServerSpec[];
-      /** Experimental: Critical reminder added to system prompt */
-      criticalSystemReminder_EXPERIMENTAL?: string;
-    }
-  >;
+  agents?: Record<string, AgentDefinition>;
 
   /**
    * Include partial message events from the SDK stream.
@@ -348,7 +510,12 @@ export interface ClaudeCodeSettings {
   includePartialMessages?: boolean;
 
   /**
-   * Model to use if primary fails.
+   * Model(s) to use if the primary model is overloaded or unavailable.
+   * Accepts a comma-separated list to try each in order; the primary model
+   * is re-tried at the start of each user turn.
+   *
+   * Must differ from the main model (the SDK throws when they are equal);
+   * the provider rejects the combination before invoking the SDK.
    */
   fallbackModel?: string;
 
@@ -379,6 +546,47 @@ export interface ClaudeCodeSettings {
    * @default true
    */
   persistSession?: boolean;
+
+  /**
+   * API-side task budget in tokens. When set, the model is made aware of
+   * its remaining token budget so it can pace tool use and wrap up before
+   * the limit.
+   *
+   * @alpha Subject to change in upstream Agent SDK releases.
+   */
+  taskBudget?: { total: number };
+
+  /**
+   * Mirror session transcripts to a custom storage adapter (e.g. Postgres,
+   * S3, Redis) in addition to local JSONL files. Cannot be combined with
+   * `persistSession: false` — local writes are required for the mirror to
+   * function — or with `enableFileCheckpointing: true` — checkpoint backup
+   * blobs are not mirrored, so `rewindFiles()` fails after a store-backed
+   * resume. Combining it with `continue: true` (without a `resume` ID)
+   * additionally requires the store to implement `listSessions()`, which the
+   * SDK uses to discover the most recent session. The provider rejects all
+   * three invalid combinations at validation time.
+   *
+   * @alpha Subject to change in upstream Agent SDK releases.
+   */
+  sessionStore?: SessionStore;
+
+  /**
+   * Flush strategy for `sessionStore` transcript mirroring:
+   * `'batched'` (default) or `'eager'`. Ignored when `sessionStore` is unset.
+   *
+   * @alpha Subject to change in upstream Agent SDK releases.
+   */
+  sessionStoreFlush?: SessionStoreFlush;
+
+  /**
+   * Timeout in milliseconds for each `sessionStore.load()` /
+   * `sessionStore.listSubkeys()` call during resume materialization.
+   *
+   * @default 60000
+   * @alpha Subject to change in upstream Agent SDK releases.
+   */
+  loadTimeoutMs?: number;
 
   /**
    * Custom function to spawn the Claude Code process.
@@ -440,6 +648,35 @@ export interface ClaudeCodeSettings {
    * ```
    */
   onStreamStart?: (injector: MessageInjector) => void;
+
+  /**
+   * Callback invoked when the agent emits a prompt suggestion (a predicted
+   * next user prompt). Suggestions are enabled when `promptSuggestions` is
+   * `true` OR left unset (the SDK enables them when the option is absent or
+   * true and disables them only when explicitly `false`). When the callback
+   * is set and `promptSuggestions !== false`, the provider drains post-result
+   * messages to deliver the suggestion. Delivery is still subject to CLI
+   * heuristics — suppressed on the first turn, after API errors, in plan
+   * mode, and by `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false` — so it may not
+   * fire on every turn.
+   *
+   * The SDK emits at most one `prompt_suggestion` message per turn, and it
+   * arrives AFTER the `result` message — i.e. after the AI SDK response has
+   * already finished. That is why suggestions are delivered through this
+   * callback instead of `providerMetadata` (which is finalized with the
+   * finish event/result).
+   *
+   * @example
+   * ```typescript
+   * const model = claudeCode('sonnet', {
+   *   promptSuggestions: true,
+   *   onPromptSuggestion: (suggestion) => {
+   *     console.log('Suggested next prompt:', suggestion);
+   *   }
+   * });
+   * ```
+   */
+  onPromptSuggestion?: (suggestion: string) => void;
 }
 
 /**
