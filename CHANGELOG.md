@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.1] - 2026-07-06
+
+### Fixed
+
+- **Weekly SDK canary triage for `SDKMessage` collapse** - The canary against `@anthropic-ai/claude-agent-sdk@0.3.201` failed with two misleading TS7006 errors because that release's published `sdk.d.ts` references `SDKControlRequestProgressMessage` and `SDKConversationResetMessage` in the `SDKMessage` union without declaring either type (upstream anthropics/claude-agent-sdk-typescript#363, unfixed as of 0.3.201). Under this repository's `skipLibCheck` setting, those missing names collapse the whole union to `any`, hiding the real upstream type breakage behind uncontextualized callbacks.
+- **Result-error filters hardened without runtime changes** - The two result-error filter callbacks are now explicitly annotated as `(e: unknown): e is string`, so collapsed contextual typing cannot surface as TS7006. The filter predicate and runtime behavior are unchanged.
+- **Self-documenting compile-time guard for broken SDK releases** - `src/options-coverage.test.ts` now fails typecheck with a single named error (`SDKMessage_collapsed_to_any__...`) whenever the `SDKMessage` union collapses, keeping the weekly canary red for the real reason and blocking a dependency bump onto a broken SDK release.
+- **Canary failure guidance split by failure mode** - Canary workflow comments and the auto-filed issue text now give separate triage guidance for Options drift versus SDKMessage collapse. The pinned dependency is unchanged (`^0.3.170`, with lockfile `0.3.170`), and this release makes no runtime behavior changes.
+
 ## [3.5.0] - 2026-06-10
 
 This release upgrades the provider to `@anthropic-ai/claude-agent-sdk` 0.3.x (from 0.2.63) and closes the resulting capability gap in one pass: every non-excluded SDK `Options` field is now reachable as a first-class setting (enforced by a new compile-time drift guard), stream handling understands the new 0.3.x message types (refusal fallbacks, superseded messages, timing metadata), AI SDK conformance is tightened (honest warnings, tool-call history round-trip, an MCP bridge helper for AI SDK tools, and `doGenerate` now surfaces provider-executed tool parts in `content`), and session lifecycle helpers, warm-start re-exports, and user-dialog support are exposed. A weekly canary CI job now tests against `@anthropic-ai/claude-agent-sdk@latest` to catch upstream drift early.
