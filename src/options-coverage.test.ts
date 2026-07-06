@@ -24,7 +24,7 @@
  * `MappedKey`), or adding it to `KnownExcludedKey` with a reason.
  */
 import { describe, expect, it } from 'vitest';
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 /**
  * Every `Options` field that `createQueryOptions` in
@@ -132,6 +132,21 @@ type UnaccountedSdkOptionKey = Exclude<keyof Options, AccountedKey>;
  */
 type StaleAccountedKey = Exclude<AccountedKey, keyof Options>;
 
+type IsAny<T> = 0 extends 1 & T ? true : false;
+type HasAnyKeyspace<T> = string extends keyof T ? true : false;
+
+/**
+ * Broken published SDK declarations can reference missing union members. With
+ * skipLibCheck, those missing names collapse `SDKMessage` to `any`; canary must
+ * fail loudly/actionably here instead of leaking stray TS7006s elsewhere.
+ */
+type CollapsedSdkMessageAnyKey =
+  HasAnyKeyspace<SDKMessage> extends true
+    ? 'SDKMessage_collapsed_to_any__fix_upstream_claude_agent_sdk_dts_missing_union_members'
+    : IsAny<SDKMessage> extends true
+      ? 'SDKMessage_collapsed_to_any__fix_upstream_claude_agent_sdk_dts_missing_union_members'
+      : never;
+
 // Compile-time guards. `Record<never, never>` is `{}`, so these only compile
 // while the corresponding union is empty; otherwise tsc names the missing
 // key(s), e.g.:
@@ -147,6 +162,7 @@ const providerManagedKeysOverlappingExcluded: Record<
   Extract<ProviderManagedKey, KnownExcludedKey>,
   never
 > = {};
+const sdkMessageMustNotCollapseToAny: Record<CollapsedSdkMessageAnyKey, never> = {};
 
 describe('SDK Options drift guard', () => {
   it('accounts for every key of the SDK Options type', () => {
@@ -161,5 +177,9 @@ describe('SDK Options drift guard', () => {
   it('keeps the three buckets disjoint', () => {
     expect(Object.keys(mappedKeysOverlappingOtherBuckets)).toEqual([]);
     expect(Object.keys(providerManagedKeysOverlappingExcluded)).toEqual([]);
+  });
+
+  it('keeps SDKMessage from collapsing to any', () => {
+    expect(Object.keys(sdkMessageMustNotCollapseToAny)).toEqual([]);
   });
 });

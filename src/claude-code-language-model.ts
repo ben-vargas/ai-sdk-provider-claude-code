@@ -2669,7 +2669,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 : undefined;
             const errorsText =
               'errors' in message && Array.isArray(message.errors)
-                ? message.errors.filter((e): e is string => typeof e === 'string').join('; ')
+                ? message.errors
+                    .filter((e: unknown): e is string => typeof e === 'string')
+                    .join('; ')
                 : '';
             const errorMessage = resultText ?? (errorsText || 'Claude Code CLI returned an error');
             throw Object.assign(new Error(errorMessage), {
@@ -4001,7 +4003,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     : undefined;
                 const errorsText =
                   'errors' in message && Array.isArray(message.errors)
-                    ? message.errors.filter((e): e is string => typeof e === 'string').join('; ')
+                    ? message.errors
+                        .filter((e: unknown): e is string => typeof e === 'string')
+                        .join('; ')
                     : '';
                 const errorMessage =
                   resultText ?? (errorsText || 'Claude Code CLI returned an error');
