@@ -3,8 +3,13 @@ name: SDK Canary
 # Weekly canary against @anthropic-ai/claude-agent-sdk@latest.
 #
 # A failure here means UPSTREAM SDK DRIFT (a new @latest broke typecheck or
-# tests, including the compile-time Options drift guard in
-# src/options-coverage.test.ts) — NOT a regression in this repository.
+# tests) — NOT a regression in this repository. Typecheck includes guards in
+# src/options-coverage.test.ts:
+#   - Options drift: a new/changed Options key; map it or add it to
+#     KnownExcludedKey.
+#   - SDKMessage_collapsed_to_any: broken upstream d.ts references missing
+#     union members; report/track upstream and wait for a fixed release before
+#     bumping.
 # The pinned-dependency CI workflow (ci.yml) is the repo-health signal.
 
 on:
@@ -95,14 +100,17 @@ jobs:
               `- Failed step: ${failedStep}`,
               `- Pinned range: \`${JSON.parse(fs.readFileSync('package.json', 'utf8')).dependencies['@anthropic-ai/claude-agent-sdk']}\``,
               '',
-              'A failure here means **upstream SDK drift** — typecheck (including the Options',
-              'drift guard in `src/options-coverage.test.ts`, which names any new `Options` key)',
-              'or unit tests broke against `@latest` — not a regression in this repository.',
+              'A failure here means **upstream SDK drift** — typecheck (including guards in',
+              '`src/options-coverage.test.ts`) or unit tests broke against `@latest`, not a',
+              'regression in this repository.',
               '',
-              'Triage: check the failed step in the run log. A typecheck failure usually means',
-              'a new or changed SDK type (map it or add it to `KnownExcludedKey`); a test',
-              'failure means runtime behavior changed and needs investigation before the next',
-              'dependency bump.',
+              'Triage: check the failed step in the run log. For Options drift guard errors,',
+              'the SDK added/changed an `Options` key; map it or add it to `KnownExcludedKey`.',
+              'If a typecheck error names `SDKMessage_collapsed_to_any`, upstream published',
+              'a broken d.ts (the `SDKMessage` union references undeclared members); there is',
+              'nothing to fix repo-side — report/track upstream and wait for a fixed release',
+              'before bumping. A test failure means runtime behavior changed and needs',
+              'investigation before the next dependency bump.',
             ].join('\n');
             // Paginate so the tracking issue is still found (and not duplicated)
             // even if the repo ever has more than 100 open issues.
