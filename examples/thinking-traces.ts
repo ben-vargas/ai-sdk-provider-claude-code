@@ -16,8 +16,8 @@ async function nonStreamingExample() {
   console.log('=== Non-Streaming (generateText) ===\n');
 
   const result = await generateText({
-    model: claudeCode('sonnet', {
-      thinking: { type: 'enabled', budgetTokens: 10000 },
+    model: claudeCode('opus', {
+      thinking: { type: 'enabled', budgetTokens: 10000, display: 'summarized' },
     }),
     prompt: PROMPT,
   });
@@ -49,8 +49,8 @@ async function streamingExample() {
   console.log('\n=== Streaming (streamText) ===\n');
 
   const result = streamText({
-    model: claudeCode('sonnet', {
-      thinking: { type: 'enabled', budgetTokens: 10000 },
+    model: claudeCode('opus', {
+      thinking: { type: 'enabled', budgetTokens: 10000, display: 'summarized' },
     }),
     prompt: PROMPT,
   });

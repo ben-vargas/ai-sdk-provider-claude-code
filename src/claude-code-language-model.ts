@@ -3186,6 +3186,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
               ? ((message as Record<string, unknown>).stop_reason as string | null | undefined)
               : undefined;
           finishReason = mapClaudeCodeFinishReason(message.subtype, stopReason);
+          if (structuredOutput !== undefined && finishReason.unified === 'tool-calls') {
+            // Claude Code implements native structured output via an internal
+            // StructuredOutput tool. AI SDK v7 only parses `Output.object()`
+            // when the final step stops, so expose successful structured output
+            // as a stopped generation while preserving the raw CLI stop reason.
+            finishReason = { unified: 'stop', raw: finishReason.raw };
+          }
           this.logger.debug(`[claude-code] Finish reason: ${finishReason.unified}`);
 
           // The result message is terminal. When either the prompt_suggestion callback

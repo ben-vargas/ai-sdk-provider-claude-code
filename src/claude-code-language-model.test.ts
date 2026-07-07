@@ -1820,6 +1820,39 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(result.finishReason).toEqual({ unified: 'stop', raw: 'end_turn' });
     });
 
+    it('returns structured_output JSON as stopped text when the CLI stops on its internal tool', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'structured-tool-use-session',
+            structured_output: { answer: 42 },
+            usage: { input_tokens: 12, output_tokens: 4 },
+            stop_reason: 'tool_use',
+          };
+        },
+      };
+      // Test double implements the AsyncIterable surface consumed from Query.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Return JSON' }] }],
+        responseFormat: {
+          type: 'json',
+          schema: {
+            type: 'object',
+            properties: { answer: { type: 'number' } },
+            required: ['answer'],
+            additionalProperties: false,
+          },
+        },
+      });
+
+      expect(result.content).toEqual([{ type: 'text', text: '{"answer":42}' }]);
+      expect(result.finishReason).toEqual({ unified: 'stop', raw: 'tool_use' });
+    });
+
     it('should pass through spawnClaudeCodeProcess option', async () => {
       const customSpawner = vi.fn();
       const modelWithSpawner = new ClaudeCodeLanguageModel({
