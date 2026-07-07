@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, ai-sdk-v7]
   pull_request:
-    branches: [main, develop]
+    branches: [main]
 
 jobs:
   test:
@@ -13,7 +13,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [20.x]
+        node-version: [22.x, 24.x]
 
     steps:
       - uses: actions/checkout@v6

@@ -3,18 +3,9 @@ import { readFileSync } from 'node:fs';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
 import { getErrorMetadata, isAuthenticationError } from './errors.js';
 import type { Logger } from './types.js';
-import { APICallError, type LanguageModelV3StreamPart } from '@ai-sdk/provider';
+import { APICallError, type LanguageModelV4StreamPart } from '@ai-sdk/provider';
 
-// Extend stream part union locally to include provider-specific 'tool-error'
-type ToolErrorPart = {
-  type: 'tool-error';
-  toolCallId: string;
-  toolName: string;
-  error: string;
-  providerExecuted: true;
-  providerMetadata?: Record<string, unknown>;
-};
-type ExtendedStreamPart = LanguageModelV3StreamPart | ToolErrorPart;
+type ExtendedStreamPart = LanguageModelV4StreamPart;
 
 // Mock the SDK module with factory function
 vi.mock('@anthropic-ai/claude-agent-sdk', () => {
@@ -32,7 +23,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
 
 // Import the mocked module to get typed references
 import { query as mockQuery, AbortError as MockAbortError } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 const STREAMING_WARNING_MESSAGE =
   "Claude Agent SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
@@ -151,7 +142,11 @@ describe('ClaudeCodeLanguageModel', () => {
             role: 'user',
             content: [
               { type: 'text', text: 'Describe this image.' },
-              { type: 'image', image: 'data:image/png;base64,aGVsbG8=' },
+              {
+                type: 'file',
+                mediaType: 'image/png',
+                data: { type: 'url', url: 'data:image/png;base64,aGVsbG8=' },
+              },
             ],
           },
         ],
@@ -793,6 +788,170 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
       expect(call?.options?.effort).toBe('xhigh');
+    });
+
+    it("maps portable reasoning 'high' to Claude adaptive thinking effort", async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-reasoning-high',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      } as unknown as Query; // Minimal Query double; this path only consumes AsyncIterable.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse);
+
+      await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        reasoning: 'high',
+      });
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+      expect(call?.options?.thinking).toEqual({ type: 'adaptive' });
+      expect(call?.options?.effort).toBe('high');
+    });
+
+    it("maps portable reasoning 'none' to disabled Claude thinking", async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-reasoning-none',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      } as unknown as Query; // Minimal Query double; this path only consumes AsyncIterable.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse);
+
+      await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        reasoning: 'none',
+      });
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+      expect(call?.options?.thinking).toEqual({ type: 'disabled' });
+      expect(call?.options?.effort).toBeUndefined();
+    });
+
+    it('keeps Claude-specific effort ahead of portable reasoning', async () => {
+      const modelWithEffort = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { effort: 'xhigh' },
+      });
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-reasoning-precedence',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      } as unknown as Query; // Minimal Query double; this path only consumes AsyncIterable.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse);
+
+      await modelWithEffort.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        reasoning: 'high',
+      });
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+      expect(call?.options?.thinking).toBeUndefined();
+      expect(call?.options?.effort).toBe('xhigh');
+    });
+
+    it('applies claude-code providerOptions reasoning ahead of sdkOptions and settings', async () => {
+      const modelWithReasoning = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          thinking: { type: 'disabled' },
+          effort: 'low',
+          maxThinkingTokens: 64,
+          sdkOptions: {
+            thinking: { type: 'enabled', budgetTokens: 111 },
+            effort: 'medium',
+            maxThinkingTokens: 111,
+          },
+        },
+      });
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-provider-reasoning',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      } as unknown as Query;
+      vi.mocked(mockQuery).mockReturnValue(mockResponse);
+
+      await modelWithReasoning.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        reasoning: 'high',
+        providerOptions: {
+          'claude-code': {
+            thinking: { type: 'enabled', budgetTokens: 222 },
+            effort: 'max',
+            maxThinkingTokens: 333,
+          },
+        },
+      });
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+      expect(call?.options?.thinking).toEqual({ type: 'enabled', budgetTokens: 222 });
+      expect(call?.options?.effort).toBe('max');
+      expect(call?.options?.maxThinkingTokens).toBe(333);
+    });
+
+    it('warns and ignores invalid claude-code providerOptions reasoning so portable reasoning still applies', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-invalid-provider-reasoning',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      } as unknown as Query;
+      vi.mocked(mockQuery).mockReturnValue(mockResponse);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        reasoning: 'high',
+        providerOptions: {
+          'claude-code': {
+            thinking: { type: 'invalid' },
+            effort: 'hgih',
+            maxThinkingTokens: 'many',
+          },
+        },
+      });
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+      expect(call?.options?.thinking).toEqual({ type: 'adaptive' });
+      expect(call?.options?.effort).toBe('high');
+      expect(call?.options?.maxThinkingTokens).toBeUndefined();
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'other',
+            message: expect.stringContaining("providerOptions['claude-code'].thinking"),
+          }),
+          expect.objectContaining({
+            type: 'other',
+            message: expect.stringContaining("providerOptions['claude-code'].effort"),
+          }),
+          expect.objectContaining({
+            type: 'other',
+            message: expect.stringContaining("providerOptions['claude-code'].maxThinkingTokens"),
+          }),
+        ])
+      );
     });
 
     it('should pass through systemPrompt as an array of blocks', async () => {
@@ -2502,7 +2661,6 @@ describe('ClaudeCodeLanguageModel', () => {
           // JSON string results are normalized to objects (matches doStream)
           result: { result: 408 },
           isError: false,
-          providerExecuted: true,
           dynamic: true,
           providerMetadata: {
             'claude-code': {
@@ -2583,7 +2741,7 @@ describe('ClaudeCodeLanguageModel', () => {
         });
       });
 
-      it('maps tool_error blocks to isError tool-result content parts (V3 union member, survives asContent)', async () => {
+      it('maps tool_error blocks to V4 isError tool-result content parts', async () => {
         const toolUseId = 'toolu_gen_error';
         const toolName = 'Read';
         const errorMessage = 'File not found: /nonexistent.txt';
@@ -2629,23 +2787,21 @@ describe('ClaudeCodeLanguageModel', () => {
 
         const result = await model.doGenerate({
           prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read missing file' }] }],
-        } as any);
+        });
 
-        // The V3 content union has no 'tool-error' member and AI SDK core's
-        // asContent() silently drops unknown content part types, so doGenerate
-        // maps tool_error blocks to tool-result parts with isError: true —
-        // asContent converts those into proper tool-error content parts.
-        const partTypes = result.content.map((part: any) => part.type);
+        // V4 provider output has no 'tool-error' content member. The provider
+        // maps CLI tool_error blocks to tool-result parts with isError: true;
+        // AI SDK core derives user-facing tool-error semantics from that shape.
+        const partTypes = result.content.map((part) => part.type);
         expect(partTypes).not.toContain('tool-error');
         expect(partTypes.indexOf('tool-result')).toBeGreaterThan(partTypes.indexOf('tool-call'));
-        const toolError = result.content.find((part: any) => part.type === 'tool-result') as any;
+        const toolError = result.content.find((part) => part.type === 'tool-result');
         expect(toolError).toEqual({
           type: 'tool-result',
           toolCallId: toolUseId,
           toolName,
           result: errorMessage,
           isError: true,
-          providerExecuted: true,
           dynamic: true,
           providerMetadata: {
             'claude-code': {
@@ -3393,6 +3549,63 @@ describe('ClaudeCodeLanguageModel', () => {
           outputTokens: { total: 5 },
         },
       });
+    });
+
+    it('emits raw stream parts with SDK messages only when includeRawChunks is true', async () => {
+      const assistantMessage = {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'text', text: 'Hello' }],
+        },
+      };
+      const resultMessage = {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'raw-session',
+        usage: {
+          input_tokens: 3,
+          output_tokens: 2,
+        },
+      };
+      const makeResponse = (): Query =>
+        ({
+          async *[Symbol.asyncIterator]() {
+            yield assistantMessage;
+            yield resultMessage;
+          },
+        }) as unknown as Query;
+      const readAll = async (
+        stream: ReadableStream<LanguageModelV4StreamPart>
+      ): Promise<LanguageModelV4StreamPart[]> => {
+        const chunks: LanguageModelV4StreamPart[] = [];
+        const reader = stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+        return chunks;
+      };
+
+      vi.mocked(mockQuery).mockReturnValue(makeResponse());
+      const withRaw = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+        includeRawChunks: true,
+      });
+      const rawChunks = await readAll(withRaw.stream);
+
+      expect(rawChunks.filter((chunk) => chunk.type === 'raw')).toEqual([
+        { type: 'raw', rawValue: assistantMessage },
+        { type: 'raw', rawValue: resultMessage },
+      ]);
+
+      vi.mocked(mockQuery).mockReturnValue(makeResponse());
+      const withoutRaw = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+      const defaultChunks = await readAll(withoutRaw.stream);
+
+      expect(defaultChunks.some((chunk) => chunk.type === 'raw')).toBe(false);
     });
 
     it('should emit error chunk when result message has is_error flag in streaming', async () => {
@@ -4276,7 +4489,11 @@ describe('ClaudeCodeLanguageModel', () => {
             role: 'user',
             content: [
               { type: 'text', text: 'Look at this image.' },
-              { type: 'image', image: 'data:image/png;base64,aGVsbG8=' },
+              {
+                type: 'file',
+                mediaType: 'image/png',
+                data: { type: 'url', url: 'data:image/png;base64,aGVsbG8=' },
+              },
             ],
           },
         ],
@@ -4636,7 +4853,6 @@ describe('ClaudeCodeLanguageModel', () => {
         toolCallId: toolUseId,
         toolName,
         result: JSON.parse(toolResultPayload),
-        providerExecuted: true,
         isError: false,
         providerMetadata: {
           'claude-code': {
@@ -4644,6 +4860,7 @@ describe('ClaudeCodeLanguageModel', () => {
           },
         },
       });
+      expect(toolResult).not.toHaveProperty('providerExecuted');
     });
 
     it('propagates parent_tool_use_id into tool stream metadata', async () => {
@@ -5409,7 +5626,7 @@ describe('ClaudeCodeLanguageModel', () => {
       });
     });
 
-    it('emits tool-error events for tool failures and orders after tool-call', async () => {
+    it('emits isError tool-result events for tool failures and orders after tool-call', async () => {
       const toolUseId = 'toolu_error';
       const toolName = 'Read';
       const errorMessage = 'File not found: /nonexistent.txt';
@@ -5468,7 +5685,7 @@ describe('ClaudeCodeLanguageModel', () => {
         events.push(value);
       }
 
-      const toolError = events.find((e) => e.type === 'tool-error');
+      const toolError = events.find((e) => e.type === 'tool-result' && e.isError === true);
       const toolCall = events.find((e) => e.type === 'tool-call');
 
       expect(toolCall).toMatchObject({
@@ -5479,12 +5696,14 @@ describe('ClaudeCodeLanguageModel', () => {
       });
 
       expect(toolError).toMatchObject({
-        type: 'tool-error',
+        type: 'tool-result',
         toolCallId: toolUseId,
         toolName,
-        error: errorMessage,
-        providerExecuted: true,
+        result: errorMessage,
+        isError: true,
+        dynamic: true,
       });
+      expect(toolError).not.toHaveProperty('providerExecuted');
 
       expect(events.indexOf(toolCall!)).toBeLessThan(events.indexOf(toolError!));
     });
@@ -5687,7 +5906,7 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(toolCall.input).toBe(JSON.stringify({ arg: 'replaced' }));
     });
 
-    it('emits multiple tool-error chunks without duplicate tool-call', async () => {
+    it('emits multiple isError tool-result chunks without duplicate tool-call', async () => {
       const toolUseId = 'toolu_multi_error';
       const toolName = 'Read';
 
@@ -5739,7 +5958,7 @@ describe('ClaudeCodeLanguageModel', () => {
       }
 
       const toolCalls = events.filter((e) => e.type === 'tool-call');
-      const toolErrors = events.filter((e) => e.type === 'tool-error');
+      const toolErrors = events.filter((e) => e.type === 'tool-result' && e.isError === true);
       expect(toolCalls).toHaveLength(1);
       expect(toolErrors).toHaveLength(2);
     });
@@ -6020,7 +6239,7 @@ describe('ClaudeCodeLanguageModel', () => {
         responseFormat: { type: 'json' },
       } as any);
 
-      const events: LanguageModelV3StreamPart[] = [];
+      const events: LanguageModelV4StreamPart[] = [];
       const reader = stream.getReader();
       while (true) {
         const { done, value } = await reader.read();

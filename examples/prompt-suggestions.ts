@@ -8,7 +8,7 @@
  * heuristics (suppressed on the first turn, after errors, in plan mode), so it
  * does not fire on every turn even when enabled.
  *
- * Why a callback instead of providerMetadata? The suggestion arrives AFTER the
+ * Why a callback instead of finalStep.providerMetadata? The suggestion arrives AFTER the
  * `result` message — i.e. after the AI SDK response has already finished — so it
  * cannot be attached to the finish event. The provider drains the SDK stream
  * post-finish to deliver it:
@@ -48,8 +48,9 @@ async function suggestionsEnabled(): Promise<{
       'I am writing a two-line poem about the ocean. ' +
       'Give me ONLY the first line for now. I will ask for the second line next.',
   });
-  const sessionId = (seed.providerMetadata?.['claude-code'] as { sessionId?: string } | undefined)
-    ?.sessionId;
+  const sessionId = (
+    seed.finalStep.providerMetadata?.['claude-code'] as { sessionId?: string } | undefined
+  )?.sessionId;
   console.log('Seeded session:', sessionId ?? '(no session id?)');
 
   // The callback fires after the result message, so capture it via a promise.

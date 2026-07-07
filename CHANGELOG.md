@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 4.0.0-beta.1 (Unreleased)
+
+### Changed
+
+- **AI SDK v7 / LanguageModelV4 port** - Updates the provider implementation for the AI SDK v7 provider contract while keeping this release focused on compatibility.
+- **Runtime and package baseline raised** - Requires Node.js >=22, ships ESM-only output (CommonJS `require()` is no longer available), and requires a Zod peer of `^4.1.8`.
+- **Claude Agent SDK pin held at `0.3.197`** - Keeps the exact `@anthropic-ai/claude-agent-sdk` pin on `0.3.197` because upstream releases `0.3.198` through `0.3.202` have a published `.d.ts` defect.
+- **Tool-error stream extension removed** - Failed tool executions now use the AI SDK spec shape: `tool-result` with `isError: true`, replacing the provider-specific `tool-error` stream extension.
+- **AI SDK v6 users** - Stay on the maintained 3.x line (`latest` / `ai-sdk-v6` dist-tags, `ai-sdk-v6` maintenance branch) until adopting the v7 beta.
+
+### Fixed
+
+- **Assistant history tool-result replay** - Replayed assistant history now round-trips tool results correctly under the v7 message/content model instead of losing the result context.
+
 ## [3.5.1] - 2026-07-06
 
 ### Fixed

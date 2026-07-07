@@ -1,14 +1,32 @@
-import type { ModelMessage } from 'ai';
+import type {
+  LanguageModelV4FilePart,
+  LanguageModelV4Prompt,
+  LanguageModelV4ToolResultOutput,
+} from '@ai-sdk/provider';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 type SDKUserContentPart = SDKUserMessage['message']['content'][number];
+type ToolResultContentPart = Extract<
+  LanguageModelV4ToolResultOutput,
+  { type: 'content' }
+>['value'][number];
+type ToolResultFilePart = Extract<ToolResultContentPart, { type: 'file' }>;
+type FileLikePart = LanguageModelV4FilePart | ToolResultFilePart;
 
 interface StreamingSegment {
   formatted: string;
 }
 
+interface FileConversionResult {
+  content?: SDKUserContentPart;
+  text?: string;
+  warning?: string;
+}
+
 const IMAGE_URL_WARNING = 'Image URLs are not supported by this provider; supply base64/data URLs.';
 const IMAGE_CONVERSION_WARNING = 'Unable to convert image content; supply base64/data URLs.';
+const FILE_REFERENCE_WARNING =
+  'Provider file references are not supported by this provider; supply inline file data.';
 
 /**
  * Maximum serialized length for a single tool-call input when replaying
@@ -42,30 +60,25 @@ function serializeToolCallInput(input: unknown): string {
   return serialized;
 }
 
-function normalizeBase64(base64: string): string {
-  return base64.replace(/\s+/g, '');
-}
-
-function isImageMimeType(mimeType?: string): boolean {
-  return typeof mimeType === 'string' && mimeType.trim().toLowerCase().startsWith('image/');
-}
-
-function createImageContent(mediaType: string, data: string): SDKUserContentPart | undefined {
-  const trimmedType = mediaType.trim();
-  const trimmedData = normalizeBase64(data.trim());
-
-  if (!trimmedType || !trimmedData) {
-    return undefined;
+function getVariantName(value: unknown, discriminator: 'type' | 'role'): string {
+  if (typeof value === 'object' && value !== null) {
+    const candidate = (value as Record<string, unknown>)[discriminator];
+    if (typeof candidate === 'string' && candidate) {
+      return candidate;
+    }
   }
+  return String(value);
+}
 
-  return {
-    type: 'image',
-    source: {
-      type: 'base64',
-      media_type: trimmedType,
-      data: trimmedData,
-    },
-  } as SDKUserContentPart;
+function createUnknownPromptVariantWarning(
+  value: unknown,
+  context: string,
+  discriminator: 'type' | 'role' = 'type'
+): string {
+  return `Unsupported ${context} ${discriminator} '${getVariantName(
+    value,
+    discriminator
+  )}' was skipped.`;
 }
 
 function extractMimeType(candidate: unknown): string | undefined {
@@ -75,18 +88,39 @@ function extractMimeType(candidate: unknown): string | undefined {
   return undefined;
 }
 
-function parseObjectImage(
-  imageObj: Record<string, unknown>,
-  fallbackMimeType?: string
-): SDKUserContentPart | undefined {
-  const data = typeof imageObj.data === 'string' ? imageObj.data : undefined;
-  const mimeType = extractMimeType(
-    imageObj.mimeType ?? imageObj.mediaType ?? imageObj.media_type ?? fallbackMimeType
-  );
-  if (!data || !mimeType) {
+function normalizeMediaType(mediaType: string): string {
+  return mediaType.trim().toLowerCase();
+}
+
+function isImageMimeType(mediaType?: string): boolean {
+  if (!mediaType) {
+    return false;
+  }
+  const normalized = normalizeMediaType(mediaType);
+  return normalized === 'image' || normalized === 'image/*' || normalized.startsWith('image/');
+}
+
+function isConcreteImageMimeType(mediaType: string): boolean {
+  const normalized = normalizeMediaType(mediaType);
+  return normalized.startsWith('image/') && !normalized.endsWith('/*');
+}
+
+function createImageContent(mediaType: string, data: string): SDKUserContentPart | undefined {
+  const normalizedType = normalizeMediaType(mediaType);
+  const trimmedData = data.trim().replace(/\s+/g, '');
+
+  if (!isConcreteImageMimeType(normalizedType) || !trimmedData) {
     return undefined;
   }
-  return createImageContent(mimeType, data);
+
+  return {
+    type: 'image',
+    source: {
+      type: 'base64',
+      media_type: normalizedType,
+      data: trimmedData,
+    },
+  } as SDKUserContentPart;
 }
 
 function parseStringImage(
@@ -123,26 +157,6 @@ function parseStringImage(
   return { warning: IMAGE_CONVERSION_WARNING };
 }
 
-function parseImagePart(part: unknown): { content?: SDKUserContentPart; warning?: string } {
-  if (!part || typeof part !== 'object') {
-    return { warning: IMAGE_CONVERSION_WARNING };
-  }
-
-  const imageValue = (part as { image?: unknown }).image;
-  const mimeType = extractMimeType((part as { mimeType?: unknown }).mimeType);
-
-  if (typeof imageValue === 'string') {
-    return parseStringImage(imageValue, mimeType);
-  }
-
-  if (imageValue && typeof imageValue === 'object') {
-    const content = parseObjectImage(imageValue as Record<string, unknown>, mimeType);
-    return content ? { content } : { warning: IMAGE_CONVERSION_WARNING };
-  }
-
-  return { warning: IMAGE_CONVERSION_WARNING };
-}
-
 function convertBinaryToBase64(data: Uint8Array | ArrayBuffer): string | undefined {
   if (typeof Buffer !== 'undefined') {
     const buffer =
@@ -164,50 +178,143 @@ function convertBinaryToBase64(data: Uint8Array | ArrayBuffer): string | undefin
   return undefined;
 }
 
-type FileLikePart = {
-  mediaType?: unknown;
-  mimeType?: unknown;
-  data?: unknown;
-};
+function parseFilePart(part: FileLikePart): FileConversionResult {
+  const mediaType = extractMimeType(part.mediaType);
+  const fileData = part.data;
 
-function parseFilePart(part: FileLikePart): { content?: SDKUserContentPart; warning?: string } {
-  const mimeType = extractMimeType(part.mediaType ?? part.mimeType);
-  if (!mimeType || !isImageMimeType(mimeType)) {
-    return {};
-  }
+  switch (fileData.type) {
+    case 'data': {
+      if (!mediaType || !isImageMimeType(mediaType)) {
+        return {};
+      }
 
-  const data = part.data;
-  if (typeof data === 'string') {
-    const content = createImageContent(mimeType, data);
-    return content ? { content } : { warning: IMAGE_CONVERSION_WARNING };
-  }
+      if (typeof fileData.data === 'string') {
+        return parseStringImage(fileData.data, mediaType);
+      }
 
-  if (
-    data instanceof Uint8Array ||
-    (typeof ArrayBuffer !== 'undefined' && data instanceof ArrayBuffer)
-  ) {
-    const base64 = convertBinaryToBase64(data);
-    if (!base64) {
-      return { warning: IMAGE_CONVERSION_WARNING };
+      const base64 = convertBinaryToBase64(fileData.data);
+      if (!base64) {
+        return { warning: IMAGE_CONVERSION_WARNING };
+      }
+      const content = createImageContent(mediaType, base64);
+      return content ? { content } : { warning: IMAGE_CONVERSION_WARNING };
     }
-    const content = createImageContent(mimeType, base64);
-    return content ? { content } : { warning: IMAGE_CONVERSION_WARNING };
-  }
 
-  return { warning: IMAGE_CONVERSION_WARNING };
+    case 'url': {
+      if (!mediaType || !isImageMimeType(mediaType)) {
+        return {};
+      }
+      return parseStringImage(fileData.url.toString(), mediaType);
+    }
+
+    case 'text':
+      return fileData.text ? { text: fileData.text } : {};
+
+    case 'reference':
+      return { warning: FILE_REFERENCE_WARNING };
+
+    default: {
+      const unknownFileData: never = fileData;
+      return {
+        warning: createUnknownPromptVariantWarning(unknownFileData, 'prompt file data'),
+      };
+    }
+  }
+}
+
+function serializeToolResultFilePart(
+  part: ToolResultFilePart,
+  warnings: string[]
+): string | undefined {
+  const fileData = part.data;
+  const fileLabel = part.filename ? `File ${part.filename}` : 'File';
+
+  switch (fileData.type) {
+    case 'data':
+      return `[${fileLabel}: ${part.mediaType}]`;
+
+    case 'url':
+      return `[${fileLabel}: ${part.mediaType}: ${fileData.url.toString()}]`;
+
+    case 'text':
+      return fileData.text;
+
+    case 'reference':
+      warnings.push(FILE_REFERENCE_WARNING);
+      return undefined;
+
+    default: {
+      const unknownFileData: never = fileData;
+      warnings.push(createUnknownPromptVariantWarning(unknownFileData, 'tool result file data'));
+      return undefined;
+    }
+  }
+}
+
+function serializeToolResultContentPart(
+  part: ToolResultContentPart,
+  warnings: string[]
+): string | undefined {
+  switch (part.type) {
+    case 'text':
+      return part.text;
+
+    case 'file':
+      return serializeToolResultFilePart(part, warnings);
+
+    case 'custom':
+      // Provider-specific rich content cannot be represented in Claude Code replay text.
+      return undefined;
+
+    default: {
+      const unknownPart: never = part;
+      warnings.push(createUnknownPromptVariantWarning(unknownPart, 'tool result content part'));
+      return undefined;
+    }
+  }
+}
+
+function serializeToolResultOutput(
+  output: LanguageModelV4ToolResultOutput,
+  warnings: string[]
+): string | undefined {
+  switch (output.type) {
+    case 'text':
+    case 'error-text':
+      return output.value;
+
+    case 'json':
+    case 'error-json':
+      return JSON.stringify(output.value) ?? String(output.value);
+
+    case 'execution-denied':
+      return `[Execution denied${output.reason ? `: ${output.reason}` : ''}]`;
+
+    case 'content':
+      return output.value
+        .map((part) => serializeToolResultContentPart(part, warnings))
+        .filter((text): text is string => typeof text === 'string' && text.length > 0)
+        .join('\n');
+
+    default: {
+      const unknownOutput: never = output;
+      warnings.push(createUnknownPromptVariantWarning(unknownOutput, 'tool result output'));
+      return undefined;
+    }
+  }
 }
 
 /**
- * Converts AI SDK prompt format to Claude Code SDK message format.
+ * Converts AI SDK provider prompt format to Claude Code SDK message format.
  * Handles system prompts, user messages, assistant responses, and tool interactions.
  *
- * @param prompt - The AI SDK prompt containing messages
+ * @param prompt - The AI SDK LanguageModelV4 prompt containing messages
  * @returns An object containing the formatted message prompt and optional system prompt
  *
  * @example
  * ```typescript
  * const { messagesPrompt } = convertToClaudeCodeMessages(
- *   [{ role: 'user', content: 'Hello!' }]
+ *   [{ role: 'user', content: [{ type: 'text', text: 'Hello!' }] }]
  * );
  * ```
  *
@@ -217,7 +324,7 @@ function parseFilePart(part: FileLikePart): { content?: SDKUserContentPart; warn
  *   (inputs truncated at 1000 characters), pairing with `Tool Result (name): ...` lines
  * - JSON schema enforcement is handled natively by the SDK's outputFormat option (v0.1.45+)
  */
-export function convertToClaudeCodeMessages(prompt: readonly ModelMessage[]): {
+export function convertToClaudeCodeMessages(prompt: LanguageModelV4Prompt): {
   messagesPrompt: string;
   systemPrompt?: string;
   warnings?: string[];
@@ -244,115 +351,173 @@ export function convertToClaudeCodeMessages(prompt: readonly ModelMessage[]): {
     imageMap.get(segmentIndex)?.push(content);
   };
 
+  const addWarning = (warning?: string): void => {
+    if (warning) {
+      warnings.push(warning);
+    }
+  };
+
   for (const message of prompt) {
     switch (message.role) {
       case 'system':
         systemPrompt = message.content;
-        if (typeof message.content === 'string' && message.content.trim().length > 0) {
+        if (message.content.trim().length > 0) {
           addSegment(message.content);
         } else {
           addSegment('');
         }
         break;
 
-      case 'user':
-        if (typeof message.content === 'string') {
-          messages.push(message.content);
-          addSegment(`Human: ${message.content}`);
-        } else {
-          // Handle multi-part content
-          const textParts = message.content
-            .filter((part) => part.type === 'text')
-            .map((part) => part.text)
-            .join('\n');
+      case 'user': {
+        const textParts: string[] = [];
+        const imageParts: SDKUserContentPart[] = [];
 
-          const segmentIndex = addSegment(textParts ? `Human: ${textParts}` : '');
+        for (const part of message.content) {
+          switch (part.type) {
+            case 'text':
+              if (typeof part.text === 'string') {
+                textParts.push(part.text);
+              }
+              break;
 
-          if (textParts) {
-            messages.push(textParts);
+            case 'file': {
+              const { content, text, warning } = parseFilePart(part);
+              if (typeof text === 'string') {
+                textParts.push(text);
+              }
+              if (content) {
+                imageParts.push(content);
+              }
+              addWarning(warning);
+              break;
+            }
+
+            default: {
+              const unknownPart: never = part;
+              addWarning(
+                createUnknownPromptVariantWarning(unknownPart, 'prompt user content part')
+              );
+              break;
+            }
           }
+        }
 
-          for (const part of message.content) {
-            if (part.type === 'image') {
-              const { content, warning } = parseImagePart(part);
-              if (content) {
-                addImageForSegment(segmentIndex, content);
-              } else if (warning) {
-                warnings.push(warning);
+        const textContent = textParts.join('\n');
+        const segmentIndex = addSegment(textContent ? `Human: ${textContent}` : '');
+
+        if (textContent) {
+          messages.push(textContent);
+        }
+
+        for (const imagePart of imageParts) {
+          addImageForSegment(segmentIndex, imagePart);
+        }
+        break;
+      }
+
+      case 'assistant': {
+        const assistantParts: string[] = [];
+        const imageParts: SDKUserContentPart[] = [];
+
+        for (const part of message.content) {
+          switch (part.type) {
+            case 'text':
+              if (typeof part.text === 'string') {
+                assistantParts.push(part.text);
               }
-            } else if (part.type === 'file') {
-              const { content, warning } = parseFilePart(part);
-              if (content) {
-                addImageForSegment(segmentIndex, content);
-              } else if (warning) {
-                warnings.push(warning);
+              break;
+
+            case 'tool-call':
+              assistantParts.push(
+                `[Tool call: ${part.toolName}(${serializeToolCallInput(part.input)})]`
+              );
+              break;
+
+            case 'tool-result': {
+              const output = serializeToolResultOutput(part.output, warnings);
+              if (output !== undefined) {
+                assistantParts.push(`Tool Result (${part.toolName}): ${output}`);
               }
+              break;
+            }
+
+            case 'file': {
+              const { content, text, warning } = parseFilePart(part);
+              if (typeof text === 'string') {
+                assistantParts.push(text);
+              }
+              if (content) {
+                imageParts.push(content);
+              }
+              addWarning(warning);
+              break;
+            }
+
+            case 'reasoning':
+              // Reasoning text is intentionally omitted from replay prompts.
+              break;
+
+            case 'reasoning-file':
+              // Reasoning files have no Claude Code replay representation.
+              break;
+
+            case 'custom':
+              // Provider-specific assistant content has no Claude Code replay representation.
+              break;
+
+            default: {
+              const unknownPart: never = part;
+              addWarning(
+                createUnknownPromptVariantWarning(unknownPart, 'prompt assistant content part')
+              );
+              break;
+            }
+          }
+        }
+
+        const assistantContent = assistantParts.join('\n');
+        const formattedAssistant = `Assistant: ${assistantContent}`;
+        messages.push(formattedAssistant);
+        const segmentIndex = addSegment(formattedAssistant);
+        for (const imagePart of imageParts) {
+          addImageForSegment(segmentIndex, imagePart);
+        }
+        break;
+      }
+
+      case 'tool':
+        for (const tool of message.content) {
+          switch (tool.type) {
+            case 'tool-result': {
+              const output = serializeToolResultOutput(tool.output, warnings);
+              if (output !== undefined) {
+                const formattedToolResult = `Tool Result (${tool.toolName}): ${output}`;
+                messages.push(formattedToolResult);
+                addSegment(formattedToolResult);
+              }
+              break;
+            }
+
+            case 'tool-approval-response':
+              // Approval responses are control-plane metadata and are omitted from replay text.
+              break;
+
+            default: {
+              const unknownPart: never = tool;
+              addWarning(
+                createUnknownPromptVariantWarning(unknownPart, 'prompt tool content part')
+              );
+              break;
             }
           }
         }
         break;
 
-      case 'assistant': {
-        let assistantContent = '';
-        if (typeof message.content === 'string') {
-          assistantContent = message.content;
-        } else {
-          const textParts = message.content
-            .filter((part) => part.type === 'text')
-            .map((part) => part.text)
-            .join('\n');
-
-          if (textParts) {
-            assistantContent = textParts;
-          }
-
-          // Serialize tool calls so replayed history keeps tool context.
-          // One line per call, pairing with the "Tool Result (name): ..." lines
-          // emitted for tool messages below.
-          const toolCalls = message.content.filter((part) => part.type === 'tool-call');
-          if (toolCalls.length > 0) {
-            const serializedCalls = toolCalls
-              .map((call) => `[Tool call: ${call.toolName}(${serializeToolCallInput(call.input)})]`)
-              .join('\n');
-            assistantContent += assistantContent ? `\n${serializedCalls}` : serializedCalls;
-          }
-        }
-        const formattedAssistant = `Assistant: ${assistantContent}`;
-        messages.push(formattedAssistant);
-        addSegment(formattedAssistant);
+      default: {
+        const unknownMessage: never = message;
+        addWarning(createUnknownPromptVariantWarning(unknownMessage, 'prompt message', 'role'));
         break;
       }
-
-      case 'tool':
-        // Tool results could be included in the conversation
-        // Filter out ToolApprovalResponse parts, only process ToolResultPart
-        for (const tool of message.content) {
-          if (tool.type === 'tool-approval-response') {
-            continue; // Skip approval responses
-          }
-          // Handle different ToolResultOutput types
-          let resultText: string;
-          const output = tool.output;
-          if (output.type === 'text' || output.type === 'error-text') {
-            resultText = output.value;
-          } else if (output.type === 'json' || output.type === 'error-json') {
-            resultText = JSON.stringify(output.value);
-          } else if (output.type === 'execution-denied') {
-            resultText = `[Execution denied${output.reason ? `: ${output.reason}` : ''}]`;
-          } else if (output.type === 'content') {
-            // Handle content array - extract text parts
-            resultText = output.value
-              .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
-              .map((part) => part.text)
-              .join('\n');
-          } else {
-            resultText = '[Unknown output type]';
-          }
-          const formattedToolResult = `Tool Result (${tool.toolName}): ${resultText}`;
-          messages.push(formattedToolResult);
-          addSegment(formattedToolResult);
-        }
-        break;
     }
   }
 
@@ -369,7 +534,7 @@ export function convertToClaudeCodeMessages(prompt: readonly ModelMessage[]): {
 
   if (messages.length > 0) {
     // Format messages
-    const formattedMessages = [];
+    const formattedMessages: string[] = [];
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
       // Check if this is a user or assistant message based on content

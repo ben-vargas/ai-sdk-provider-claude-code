@@ -8,7 +8,7 @@
  * Requirements:
  *   - npm run build
  *   - claude auth login
- *   - Node.js >= 18
+ *   - Node.js >= 22
  *
  * Run:
  *   npx tsx examples/mcp-exa.ts
@@ -79,7 +79,7 @@ async function main() {
       'Use web_search_exa to find one recent Vercel AI SDK announcement. Respond in exactly two sentences and include one source URL.',
   });
 
-  const stream = result.fullStream as AsyncIterable<any>;
+  const stream = result.stream;
   for await (const part of stream) {
     switch (part.type) {
       case 'tool-call':
@@ -87,7 +87,7 @@ async function main() {
         break;
       case 'tool-result': {
         console.log(`TOOL RESULT: ${part.toolName} (${part.toolCallId})`);
-        const output = part.result ?? part.output;
+        const output = part.output;
         const text =
           typeof output === 'string'
             ? output
@@ -106,11 +106,7 @@ async function main() {
         console.error(`TOOL ERROR: ${part.toolName} -> ${part.error}`);
         break;
       case 'text-delta': {
-        // AI SDK v6 fullStream carries the chunk in `text` (older builds used `delta`).
-        const chunk = part.delta ?? part.text;
-        if (typeof chunk === 'string') {
-          process.stdout.write(chunk);
-        }
+        process.stdout.write(part.text);
         break;
       }
       case 'finish':

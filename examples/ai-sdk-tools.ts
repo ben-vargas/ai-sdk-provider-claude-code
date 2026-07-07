@@ -11,7 +11,7 @@
  * with `allowedTools` using the mcp__<serverName>__<toolName> naming.
  *
  * Tool calls/results surface as provider-executed dynamic tool parts on both
- * paths: in generateText steps content and in the streamText fullStream.
+ * paths: in generateText steps content and in the streamText stream.
  */
 
 import { z } from 'zod';
@@ -93,7 +93,7 @@ async function main() {
   });
 
   let text = '';
-  for await (const part of stream.fullStream) {
+  for await (const part of stream.stream) {
     if (part.type === 'tool-call') {
       console.log(`🚀 tool-call → ${part.toolName}`, JSON.stringify(part.input));
     } else if (part.type === 'tool-result') {

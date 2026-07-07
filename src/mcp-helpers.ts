@@ -5,6 +5,18 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { type ZodRawShape, type ZodObject } from 'zod';
 
+const warnedDescriptionFunctionToolNames = new Set<string>();
+
+function warnDiscardedDescriptionFunction(toolName: string): void {
+  if (warnedDescriptionFunctionToolNames.has(toolName)) {
+    return;
+  }
+  warnedDescriptionFunctionToolNames.add(toolName);
+  console.warn(
+    `[claude-code] AI SDK tool "${toolName}" has a function-valued description; createAiSdkMcpServer cannot evaluate it during MCP bridging, so the bridged tool description was omitted.`
+  );
+}
+
 /**
  * Optional annotations for content items, per MCP specification.
  * Validated against MCP SDK schema version 2025-06-18.
@@ -221,10 +233,12 @@ export type AiSdkToolExecuteOptions = {
  *   v4) — the same schema you would pass to the `ai` package's `tool()`
  *   helper. Schemas created with the AI SDK's `jsonSchema()` helper are not
  *   supported because the Agent SDK's `tool()` requires a Zod shape.
+ * - Call-context description functions accepted by AI SDK v7 tools cannot be
+ *   evaluated here, so only static string descriptions are forwarded.
  * - `execute` is required: only tools that execute locally can be bridged.
  */
 export type AiSdkLikeTool = {
-  description?: string;
+  description?: string | ((options: never) => string);
   /** A Zod object schema (`z.object({...})`), Zod v3 or v4. */
   inputSchema: unknown;
   /**
@@ -242,7 +256,13 @@ export type AiSdkLikeTool = {
 const AI_SDK_SCHEMA_SYMBOL = Symbol.for('vercel.ai.schema');
 
 function isAiSdkJsonSchema(schema: unknown): boolean {
-  return typeof schema === 'object' && schema !== null && AI_SDK_SCHEMA_SYMBOL in schema;
+  if (typeof schema !== 'object' || schema === null) {
+    return false;
+  }
+  const candidate = schema as Record<PropertyKey, unknown>;
+  return (
+    candidate[AI_SDK_SCHEMA_SYMBOL] === true && 'jsonSchema' in candidate && 'validate' in candidate
+  );
 }
 
 function isZodObjectSchema(schema: unknown): schema is ZodObject<ZodRawShape> {
@@ -271,7 +291,7 @@ function isZodObjectSchema(schema: unknown): schema is ZodObject<ZodRawShape> {
  *
  * Why this helper exists: the Claude Code CLI executes its own tools, so AI
  * SDK tools passed to `generateText`/`streamText` via the `tools` option
- * cannot be auto-bridged by the provider — at the `LanguageModelV3` layer the
+ * cannot be auto-bridged by the provider — at the `LanguageModelV4` layer the
  * provider only receives tool *declarations* (name, description, JSON
  * schema); the `execute` functions live in the `ai` package layer and never
  * reach providers. This helper is the explicit alternative: pass your tools
@@ -362,9 +382,13 @@ export function createAiSdkMcpServer(
     }
     // Narrowed schema (captured so the async handler closure keeps the type).
     const zodSchema: ZodObject<ZodRawShape> = def.inputSchema;
+    const description = typeof def.description === 'string' ? def.description : '';
+    if (typeof def.description === 'function') {
+      warnDiscardedDescriptionFunction(toolName);
+    }
     return tool(
       toolName,
-      def.description ?? '',
+      description,
       zodSchema.shape as ZodRawShape,
       async (args: Record<string, unknown>, extra: unknown): Promise<MinimalCallToolResult> => {
         try {

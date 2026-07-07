@@ -30,7 +30,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [20.x]
+        node-version: [22.x, 24.x]
 
     steps:
       - uses: actions/checkout@v6
@@ -78,7 +78,7 @@ jobs:
       # @latest install flaking) are not misreported as upstream SDK drift —
       # in that case node_modules would still hold the PINNED version.
       - name: File or update SDK drift issue
-        if: failure() && (steps.typecheck.outcome == 'failure' || steps.tests.outcome == 'failure')
+        if: failure() && (steps.typecheck.outcome == 'failure' || steps.tests.outcome == 'failure') && matrix.node-version == '22.x'
         uses: actions/github-script@v8
         with:
           script: |

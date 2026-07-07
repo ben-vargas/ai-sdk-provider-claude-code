@@ -2,7 +2,7 @@
  * Example: Warm Start (startup() / WarmQuery) + Timing Metadata
  *
  * Demonstrates the Agent SDK's warm-start path and the timing fields the
- * provider reports in providerMetadata['claude-code']:
+ * provider reports in finalStep.providerMetadata['claude-code']:
  * 1. Cold baseline: a normal generateText() call, printing ttftMs,
  *    ttftStreamMs, timeToRequestMs, durationMs, and warmSpareClaimed.
  * 2. Warm path: startup() pre-spawns the CLI subprocess and completes its
@@ -42,7 +42,7 @@ async function main() {
   // ============================================
   // A regular provider call spawns a fresh CLI subprocess. The SDK reports
   // timing on the result message, which the provider surfaces in
-  // providerMetadata['claude-code'].
+  // finalStep.providerMetadata['claude-code'].
   console.log('1️⃣  Cold baseline (generateText, fresh subprocess)...');
   const cold = await generateText({
     model: claudeCode('haiku'),
@@ -50,12 +50,14 @@ async function main() {
   });
   console.log('Assistant:', cold.text.trim());
 
-  const metadata = cold.providerMetadata?.['claude-code'] as Record<string, unknown> | undefined;
+  const metadata = cold.finalStep.providerMetadata?.['claude-code'] as
+    | Record<string, unknown>
+    | undefined;
   if (!metadata) {
     throw new Error('No claude-code provider metadata — cannot compare timings.');
   }
 
-  console.log('\nTiming metadata (providerMetadata["claude-code"]):');
+  console.log('\nTiming metadata (finalStep.providerMetadata["claude-code"]):');
   console.log(`- ttftMs (time to first token):        ${fmt(metadata.ttftMs)}`);
   console.log(`- ttftStreamMs (first streamed token): ${fmt(metadata.ttftStreamMs)}`);
   console.log(`- timeToRequestMs (API request sent):  ${fmt(metadata.timeToRequestMs)}`);

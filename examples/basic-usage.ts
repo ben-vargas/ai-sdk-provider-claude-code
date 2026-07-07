@@ -25,12 +25,12 @@ async function main() {
 
     // Get final results
     const usage = await result.usage;
-    const providerMetadata = await result.providerMetadata;
+    const finalStep = await result.finalStep;
 
     console.log('\nToken usage:', usage);
 
     // Display provider-specific metadata
-    const metadata = providerMetadata?.['claude-code'];
+    const metadata = finalStep.providerMetadata?.['claude-code'];
     if (metadata) {
       console.log('\nProvider metadata:');
 
@@ -50,8 +50,8 @@ async function main() {
         console.log('  (Pro/Max subscribers: covered by subscription)');
       }
 
-      // Raw usage breakdown (available in usage.raw in AI SDK v6 stable)
-      if (usage?.raw) {
+      // Raw provider usage breakdown, when supplied by the provider
+      if (usage.raw) {
         console.log('- Raw usage:', JSON.stringify(usage.raw, null, 2));
       }
     }

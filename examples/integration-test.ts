@@ -9,7 +9,7 @@ import { copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { generateText } from 'ai';
+import { generateText, streamText } from 'ai';
 import {
   claudeCode,
   deleteSession,
@@ -44,18 +44,13 @@ async function testBasicGeneration() {
   }
 }
 
-async function testWithSystemMessage() {
-  console.log('\n🧪 Test 2: Generation with system message...');
+async function testWithInstructions() {
+  console.log('\n🧪 Test 2: Generation with instructions...');
   try {
     const { text } = await generateText({
       model: claudeCode('opus'),
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a helpful assistant. Answer with just the number, no explanation.',
-        },
-        { role: 'user', content: 'What is 2+2?' },
-      ],
+      instructions: 'You are a helpful assistant. Answer with just the number, no explanation.',
+      prompt: 'What is 2+2?',
     });
 
     const cleanText = text.trim();
@@ -63,7 +58,7 @@ async function testWithSystemMessage() {
       console.log('✅ Success:', text);
     } else {
       console.error('❌ Unexpected response:', text);
-      throw new Error('System message test failed');
+      throw new Error('Instructions test failed');
     }
   } catch (error) {
     console.error('❌ Failed:', error);
@@ -230,9 +225,11 @@ async function testSessionLifecycle() {
       model: claudeCode('opus', { title: 'integration-test session' }),
       prompt: 'Remember this code word: "papaya". Reply with just OK.',
     });
-    const sessionId = first.providerMetadata?.['claude-code']?.sessionId as string | undefined;
+    const sessionId = (
+      first.finalStep.providerMetadata?.['claude-code'] as { sessionId?: string } | undefined
+    )?.sessionId;
     if (!sessionId) {
-      throw new Error('Session test failed - no session ID in providerMetadata');
+      throw new Error('Session test failed - no session ID in finalStep.providerMetadata');
     }
     console.log('✅ Created session:', sessionId);
 
@@ -287,9 +284,6 @@ async function testSessionLifecycle() {
   }
 }
 
-// Import streamText for the streaming test
-import { streamText } from 'ai';
-
 async function runAllTests() {
   console.log('🚀 Running Claude Code AI SDK Provider Integration Tests\n');
 
@@ -299,7 +293,7 @@ async function runAllTests() {
 
   const tests = [
     { name: 'Basic Generation', fn: testBasicGeneration },
-    { name: 'System Message', fn: testWithSystemMessage },
+    { name: 'Instructions', fn: testWithInstructions },
     { name: 'Conversation', fn: testConversation },
     { name: 'Error Handling', fn: testErrorHandling },
     { name: 'Streaming', fn: testStreaming },

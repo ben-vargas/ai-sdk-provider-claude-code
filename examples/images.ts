@@ -12,7 +12,7 @@ const SUPPORTED_EXTENSIONS: Record<string, string> = {
   '.webp': 'image/webp',
 };
 
-function toDataUrl(filePath: string): string {
+function toImageFilePart(filePath: string) {
   const ext = extname(filePath).toLowerCase();
   const mediaType = SUPPORTED_EXTENSIONS[ext];
   if (!mediaType) {
@@ -21,9 +21,13 @@ function toDataUrl(filePath: string): string {
     );
   }
 
-  const contents = readFileSync(filePath);
-  const base64 = contents.toString('base64');
-  return `data:${mediaType};base64,${base64}`;
+  const data = readFileSync(filePath).toString('base64');
+  return {
+    type: 'file' as const,
+    data: { type: 'data' as const, data },
+    mediaType,
+    filename: basename(filePath),
+  };
 }
 
 async function main() {
@@ -39,7 +43,7 @@ async function main() {
     );
   }
 
-  const dataUrl = toDataUrl(filePath);
+  const imagePart = toImageFilePart(filePath);
 
   const result = streamText({
     model: claudeCode('opus', { streamingInput: 'always' }),
@@ -51,7 +55,7 @@ async function main() {
             type: 'text',
             text: `Describe the mood conveyed by "${basename(filePath)}" in one sentence.`,
           },
-          { type: 'image', image: dataUrl },
+          imagePart,
         ],
       },
     ],

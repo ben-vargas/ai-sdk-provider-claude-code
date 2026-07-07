@@ -141,6 +141,8 @@ describe('logger integration', () => {
           modelValidationWarning: undefined,
           settingsValidationWarnings: [],
           logger: customLogger,
+          settings: {},
+          resolvePortableReasoningOptions: proto.resolvePortableReasoningOptions,
         },
         {
           prompt: [
@@ -148,7 +150,11 @@ describe('logger integration', () => {
               role: 'user',
               content: [
                 { type: 'text', text: 'Hello' },
-                { type: 'image', image: new Uint8Array([]) },
+                {
+                  type: 'file',
+                  mediaType: 'image/png',
+                  data: { type: 'data', data: new Uint8Array([]) },
+                },
               ],
             },
           ],

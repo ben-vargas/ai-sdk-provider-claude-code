@@ -7,7 +7,7 @@
  *   back to the normal permission system (rules, canUseTool, etc.)
  * - A canUseTool callback (the permission system those undecided calls land
  *   in) that denies Bash at call time
- * - The denial surfacing in providerMetadata['claude-code'].permissionDenials
+ * - The denial surfacing in finalStep.providerMetadata['claude-code'].permissionDenials
  *   (from the result message's permission_denials list)
  *
  * Notes on what does / does not trigger a visible denial (CLI 2.1.x):
@@ -110,9 +110,9 @@ async function main() {
   }
   console.log('Response:', text.trim());
 
-  const metadata = (await result.providerMetadata)?.['claude-code'];
+  const metadata = (await result.finalStep).providerMetadata?.['claude-code'];
   if (metadata?.permissionDenials) {
-    console.log('Permission denials (providerMetadata):', metadata.permissionDenials);
+    console.log('Permission denials (finalStep.providerMetadata):', metadata.permissionDenials);
   }
 }
 

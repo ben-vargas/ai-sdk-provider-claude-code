@@ -14,7 +14,7 @@
  */
 
 import { createClaudeCode } from '../dist/index.js';
-import { generateObject, streamText } from 'ai';
+import { generateText, Output, streamText } from 'ai';
 import { z } from 'zod';
 
 const claudeCode = createClaudeCode();
@@ -50,9 +50,11 @@ async function test1_basicSchemas() {
     createdAt: z.string().datetime(),
   });
 
-  const { object } = await generateObject({
+  const { output: object } = await generateText({
     model: claudeCode('opus'),
-    schema,
+    output: Output.object({
+      schema,
+    }),
     prompt: 'Generate a user profile for a software developer',
   });
 
@@ -113,9 +115,11 @@ async function test3_nestedObjects() {
     }),
   });
 
-  const { object } = await generateObject({
+  const { output: object } = await generateText({
     model: claudeCode('opus'),
-    schema,
+    output: Output.object({
+      schema,
+    }),
     prompt: 'Generate a complete user profile with settings',
   });
 
@@ -145,9 +149,11 @@ async function test4_arraysAndUnions() {
     ),
   });
 
-  const { object } = await generateObject({
+  const { output: object } = await generateText({
     model: claudeCode('opus'),
-    schema,
+    output: Output.object({
+      schema,
+    }),
     prompt: 'Generate 3 tasks for a software project',
   });
 
@@ -168,9 +174,11 @@ async function test5_stringValidations() {
     description: z.string().max(200),
   });
 
-  const { object } = await generateObject({
+  const { output: object } = await generateText({
     model: claudeCode('opus'),
-    schema,
+    output: Output.object({
+      schema,
+    }),
     prompt: 'Generate a valid user registration with all fields validated',
   });
 
@@ -191,9 +199,11 @@ async function test6_numberValidations() {
     temperature: z.number().min(-273.15), // Absolute zero
   });
 
-  const { object } = await generateObject({
+  const { output: object } = await generateText({
     model: claudeCode('opus'),
-    schema,
+    output: Output.object({
+      schema,
+    }),
     prompt: 'Generate a product with age restriction, price, discount, rating, and temperature',
   });
 
@@ -246,9 +256,11 @@ async function test8_discriminatedUnions() {
     ),
   });
 
-  const { object } = await generateObject({
+  const { output: object } = await generateText({
     model: claudeCode('opus'),
-    schema,
+    output: Output.object({
+      schema,
+    }),
     prompt: 'Generate 3 different user events: login, purchase, and logout',
   });
 

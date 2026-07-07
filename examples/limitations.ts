@@ -1,5 +1,4 @@
-import { generateText, streamText } from 'ai';
-import { generateObject } from 'ai';
+import { generateText, Output, streamText } from 'ai';
 import { claudeCode } from '../dist/index.js';
 import { z } from 'zod';
 
@@ -39,7 +38,7 @@ async function main() {
     console.log('   Result:', text);
     console.log('   Tokens used:', usage.totalTokens);
     console.log(
-      '\n   ⚠️  Note: Despite setting maxTokens:10, the response used',
+      '\n   ⚠️  Note: Despite setting maxOutputTokens: 10, the response used',
       usage.totalTokens,
       'tokens'
     );
@@ -58,13 +57,13 @@ async function main() {
   });
 
   try {
-    console.log('   Attempting generateObject()...');
-    const { object } = await generateObject({
+    console.log('   Attempting generateText() with Output.object()...');
+    const { output } = await generateText({
       model: claudeCode('opus'),
-      schema: PersonSchema,
+      output: Output.object({ schema: PersonSchema }),
       prompt: 'Generate a person who is a software developer',
     });
-    console.log('   ✅ Object generated:', object);
+    console.log('   ✅ Object generated:', output);
     console.log('   Note: Uses native SDK constrained decoding (outputFormat)');
     console.log('         Schema compliance for supported JSON Schema features');
     console.log('         Some constraints (e.g., format: "email"/"uri", complex regex) can');
@@ -115,7 +114,7 @@ async function main() {
 
   console.log('3. For structured output:');
   console.log('   - ✅ Supported via native SDK constrained decoding (outputFormat)');
-  console.log('   - Use generateObject/streamObject with Zod schemas');
+  console.log('   - Use generateText()/streamText with Output.object() or Output.array()');
   console.log('   - Prefer a simplified generation schema, then validate client-side');
   console.log('   - See structured-output-repro.ts for known CLI limitations\n');
 
@@ -138,7 +137,7 @@ async function main() {
   console.log('- Conversation context via message history');
   console.log('- Custom timeouts and session management');
   console.log('- Abort signals for cancellation');
-  console.log('- System messages for context setting');
+  console.log('- Top-level instructions for context setting');
 }
 
 main().catch(console.error);

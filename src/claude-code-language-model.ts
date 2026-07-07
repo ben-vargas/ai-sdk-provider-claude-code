@@ -1,17 +1,24 @@
 import type {
-  LanguageModelV3,
-  LanguageModelV3Content,
-  LanguageModelV3FinishReason,
-  LanguageModelV3StreamPart,
-  LanguageModelV3ToolCall,
-  LanguageModelV3ToolResult,
-  LanguageModelV3Usage,
-  SharedV3Warning,
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4Content,
+  LanguageModelV4FinishReason,
+  LanguageModelV4GenerateResult,
+  LanguageModelV4StreamPart,
+  LanguageModelV4StreamResult,
+  LanguageModelV4ToolCall,
+  LanguageModelV4ToolResult,
+  LanguageModelV4Usage,
+  SharedV4Warning,
   JSONValue,
   JSONObject,
 } from '@ai-sdk/provider';
 import { NoSuchModelError, APICallError, LoadAPIKeyError } from '@ai-sdk/provider';
-import { generateId } from '@ai-sdk/provider-utils';
+import {
+  generateId,
+  isCustomReasoning,
+  mapReasoningToProviderEffort,
+} from '@ai-sdk/provider-utils';
 import type { ClaudeCodeSettings, Logger, MessageInjector } from './types.js';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
 import { createAPICallError, createAuthenticationError, createTimeoutError } from './errors.js';
@@ -488,26 +495,114 @@ type ClaudeToolResult = {
   isError: boolean;
 };
 
-// Provider extension for tool-error stream parts.
-type ToolErrorPart = {
-  type: 'tool-error';
-  toolCallId: string;
-  toolName: string;
-  error: string;
-  providerExecuted: true;
-  dynamic: true;
-  providerMetadata?: Record<string, JSONValue>;
+type ClaudeEffortLevel = Extract<NonNullable<Options['effort']>, string>;
+type ClaudeThinkingConfig = NonNullable<Options['thinking']>;
+type PortableReasoningLevel = Exclude<
+  LanguageModelV4CallOptions['reasoning'],
+  'none' | 'provider-default' | undefined
+>;
+
+type ClaudeReasoningProviderOptions = {
+  hasClaudeReasoningSettings: boolean;
+  thinking?: ClaudeThinkingConfig;
+  effort?: ClaudeEffortLevel;
+  maxThinkingTokens?: NonNullable<Options['maxThinkingTokens']>;
 };
 
-// Local extension of the AI SDK stream part union to include tool-error.
-type ExtendedStreamPart = LanguageModelV3StreamPart | ToolErrorPart;
+const CLAUDE_REASONING_EFFORT_MAP: Partial<Record<PortableReasoningLevel, ClaudeEffortLevel>> = {
+  minimal: 'low',
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+  xhigh: 'xhigh',
+};
 
-/**
- * `tool-result` part shape shared by doGenerate content and doStream parts.
- * The V3 type does not declare `providerExecuted` on tool results, but this
- * provider has always emitted it on the stream path; keep both paths aligned.
- */
-type ProviderToolResultPart = LanguageModelV3ToolResult & { providerExecuted: true };
+const CLAUDE_EFFORT_LEVELS = new Set<ClaudeEffortLevel>(['low', 'medium', 'high', 'xhigh', 'max']);
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function hasValidThinkingDisplay(value: unknown): boolean {
+  return value === undefined || value === 'summarized' || value === 'omitted';
+}
+
+function isClaudeEffortLevel(value: unknown): value is ClaudeEffortLevel {
+  return typeof value === 'string' && CLAUDE_EFFORT_LEVELS.has(value as ClaudeEffortLevel);
+}
+
+function isClaudeThinkingConfig(value: unknown): value is ClaudeThinkingConfig {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  if (value.type === 'disabled') {
+    return true;
+  }
+
+  if (value.type === 'adaptive') {
+    return hasValidThinkingDisplay(value.display);
+  }
+
+  if (value.type === 'enabled') {
+    const budgetTokens = value.budgetTokens;
+    return (
+      (budgetTokens === undefined || typeof budgetTokens === 'number') &&
+      hasValidThinkingDisplay(value.display)
+    );
+  }
+
+  return false;
+}
+
+function addInvalidClaudeReasoningProviderOptionWarning(
+  warnings: SharedV4Warning[] | undefined,
+  key: 'thinking' | 'effort' | 'maxThinkingTokens'
+): void {
+  warnings?.push({
+    type: 'other',
+    message: `Invalid providerOptions['claude-code'].${key} value was ignored.`,
+  });
+}
+
+function extractClaudeReasoningProviderOptions(
+  providerOptions: LanguageModelV4CallOptions['providerOptions'],
+  warnings?: SharedV4Warning[]
+): ClaudeReasoningProviderOptions {
+  const options = providerOptions?.['claude-code'];
+  if (options === undefined) {
+    return { hasClaudeReasoningSettings: false };
+  }
+
+  const result: ClaudeReasoningProviderOptions = { hasClaudeReasoningSettings: false };
+
+  if (options.thinking !== undefined) {
+    if (isClaudeThinkingConfig(options.thinking)) {
+      result.thinking = options.thinking;
+      result.hasClaudeReasoningSettings = true;
+    } else {
+      addInvalidClaudeReasoningProviderOptionWarning(warnings, 'thinking');
+    }
+  }
+  if (options.effort !== undefined) {
+    if (isClaudeEffortLevel(options.effort)) {
+      result.effort = options.effort;
+      result.hasClaudeReasoningSettings = true;
+    } else {
+      addInvalidClaudeReasoningProviderOptionWarning(warnings, 'effort');
+    }
+  }
+  if (options.maxThinkingTokens !== undefined) {
+    if (typeof options.maxThinkingTokens === 'number') {
+      result.maxThinkingTokens = options.maxThinkingTokens;
+      result.hasClaudeReasoningSettings = true;
+    } else {
+      addInvalidClaudeReasoningProviderOptionWarning(warnings, 'maxThinkingTokens');
+    }
+  }
+
+  return result;
+}
 
 /**
  * Ordered content collected by doGenerate, tagged with the originating
@@ -518,15 +613,12 @@ type ProviderToolResultPart = LanguageModelV3ToolResult & { providerExecuted: tr
 type GenerateContentSegment =
   | { kind: 'text'; uuid?: string; text: string }
   | { kind: 'reasoning'; uuid?: string; text: string }
-  | { kind: 'tool-call'; uuid?: string; toolCallId: string; part: LanguageModelV3ToolCall }
-  | { kind: 'tool-result'; uuid?: string; toolCallId: string; part: ProviderToolResultPart }
-  // tool_error blocks carry a V3 `tool-result` part with `isError: true`:
-  // the V3 CONTENT union has no `tool-error` member and AI SDK core's
-  // asContent() silently drops unknown part types, whereas an isError
-  // tool-result round-trips into a proper tool-error content part visible
-  // in generateText steps content. (doStream keeps the provider-extension
-  // tool-error STREAM part, which AI SDK core handles natively.)
-  | { kind: 'tool-error'; uuid?: string; toolCallId: string; part: ProviderToolResultPart };
+  | { kind: 'tool-call'; uuid?: string; toolCallId: string; part: LanguageModelV4ToolCall }
+  | { kind: 'tool-result'; uuid?: string; toolCallId: string; part: LanguageModelV4ToolResult }
+  // V4 has no provider `tool-error` content/stream part. CLI tool_error blocks
+  // are emitted as provider tool-results with isError: true so AI SDK core can
+  // expose user-facing tool-error semantics while preserving provider metadata.
+  | { kind: 'tool-error'; uuid?: string; toolCallId: string; part: LanguageModelV4ToolResult };
 
 type ContentBlock = { type: string; [key: string]: unknown };
 
@@ -559,9 +651,9 @@ type ClaudeCodeUsage = {
 };
 
 /**
- * Creates a zero-initialized usage object for AI SDK v6 stable.
+ * Creates a zero-initialized usage object for AI SDK v7.
  */
-function createEmptyUsage(): LanguageModelV3Usage {
+function createEmptyUsage(): LanguageModelV4Usage {
   return {
     inputTokens: {
       total: 0,
@@ -579,9 +671,9 @@ function createEmptyUsage(): LanguageModelV3Usage {
 }
 
 /**
- * Converts Claude Code SDK usage to AI SDK v6 stable usage format.
+ * Converts Claude Code SDK usage to AI SDK v7 provider usage format.
  *
- * Maps Claude's flat token counts to the nested structure required by AI SDK v6:
+ * Maps Claude's flat token counts to the nested structure required by AI SDK v7:
  * - `cache_creation_input_tokens` → `inputTokens.cacheWrite`
  * - `cache_read_input_tokens` → `inputTokens.cacheRead`
  * - `input_tokens` → `inputTokens.noCache`
@@ -589,9 +681,9 @@ function createEmptyUsage(): LanguageModelV3Usage {
  * - `output_tokens` → `outputTokens.total`
  *
  * @param usage - Raw usage data from Claude Code SDK
- * @returns Formatted usage object for AI SDK v6
+ * @returns Formatted usage object for AI SDK v7
  */
-function convertClaudeCodeUsage(usage: ClaudeCodeUsage): LanguageModelV3Usage {
+function convertClaudeCodeUsage(usage: ClaudeCodeUsage): LanguageModelV4Usage {
   const inputTokens = usage.input_tokens ?? 0;
   const outputTokens = usage.output_tokens ?? 0;
   const cacheWrite = usage.cache_creation_input_tokens ?? 0;
@@ -622,7 +714,7 @@ function convertClaudeCodeUsage(usage: ClaudeCodeUsage): LanguageModelV3Usage {
  * 3. Input deltas streamed → emit `tool-input-delta` (may be skipped for large/non-prefix updates)
  * 4. Input finalized → `inputClosed` = true, emit `tool-input-end`
  * 5. Tool call formed → `callEmitted` = true, emit `tool-call`
- * 6. Tool results/errors arrive → emit `tool-result` or `tool-error` (may occur multiple times)
+ * 6. Tool results/errors arrive → emit `tool-result` (errors set `isError: true`; may occur multiple times)
  * 7. Stream ends → state cleaned up by `finalizeToolCalls()`
  *
  * @property name - Tool name from SDK (e.g., "Bash", "Read")
@@ -945,7 +1037,7 @@ function truncateToolResultForStream(
 
 /**
  * Language model implementation for Claude Code SDK.
- * This class implements the AI SDK's LanguageModelV3 interface to provide
+ * This class implements the AI SDK's LanguageModelV4 interface to provide
  * integration with Claude models through the Claude Agent SDK.
  *
  * Features:
@@ -972,8 +1064,8 @@ function truncateToolResultForStream(
  * ```
  */
 
-export class ClaudeCodeLanguageModel implements LanguageModelV3 {
-  readonly specificationVersion = 'v3' as const;
+export class ClaudeCodeLanguageModel implements LanguageModelV4 {
+  readonly specificationVersion = 'v4' as const;
   readonly defaultObjectGenerationMode = 'json' as const;
   readonly supportsImageUrls = false;
   readonly supportedUrls = {};
@@ -1284,14 +1376,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     toolName: string,
     input: string,
     parentToolCallId: string | null | undefined
-  ): LanguageModelV3ToolCall {
+  ): LanguageModelV4ToolCall {
     return {
       type: 'tool-call',
       toolCallId,
       toolName,
       input,
       providerExecuted: true,
-      dynamic: true, // V3 field: indicates tool is provider-defined (not in user's tools map)
+      dynamic: true, // V4 field: indicates tool is provider-defined (not in user's tools map)
       providerMetadata: {
         'claude-code': {
           // rawInput preserves the original serialized format before AI SDK normalization.
@@ -1315,7 +1407,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     result: unknown,
     isError: boolean,
     parentToolCallId: string | null | undefined
-  ): ProviderToolResultPart {
+  ): LanguageModelV4ToolResult {
     const normalizedResult = this.normalizeToolResult(result);
     const rawResult =
       typeof result === 'string'
@@ -1344,11 +1436,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       toolName,
       // `?? ''`: absent `content` (undefined) and string results that
       // normalize to JSON null (e.g. the string "null") must not violate the
-      // NonNullable<JSONValue> contract of LanguageModelV3ToolResult.result.
+      // NonNullable<JSONValue> contract of LanguageModelV4ToolResult.result.
       result: (truncatedResult ?? '') as NonNullable<JSONValue>,
       isError,
-      providerExecuted: true,
-      dynamic: true, // V3 field: indicates tool is provider-defined
+      dynamic: true, // V4 field: indicates tool is provider-defined
       providerMetadata: {
         'claude-code': {
           // rawResult preserves the original CLI output string before JSON parsing.
@@ -1377,48 +1468,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
   }
 
   /**
-   * Builds a provider-executed `tool-error` STREAM part from a user-message
-   * `tool_error` block (doStream only; AI SDK core handles tool-error stream
-   * parts natively).
+   * Builds a V4 provider `tool-result` part with `isError: true` from a
+   * user-message `tool_error` block. V4 has no provider-level `tool-error`
+   * content or stream part; AI SDK core derives user-facing tool-error
+   * semantics from this result while preserving providerMetadata.
    */
-  private buildToolErrorPart(
+  private buildErroredToolResultPart(
     toolCallId: string,
     toolName: string,
     error: unknown,
     parentToolCallId: string | null | undefined
-  ): ToolErrorPart {
-    const rawError = this.serializeToolError(error);
-
-    return {
-      type: 'tool-error',
-      toolCallId,
-      toolName,
-      error: rawError,
-      providerExecuted: true,
-      dynamic: true, // V3 field: indicates tool is provider-defined
-      providerMetadata: {
-        'claude-code': {
-          rawError,
-          parentToolCallId: parentToolCallId ?? null,
-        },
-      },
-    };
-  }
-
-  /**
-   * Builds a V3 `tool-result` CONTENT part with `isError: true` from a
-   * user-message `tool_error` block (doGenerate only). The V3 content union
-   * has no `tool-error` member and AI SDK core's asContent() silently drops
-   * unknown content part types, so an extension tool-error part would never
-   * reach `generateText` users — an isError tool-result, by contrast,
-   * round-trips into a proper tool-error part in steps content.
-   */
-  private buildToolErrorResultPart(
-    toolCallId: string,
-    toolName: string,
-    error: unknown,
-    parentToolCallId: string | null | undefined
-  ): ProviderToolResultPart {
+  ): LanguageModelV4ToolResult {
     const rawError = this.serializeToolError(error);
 
     return {
@@ -1427,8 +1487,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       toolName,
       result: rawError,
       isError: true,
-      providerExecuted: true,
-      dynamic: true, // V3 field: indicates tool is provider-defined
+      dynamic: true, // V4 field: indicates tool is provider-defined
       providerMetadata: {
         'claude-code': {
           rawError,
@@ -1460,13 +1519,62 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     return true;
   }
 
+  private resolvePortableReasoningOptions(
+    options: LanguageModelV4CallOptions,
+    sdkOptions: Partial<Options> | undefined,
+    claudeProviderOptions: ClaudeReasoningProviderOptions,
+    warnings?: SharedV4Warning[]
+  ): Partial<Pick<Options, 'thinking' | 'effort'>> {
+    const hasClaudeSpecificReasoning =
+      this.settings.thinking !== undefined ||
+      this.settings.effort !== undefined ||
+      this.settings.maxThinkingTokens !== undefined ||
+      sdkOptions?.thinking !== undefined ||
+      sdkOptions?.effort !== undefined ||
+      sdkOptions?.maxThinkingTokens !== undefined ||
+      claudeProviderOptions.hasClaudeReasoningSettings;
+
+    // Claude-specific settings and providerOptions intentionally take
+    // precedence over portable reasoning. Do not merge a top-level reasoning
+    // value into an already-explicit Claude thinking/effort configuration.
+    if (hasClaudeSpecificReasoning || !isCustomReasoning(options.reasoning)) {
+      return {};
+    }
+
+    if (options.reasoning === 'none') {
+      return { thinking: { type: 'disabled' } };
+    }
+
+    const effort = mapReasoningToProviderEffort({
+      reasoning: options.reasoning,
+      effortMap: CLAUDE_REASONING_EFFORT_MAP,
+      warnings: warnings ?? [],
+    });
+
+    return effort === undefined ? {} : { thinking: { type: 'adaptive' }, effort };
+  }
+
+  private applyClaudeReasoningProviderOptions(
+    opts: Partial<Options> & Record<string, unknown>,
+    claudeProviderOptions: ClaudeReasoningProviderOptions
+  ): void {
+    if (claudeProviderOptions.thinking !== undefined) {
+      opts.thinking = claudeProviderOptions.thinking;
+    }
+    if (claudeProviderOptions.effort !== undefined) {
+      opts.effort = claudeProviderOptions.effort;
+    }
+    if (claudeProviderOptions.maxThinkingTokens !== undefined) {
+      opts.maxThinkingTokens = claudeProviderOptions.maxThinkingTokens;
+    }
+  }
+
   private generateAllWarnings(
-    options:
-      | Parameters<LanguageModelV3['doGenerate']>[0]
-      | Parameters<LanguageModelV3['doStream']>[0],
-    prompt: string
-  ): SharedV3Warning[] {
-    const warnings: SharedV3Warning[] = [];
+    options: LanguageModelV4CallOptions,
+    prompt: string,
+    sdkOptions?: Partial<Options>
+  ): SharedV4Warning[] {
+    const warnings: SharedV4Warning[] = [];
     const unsupportedParams: string[] = [];
 
     // Check for unsupported parameters
@@ -1555,16 +1663,26 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       });
     }
 
+    this.resolvePortableReasoningOptions(
+      options,
+      sdkOptions,
+      extractClaudeReasoningProviderOptions(options.providerOptions, warnings),
+      warnings
+    );
+
     return warnings;
   }
 
   private createQueryOptions(
     abortController: AbortController,
-    responseFormat?: Parameters<LanguageModelV3['doGenerate']>[0]['responseFormat'],
+    options: LanguageModelV4CallOptions,
     stderrCollector?: (data: string) => void,
     sdkOptions?: Partial<Options>,
     effectiveResume?: string
   ): Options {
+    const claudeReasoningProviderOptions = extractClaudeReasoningProviderOptions(
+      options.providerOptions
+    );
     const opts: Partial<Options> & Record<string, unknown> = {
       model: this.getModel(),
       abortController,
@@ -1594,6 +1712,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       mcpServers: this.settings.mcpServers,
       canUseTool: this.settings.canUseTool,
     };
+    Object.assign(
+      opts,
+      this.resolvePortableReasoningOptions(options, sdkOptions, claudeReasoningProviderOptions)
+    );
     // Blocking user-dialog handling (SDK fails closed without these: the CLI
     // never emits a dialog kind that is not declared in supportedDialogKinds,
     // and the dialog-gated flow degrades to its no-dialog behavior).
@@ -1766,6 +1888,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       }
     }
 
+    this.applyClaudeReasoningProviderOptions(opts, claudeReasoningProviderOptions);
+
     // Resolve all session-id / resume cross-option rules on the FINAL merged
     // options: blank-resume restoration then --session-id exclusivity, in that
     // order. See applySessionResolution for the full rationale.
@@ -1813,9 +1937,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // loses nothing: generateObject/streamObject validate against the user's
     // original Zod schema client-side, so .email()/.datetime() enforcement is
     // preserved.
-    if (responseFormat?.type === 'json' && responseFormat.schema) {
+    if (options.responseFormat?.type === 'json' && options.responseFormat.schema) {
       const { schema: sanitizedSchema, strippedFormatPaths } = sanitizeJsonSchemaForOutputFormat(
-        responseFormat.schema as Record<string, unknown>
+        options.responseFormat.schema as Record<string, unknown>
       );
       if (strippedFormatPaths.length > 0) {
         this.logger.debug(
@@ -2191,9 +2315,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     }
   }
 
-  async doGenerate(
-    options: Parameters<LanguageModelV3['doGenerate']>[0]
-  ): Promise<Awaited<ReturnType<LanguageModelV3['doGenerate']>>> {
+  async doGenerate(options: LanguageModelV4CallOptions): Promise<LanguageModelV4GenerateResult> {
     this.logger.debug(`[claude-code] Starting doGenerate request with model: ${this.modelId}`);
     this.logger.debug(`[claude-code] Response format: ${options.responseFormat?.type ?? 'none'}`);
 
@@ -2228,7 +2350,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // listener on a long-lived caller AbortSignal.
     const queryOptions = this.createQueryOptions(
       abortController,
-      options.responseFormat,
+      options,
       stderrCollector,
       sdkOptions,
       effectiveResume
@@ -2336,8 +2458,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     };
     let structuredOutput: unknown | undefined;
     let receivedResultMessage = false;
-    let usage: LanguageModelV3Usage = createEmptyUsage();
-    let finishReason: LanguageModelV3FinishReason = { unified: 'stop', raw: undefined };
+    let usage: LanguageModelV4Usage = createEmptyUsage();
+    let finishReason: LanguageModelV4FinishReason = { unified: 'stop', raw: undefined };
     let wasTruncated = false;
     let costUsd: number | undefined;
     let durationMs: number | undefined;
@@ -2354,7 +2476,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       mirrorErrors: [],
       estimatedThinkingTokens: 0,
     };
-    const warnings: SharedV3Warning[] = this.generateAllWarnings(options, messagesPrompt);
+    const warnings: SharedV4Warning[] = this.generateAllWarnings(
+      options,
+      messagesPrompt,
+      sdkOptions
+    );
 
     // Add warnings from message conversion
     if (messageWarnings) {
@@ -2611,7 +2737,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 ? null
                 : resolveToolParentId(sdkParentToolUseIdForResults, undefined, getFallbackParentId);
               knownTools.set(error.id, { name: toolName, parentToolCallId });
-              // Ensure a tool-call part precedes the tool-error (mirrors doStream)
+              // Ensure a tool-call part precedes the errored tool-result (mirrors doStream)
               contentSegments.push({
                 kind: 'tool-call',
                 toolCallId: error.id,
@@ -2628,7 +2754,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               kind: 'tool-error',
               ...(resultMessageUuid !== undefined && { uuid: resultMessageUuid }),
               toolCallId: error.id,
-              part: this.buildToolErrorResultPart(
+              part: this.buildErroredToolResultPart(
                 error.id,
                 toolName,
                 error.error,
@@ -2816,7 +2942,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // while tool parts interleave with text/reasoning in arrival order.
     // When the SDK returned structured output (native JSON schema support),
     // it replaces the accumulated text as a single trailing text part.
-    const contentParts: LanguageModelV3Content[] = [];
+    const contentParts: LanguageModelV4Content[] = [];
     for (const segment of contentSegments) {
       if (segment.kind === 'reasoning') {
         contentParts.push({ type: 'reasoning', text: segment.text });
@@ -2829,10 +2955,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           contentParts.push({ type: 'text', text: segment.text });
         }
       } else {
-        // tool-call and tool-result parts are V3 content union members.
-        // CLI tool_error blocks were mapped to tool-result parts with
-        // isError: true (see buildToolErrorResultPart) so they survive AI
-        // SDK core's asContent(), which drops unknown content part types.
+        // V4 provider tool errors are represented as tool-result parts with
+        // isError: true (see buildErroredToolResultPart), not as separate tool-error
+        // stream/content members.
         contentParts.push(segment.part);
       }
     }
@@ -2885,9 +3010,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     };
   }
 
-  async doStream(
-    options: Parameters<LanguageModelV3['doStream']>[0]
-  ): Promise<Awaited<ReturnType<LanguageModelV3['doStream']>>> {
+  async doStream(options: LanguageModelV4CallOptions): Promise<LanguageModelV4StreamResult> {
     this.logger.debug(`[claude-code] Starting doStream request with model: ${this.modelId}`);
     this.logger.debug(`[claude-code] Response format: ${options.responseFormat?.type ?? 'none'}`);
 
@@ -2922,7 +3045,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // listener on a long-lived caller AbortSignal.
     const queryOptions = this.createQueryOptions(
       abortController,
-      options.responseFormat,
+      options,
       stderrCollector,
       sdkOptions,
       effectiveResume
@@ -2938,7 +3061,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       queryOptions.includePartialMessages = true;
     }
 
-    const warnings: SharedV3Warning[] = this.generateAllWarnings(options, messagesPrompt);
+    const warnings: SharedV4Warning[] = this.generateAllWarnings(
+      options,
+      messagesPrompt,
+      sdkOptions
+    );
 
     // Add warnings from message conversion
     if (messageWarnings) {
@@ -2964,7 +3091,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       });
     }
 
-    const stream = new ReadableStream<ExtendedStreamPart>({
+    const stream = new ReadableStream<LanguageModelV4StreamPart>({
       start: async (controller) => {
         let done = () => {};
         const outputStreamEnded = new Promise((resolve) => {
@@ -2989,7 +3116,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           return null;
         };
 
-        const streamWarnings: SharedV3Warning[] = [];
+        const streamWarnings: SharedV4Warning[] = [];
 
         const closeToolInput = (toolId: string, state: ToolStreamState) => {
           if (!state.inputClosed && state.inputStarted) {
@@ -3026,7 +3153,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           toolStates.clear();
         };
 
-        let usage: LanguageModelV3Usage = createEmptyUsage();
+        let usage: LanguageModelV4Usage = createEmptyUsage();
         let accumulatedText = '';
         // Per-message text segments mirroring `accumulatedText` so refusal-fallback
         // `supersedes` retractions keep non-retracted text (matches doGenerate).
@@ -3163,6 +3290,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
           for await (const message of response) {
             this.logger.debug(`[claude-code] Stream received message type: ${message.type}`);
+            if (options.includeRawChunks) {
+              controller.enqueue({ type: 'raw', rawValue: message });
+            }
 
             // Handle streaming events (token-by-token delivery via includePartialMessages)
             if (message.type === 'stream_event') {
@@ -3342,7 +3472,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                         parentToolCallId: state.parentToolCallId ?? null,
                       },
                     },
-                  } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                  });
 
                   // Track Task tools as active so nested tools can reference them as parent
                   if (isSubagentToolName(toolName)) {
@@ -3620,13 +3750,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     id: toolId,
                     toolName: tool.name,
                     providerExecuted: true,
-                    dynamic: true, // V3 field: indicates tool is provider-defined
+                    dynamic: true, // V4 field: indicates tool is provider-defined
                     providerMetadata: {
                       'claude-code': {
                         parentToolCallId: state.parentToolCallId ?? null,
                       },
                     },
-                  } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                  });
                   // Track Task tools as active so nested tools can reference them as parent
                   if (isSubagentToolName(tool.name)) {
                     activeTaskTools.set(toolId, { startTime: Date.now() });
@@ -3906,13 +4036,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       id: result.id,
                       toolName,
                       providerExecuted: true,
-                      dynamic: true, // V3 field: indicates tool is provider-defined
+                      dynamic: true, // V4 field: indicates tool is provider-defined
                       providerMetadata: {
                         'claude-code': {
                           parentToolCallId: state.parentToolCallId ?? null,
                         },
                       },
-                    } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                    });
                     state.inputStarted = true;
                   }
                   if (!state.inputClosed) {
@@ -3977,7 +4107,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   toolStates.set(error.id, state);
                 }
 
-                // Ensure tool-call is emitted before tool-error
+                // Ensure tool-call is emitted before the errored tool-result
                 emitToolCall(error.id, state);
 
                 // Remove Task tools from active set when they error
@@ -3986,7 +4116,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 }
 
                 controller.enqueue(
-                  this.buildToolErrorPart(error.id, toolName, error.error, state.parentToolCallId)
+                  this.buildErroredToolResultPart(
+                    error.id,
+                    toolName,
+                    error.error,
+                    state.parentToolCallId
+                  )
                 );
               }
             } else if (message.type === 'result') {
@@ -4039,7 +4174,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 'stop_reason' in message
                   ? ((message as Record<string, unknown>).stop_reason as string | null | undefined)
                   : undefined;
-              const finishReason: LanguageModelV3FinishReason = mapClaudeCodeFinishReason(
+              const finishReason: LanguageModelV4FinishReason = mapClaudeCodeFinishReason(
                 message.subtype,
                 stopReason
               );
@@ -4275,7 +4410,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             this.logger.warn(
               `[claude-code] Detected truncated stream response, returning ${accumulatedText.length} characters of buffered text`
             );
-            const truncationWarning: SharedV3Warning = {
+            const truncationWarning: SharedV4Warning = {
               type: 'other',
               message: CLAUDE_CODE_TRUNCATION_WARNING,
             };
@@ -4370,28 +4505,34 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     });
 
     return {
-      stream: stream as unknown as ReadableStream<LanguageModelV3StreamPart>,
+      stream,
       request: {
         body: messagesPrompt,
       },
     };
   }
 
-  private serializeWarningsForMetadata(warnings: SharedV3Warning[]): JSONValue {
-    const result = warnings.map((w) => {
-      const base: Record<string, string> = { type: w.type };
-      if ('message' in w) {
-        const m = (w as { message?: unknown }).message;
-        if (m !== undefined) base.message = String(m);
+  private serializeWarningsForMetadata(warnings: SharedV4Warning[]): JSONValue {
+    const result = warnings.map((warning) => {
+      const base: Record<string, string> = { type: warning.type };
+
+      switch (warning.type) {
+        case 'unsupported':
+        case 'compatibility':
+          base.feature = warning.feature;
+          if (warning.details !== undefined) {
+            base.details = warning.details;
+          }
+          break;
+        case 'deprecated':
+          base.setting = warning.setting;
+          base.message = warning.message;
+          break;
+        case 'other':
+          base.message = warning.message;
+          break;
       }
-      if (w.type === 'unsupported' || w.type === 'compatibility') {
-        const feature = (w as { feature: unknown }).feature;
-        if (feature !== undefined) base.feature = String(feature);
-        if ('details' in w) {
-          const d = (w as { details?: unknown }).details;
-          if (d !== undefined) base.details = String(d);
-        }
-      }
+
       return base;
     });
     return result as unknown as JSONValue;

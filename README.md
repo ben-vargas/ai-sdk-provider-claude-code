@@ -1,35 +1,36 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/status-stable-00A79E" alt="stable status">
+  <img src="https://img.shields.io/badge/status-beta-F59E0B" alt="beta status">
   <a href="https://www.npmjs.com/package/ai-sdk-provider-claude-code"><img src="https://img.shields.io/npm/v/ai-sdk-provider-claude-code?color=00A79E" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/ai-sdk-provider-claude-code"><img src="https://img.shields.io/npm/unpacked-size/ai-sdk-provider-claude-code?color=00A79E" alt="install size" /></a>
   <a href="https://www.npmjs.com/package/ai-sdk-provider-claude-code"><img src="https://img.shields.io/npm/dy/ai-sdk-provider-claude-code.svg?color=00A79E" alt="npm downloads" /></a>
-  <a href="https://nodejs.org/en/about/releases/"><img src="https://img.shields.io/badge/node-%3E%3D18-00A79E" alt="Node.js ≥ 18" /></a>
+  <a href="https://nodejs.org/en/about/releases/"><img src="https://img.shields.io/badge/node-%3E%3D22-00A79E" alt="Node.js ≥ 22" /></a>
   <a href="https://www.npmjs.com/package/ai-sdk-provider-claude-code"><img src="https://img.shields.io/npm/l/ai-sdk-provider-claude-code?color=00A79E" alt="License: MIT" /></a>
 </p>
 
 # AI SDK Provider for Claude Agent SDK
 
-> **Latest Release**: Version 3.x supports AI SDK v6 stable with the Claude Agent SDK. For AI SDK v5 support, use the `ai-sdk-v5` tag.
+> **Latest Release**: Version 3.x remains the `latest` stable line for AI SDK v6. Version 4.x is an AI SDK v7 beta published under the `beta` tag.
 
 **ai-sdk-provider-claude-code** lets you use Claude via the [Vercel AI SDK](https://sdk.vercel.ai/docs) through the official `@anthropic-ai/claude-agent-sdk` and the Claude Code CLI.
 
 ## Version Compatibility
 
-| Provider Version | AI SDK Version | Underlying SDK                       | NPM Tag              | Status | Branch                                                                                  |
-| ---------------- | -------------- | ------------------------------------ | -------------------- | ------ | --------------------------------------------------------------------------------------- |
-| 3.x.x            | v6             | `@anthropic-ai/claude-agent-sdk`     | `latest`             | Stable | `main`                                                                                  |
-| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk`     | `ai-sdk-v5`          | Stable | [`ai-sdk-v5`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v5) |
-| 1.x.x            | v5             | `@anthropic-ai/claude-code` (legacy) | `v1-claude-code-sdk` | Legacy | [`v1`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/v1)               |
-| 0.x.x            | v4             | `@anthropic-ai/claude-code` (legacy) | `ai-sdk-v4`          | Legacy | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
+| Provider Version | AI SDK Version | Underlying SDK                   | NPM Tag               | Status | Branch      |
+| ---------------- | -------------- | -------------------------------- | --------------------- | ------ | ----------- |
+| 4.x.x            | v7             | `@anthropic-ai/claude-agent-sdk` | `beta`                | Beta   | `main`      |
+| 3.x.x            | v6             | `@anthropic-ai/claude-agent-sdk` | `latest`, `ai-sdk-v6` | Stable | `ai-sdk-v6` |
+| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk` | `ai-sdk-v5`           | Legacy | `ai-sdk-v5` |
+| 1.x.x            | v5             | `@anthropic-ai/claude-code`      | `v1-claude-code-sdk`  | Legacy | `v1`        |
+| 0.x.x            | v4             | `@anthropic-ai/claude-code`      | `ai-sdk-v4`           | Legacy | `ai-sdk-v4` |
 
 Install commands for each line are listed under [Installation](#installation) below.
 
 ## Zod Compatibility
 
-**Starting from v3.2.0, this package requires Zod 4.**
+**The 4.x beta line requires Zod `^4.1.8`.** Version 3.x remains on the `latest` stable line during the beta window.
 
 ```bash
-npm install ai-sdk-provider-claude-code ai zod@^4.0.0
+npm install ai-sdk-provider-claude-code@beta ai zod@^4.1.8
 ```
 
 > **Note:** Zod 3 support was dropped in v3.2.0 due to the underlying `@anthropic-ai/claude-agent-sdk@0.2.x` requiring Zod 4. If you need Zod 3 support, use `ai-sdk-provider-claude-code@3.1.x`.
@@ -48,9 +49,12 @@ claude auth login
 ### 2. Add the provider
 
 ```bash
-# For AI SDK v6 (recommended)
-npm install ai-sdk-provider-claude-code ai@^6.0.0
-# or explicitly: npm install ai-sdk-provider-claude-code@latest
+# For AI SDK v7 beta (4.x)
+npm install ai-sdk-provider-claude-code@beta ai
+
+# For AI SDK v6 stable (3.x; current latest tag)
+npm install ai-sdk-provider-claude-code@latest ai@^6.0.0
+# or explicitly: npm install ai-sdk-provider-claude-code@ai-sdk-v6 ai@^6.0.0
 
 # For AI SDK v5
 npm install ai-sdk-provider-claude-code@ai-sdk-v5 ai@^5.0.0
@@ -72,9 +76,26 @@ Please ensure you have appropriate permissions and comply with all applicable te
 
 ## Quick Start
 
-### AI SDK v6
+### AI SDK v7 beta
 
 ```typescript
+// npm install ai-sdk-provider-claude-code@beta ai
+import { streamText } from 'ai';
+import { claudeCode } from 'ai-sdk-provider-claude-code';
+
+const result = streamText({
+  model: claudeCode('haiku'),
+  prompt: 'Hello, Claude!',
+});
+
+const text = await result.text;
+console.log(text);
+```
+
+### AI SDK v6 (`latest`)
+
+```typescript
+// npm install ai-sdk-provider-claude-code@latest ai@^6.0.0
 import { streamText } from 'ai';
 import { claudeCode } from 'ai-sdk-provider-claude-code';
 
@@ -104,6 +125,14 @@ console.log(text);
 ```
 
 ## Breaking Changes
+
+### Version 4.0.0-beta.1 (AI SDK v7 Beta)
+
+This beta ports the provider to AI SDK v7 / `LanguageModelV4` without adding new provider features:
+
+- Requires Node.js ≥ 22 and Zod `^4.1.8`
+- ESM-only package output; CommonJS `require()` is no longer available
+- Tool failures now use spec `tool-result` parts/events with `isError: true` instead of the provider-specific `tool-error` stream extension
 
 ### Version 3.0.0 (AI SDK v6 Stable)
 
@@ -193,7 +222,7 @@ claude auth login
 
 If you're upgrading from version 1.x:
 
-1. **Update the package**: `npm install ai-sdk-provider-claude-code@latest`
+1. **Update the package**: `npm install ai-sdk-provider-claude-code@ai-sdk-v5`
 2. **If you relied on default system prompt or CLAUDE.md**, add explicit configuration:
    ```ts
    const model = claudeCode('sonnet', {
@@ -212,37 +241,41 @@ If you're upgrading from version 1.x:
 
 ## Structured Outputs
 
-This provider supports **native structured outputs** via the Claude Agent SDK (v0.1.45+). When using `generateObject()` or `streamObject()`, the SDK returns schema-compliant JSON for **supported** JSON Schema features via constrained decoding.
+This provider supports **native structured outputs** via Claude Agent SDK constrained decoding. On the 4.x line (AI SDK v7), use `generateText()` with an `output` specification such as `Output.object({ schema })`, then destructure `output` from the result. For streaming structured output, use `streamText()` with the same `output` setting and read `partialOutputStream` as partial objects arrive.
 
 ```typescript
-import { generateObject } from 'ai';
+import { generateText, Output } from 'ai';
 import { claudeCode } from 'ai-sdk-provider-claude-code';
 import { z } from 'zod';
 
-const result = await generateObject({
+const UserProfileSchema = z.object({
+  name: z.string(),
+  age: z.number(),
+  email: z.string().describe('Email address (validate client-side)'),
+});
+
+const { output } = await generateText({
   model: claudeCode('sonnet'),
-  schema: z.object({
-    name: z.string(),
-    age: z.number(),
-    email: z.string().describe('Email address (validate client-side)'),
-  }),
+  output: Output.object({ schema: UserProfileSchema }),
   prompt: 'Generate a user profile for a software developer',
 });
 
-console.log(result.object); // Matches the schema above
+console.log(output); // Matches the schema above
 // { name: "Alex Chen", age: 28, email: "alex@example.com" }
 ```
 
 **Benefits:**
 
 - ✅ **Schema compliance (supported features)** - Constrained decoding ensures valid output
-- ✅ **No JSON parsing errors** - SDK handles all validation
+- ✅ **No JSON parsing errors** - AI SDK handles validation against your schema
 - ✅ **No prompt engineering** - Schema enforcement is native to the SDK
 - ✅ **Better performance** - No retry/extraction logic needed
 
 > **Note:** A schema is required for JSON output. Using `responseFormat: { type: 'json' }` without a schema is not supported by Claude Code (matching Anthropic's official provider behavior). An `unsupported-setting` warning will be emitted and the call will be treated as plain text.
 >
-> **Current CLI limitation:** Some JSON Schema features can cause the Claude Code CLI to silently fall back to prose (no `structured_output`). The provider mitigates the most common case: `format` keywords (`date-time`, `email`, `uri`, `uuid`, ... — produced by Zod's `.datetime()`, `.email()`, `.url()`, `.uuid()`) are stripped client-side before the schema is sent, with the hint folded into the field's `description` (e.g. `(expected format: email)`). Server-side enforcement of `format` still does not exist in the CLI, but `generateObject`/`streamObject` validate against your original Zod schema client-side, so nothing is lost. Complex regex `pattern`s (lookaheads/backreferences) remain unmitigated — `pattern` is passed through untouched because the CLI genuinely enforces simple patterns. If the CLI still falls back to prose, the provider first tries to parse the prose as JSON (graceful recovery, with a warning) and otherwise fails fast with a descriptive error instead of letting an opaque `AI_NoObjectGeneratedError` surface downstream. See `examples/structured-output-repro.ts` and `examples/limitations.ts`.
+> **Current CLI limitation:** Some JSON Schema features can cause the Claude Code CLI to silently fall back to prose (no `structured_output`). The provider mitigates the most common case: `format` keywords (`date-time`, `email`, `uri`, `uuid`, ... — produced by Zod's `.datetime()`, `.email()`, `.url()`, `.uuid()`) are stripped client-side before the schema is sent, with the hint folded into the field's `description` (e.g., `(expected format: email)`). Server-side enforcement of `format` still does not exist in the CLI, but the AI SDK validates `output` against your original Zod schema client-side, so nothing is lost. Complex regex `pattern`s (lookaheads/backreferences) remain unmitigated — `pattern` is passed through untouched because the CLI genuinely rejects some patterns. Keep generation schemas simple and enforce stricter invariants after generation.
+>
+> If you are staying on the 3.x (AI SDK v6) line, its legacy structured-output examples may still use `generateObject()` / `streamObject()`; new 4.x code should use `generateText()` / `streamText()` with `Output`.
 
 ## Core Features
 
@@ -388,7 +421,7 @@ A few Agent SDK surfaces are deliberately not wrapped by this provider. A compil
 
 ## Claude Agent SDK 0.3.x Notes
 
-This provider depends on `@anthropic-ai/claude-agent-sdk@^0.3.170`. The 0.3.x line introduces a few changes worth knowing about:
+This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.197` (exact pin), because 0.3.198-0.3.202 ship a broken `sdk.d.ts` (`SDKMessage` collapses to `any`); the pin moves only after upstream fixes it. The 0.3.x line introduces a few changes worth knowing about:
 
 ### New peer dependencies
 
@@ -536,7 +569,7 @@ See [examples/skills-management.ts](examples/skills-management.ts) for more exam
 
 ## Using AI SDK Tools
 
-The Claude Code CLI executes its own tools, so AI SDK tools passed to `generateText`/`streamText` via the `tools` option are ignored (with an `unsupported` warning). Automatic bridging is impossible by design: at the `LanguageModelV3` layer the provider only receives tool _declarations_ (name, description, JSON schema) — the `execute` functions live in the `ai` package layer and never reach any provider.
+The Claude Code CLI executes its own tools, so AI SDK tools passed to `generateText`/`streamText` via the `tools` option are ignored (with an `unsupported` warning). Automatic bridging is impossible by design: at the `LanguageModelV4` layer the provider only receives tool _declarations_ (name, description, JSON schema) — the `execute` functions live in the `ai` package layer and never reach any provider.
 
 Instead, bridge your tools explicitly with the `createAiSdkMcpServer` helper, which turns a map of AI SDK tools into an in-process MCP server that the CLI can call:
 
@@ -609,7 +642,7 @@ All requests made through this provider report timing in `providerMetadata['clau
 
 ## Limitations
 
-- Requires Node.js ≥ 18
+- Requires Node.js ≥ 22
 - Image inputs require streaming mode with base64/data URLs (remote fetch is not supported)
 - Some AI SDK parameters are unsupported and ignored with an `unsupported` warning: `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, and `maxOutputTokens` (the CLI does not accept an output token cap)
 - AI SDK `tools` and `toolChoice` (other than `'auto'`) are not supported: the Claude Code CLI executes its own tools, so AI SDK tool definitions cannot be auto-bridged at the provider layer (both emit an `unsupported` warning). To expose custom tools to the CLI, bridge them with the `createAiSdkMcpServer` helper and pass the result via the `mcpServers` setting (plus `allowedTools`) — see **Using AI SDK Tools** above
@@ -618,9 +651,9 @@ All requests made through this provider report timing in `providerMetadata['clau
 
 ## Tool Error Parity (Streaming)
 
-- In addition to `tool-call` and `tool-result`, this provider emits a distinct `tool-error` stream event when a tool execution fails.
-- For parity with other tool events, `tool-error` includes `providerExecuted: true` and `providerMetadata['claude-code']` (e.g., `rawError`). These fields are documented extensions; downstream consumers may safely ignore them if unused.
-- See Tool Streaming Support for full event list, ordering guarantees, and performance considerations.
+- AI SDK v7 represents failed tool executions with the standard `tool-result` stream event/part and `isError: true`.
+- The former provider-specific `tool-error` stream extension is not emitted on the 4.x line; inspect `providerMetadata['claude-code']` (e.g., `rawError`) on the `tool-result` when you need Claude Code details.
+- See **Content Block Streaming** below for the current streaming event overview; the Tool Streaming Support doc is historical v5-era reference material.
 
 ## Content Block Streaming
 
@@ -637,7 +670,7 @@ For subagent parent/child tracking, see **Subagent Hierarchy Tracking** in this 
 When Claude Code spawns subagents via the `Task` tool, this provider exposes parent-child relationships through `providerMetadata`:
 
 ```ts
-// Available on tool-input-start, tool-call, tool-result, and tool-error events
+// Available on tool-input-start, tool-call, and tool-result events
 providerMetadata['claude-code'].parentToolCallId: string | null;
 ```
 
@@ -670,8 +703,8 @@ Each response exposes Claude Code metadata under `providerMetadata['claude-code'
 | `thinkingTraces`          | `array`   | Thinking blocks extracted in non-streaming mode (`doGenerate` only)                                                                                                                                                                                     |
 
 ```ts
-const { providerMetadata } = await generateText({ model, prompt: 'Hello' });
-const meta = providerMetadata?.['claude-code'];
+const { finalStep } = await generateText({ model, prompt: 'Hello' });
+const meta = finalStep.providerMetadata?.['claude-code'];
 console.log(meta?.costUsd, meta?.ttftMs, meta?.terminalReason);
 ```
 

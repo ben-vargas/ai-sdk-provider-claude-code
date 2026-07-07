@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { ModelMessage } from 'ai';
+import type { LanguageModelV4Prompt } from '@ai-sdk/provider';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
 
 describe('convertToClaudeCodeMessages (images)', () => {
@@ -9,10 +9,14 @@ describe('convertToClaudeCodeMessages (images)', () => {
         role: 'user',
         content: [
           { type: 'text', text: 'Here is a sample image.' },
-          { type: 'image', image: 'data:image/png;base64,aGVsbG8=' },
+          {
+            type: 'file',
+            mediaType: 'image/*',
+            data: { type: 'url', url: new URL('data:image/png;base64,aGVsbG8=') },
+          },
         ],
       },
-    ] as ModelMessage[];
+    ] satisfies LanguageModelV4Prompt;
 
     const result = convertToClaudeCodeMessages(prompt);
 
@@ -33,16 +37,16 @@ describe('convertToClaudeCodeMessages (images)', () => {
     });
   });
 
-  it('includes base64 images when mimeType is provided', () => {
+  it('includes base64 images when mediaType is provided', () => {
     const prompt = [
       {
         role: 'user',
         content: [
           { type: 'text', text: 'Inline base64 image.' },
-          { type: 'image', image: { data: 'AQID', mimeType: 'image/jpeg' } },
+          { type: 'file', mediaType: 'image/jpeg', data: { type: 'data', data: 'AQID' } },
         ],
       },
-    ] as ModelMessage[];
+    ] satisfies LanguageModelV4Prompt;
 
     const result = convertToClaudeCodeMessages(prompt);
 
@@ -64,10 +68,14 @@ describe('convertToClaudeCodeMessages (images)', () => {
         role: 'user',
         content: [
           { type: 'text', text: 'Remote image' },
-          { type: 'image', image: 'https://example.com/image.png' },
+          {
+            type: 'file',
+            mediaType: 'image/png',
+            data: { type: 'url', url: new URL('https://example.com/image.png') },
+          },
         ],
       },
-    ] as ModelMessage[];
+    ] satisfies LanguageModelV4Prompt;
 
     const result = convertToClaudeCodeMessages(prompt);
 
@@ -84,10 +92,14 @@ describe('convertToClaudeCodeMessages (images)', () => {
         role: 'user',
         content: [
           { type: 'text', text: 'File part image.' },
-          { type: 'file', mediaType: 'image/png', data: 'aGVsbG8=' },
+          {
+            type: 'file',
+            mediaType: 'image/png',
+            data: { type: 'data', data: new Uint8Array([1, 2, 3]) },
+          },
         ],
       },
-    ] as ModelMessage[];
+    ] satisfies LanguageModelV4Prompt;
 
     const result = convertToClaudeCodeMessages(prompt);
 
@@ -97,8 +109,26 @@ describe('convertToClaudeCodeMessages (images)', () => {
       source: {
         type: 'base64',
         media_type: 'image/png',
-        data: 'aGVsbG8=',
+        data: 'AQID',
       },
     });
+  });
+
+  it('includes inline text file parts in the converted prompt', () => {
+    const prompt = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Read this note:' },
+          { type: 'file', mediaType: 'text/plain', data: { type: 'text', text: 'note body' } },
+        ],
+      },
+    ] satisfies LanguageModelV4Prompt;
+
+    const result = convertToClaudeCodeMessages(prompt);
+
+    expect(result.warnings).toBeUndefined();
+    expect(result.hasImageParts).toBe(false);
+    expect(result.messagesPrompt).toBe('Human: Read this note:\nnote body');
   });
 });

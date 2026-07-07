@@ -1,7 +1,7 @@
 {
   "name": "ai-sdk-provider-claude-code",
   "version": "3.5.1",
-  "description": "AI SDK v6 provider for Claude via Claude Agent SDK (use Pro/Max subscription)",
+  "description": "AI SDK v7 provider for Claude via Claude Agent SDK (use Pro/Max subscription)",
   "keywords": [
     "ai-sdk",
     "claude-agent-sdk",
@@ -22,15 +22,13 @@
   "author": "Ben Vargas",
   "type": "module",
   "sideEffects": false,
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
+  "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     "./package.json": "./package.json",
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "default": "./dist/index.js"
     }
   },
   "files": [
@@ -79,18 +77,18 @@
     "example:all": "npm run build && npm run example:basic && npm run example:streaming && npm run example:conversation && npm run example:config && npm run example:object && npm run example:object:constraints && npm run example:tools && npm run example:timeout"
   },
   "dependencies": {
-    "@ai-sdk/provider": "^3.0.0",
-    "@ai-sdk/provider-utils": "^4.0.1",
-    "@anthropic-ai/claude-agent-sdk": "^0.3.170"
+    "@ai-sdk/provider": "^4.0.2",
+    "@ai-sdk/provider-utils": "^5.0.5",
+    "@anthropic-ai/claude-agent-sdk": "0.3.197"
   },
   "devDependencies": {
     "@edge-runtime/vm": "5.0.0",
     "@eslint/js": "9.28.0",
-    "@types/node": "^20.19.0",
+    "@types/node": "^22.10.0",
     "@typescript-eslint/eslint-plugin": "8.34.0",
     "@typescript-eslint/parser": "8.34.0",
     "@vitest/coverage-v8": "^3.2.4",
-    "ai": "^6.0.3",
+    "ai": "^7.0.16",
     "eslint": "9.28.0",
     "globals": "16.2.0",
     "prettier": "^3.6.2",
@@ -100,12 +98,13 @@
     "zod": "^4.1.12"
   },
   "peerDependencies": {
-    "zod": "^4.0.0"
+    "zod": "^4.1.8"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "beta"
   }
 }

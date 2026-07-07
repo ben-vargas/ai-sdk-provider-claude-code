@@ -64,7 +64,7 @@ async function multipleToolCalls() {
   });
 
   let inText = false;
-  for await (const part of result.fullStream) {
+  for await (const part of result.stream) {
     if (part.type === 'text-delta') {
       if (!inText) {
         process.stdout.write(`${timestamp()} ${CYAN}TEXT:${RESET} `);
@@ -128,7 +128,7 @@ async function tooLateWithRecovery() {
   });
 
   let inText = false;
-  for await (const part of result.fullStream) {
+  for await (const part of result.stream) {
     if (part.type === 'text-delta') {
       if (!inText) {
         process.stdout.write(`${timestamp()} ${CYAN}TEXT:${RESET} `);
@@ -172,7 +172,7 @@ async function tooLateWithRecovery() {
       model: provider('haiku'),
       prompt: missedMessage,
     });
-    for await (const part of recovery.fullStream) {
+    for await (const part of recovery.stream) {
       if (part.type === 'text-delta') {
         if (!inText) {
           process.stdout.write(`${timestamp()} ${CYAN}TEXT:${RESET} `);

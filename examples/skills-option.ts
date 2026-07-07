@@ -70,7 +70,7 @@ async function runWithSkills(tempDir: string, skills: string[]) {
   let skillToolResult: string | undefined;
   let text = '';
 
-  for await (const part of result.fullStream) {
+  for await (const part of result.stream) {
     if (part.type === 'tool-call' && part.toolName === 'Skill') {
       skillToolInput = JSON.stringify(part.input);
     } else if (part.type === 'tool-result' && part.toolName === 'Skill') {

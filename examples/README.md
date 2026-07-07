@@ -2,7 +2,7 @@
 
 This directory contains curated examples demonstrating the most important features of the Claude Code AI SDK Provider. Each example serves a specific purpose and demonstrates a key pattern or capability.
 
-> **Note**: These examples are written for Vercel AI SDK v5. If you're using AI SDK v4, please refer to the v4 branch.
+> **Note**: These examples are written for Vercel AI SDK v7. Use the maintenance branches for older AI SDK versions.
 
 ## Prerequisites
 
@@ -287,7 +287,7 @@ npx tsx examples/generate-object-constraints.ts
 npx tsx examples/stream-object.ts
 ```
 
-**Key concepts**: Partial object streaming, real-time updates, field-by-field progress, `streamObject()` API
+**Key concepts**: Partial output streaming, real-time updates, field-by-field progress, `streamText()` with `Output.object()`
 
 ### 24. Structured Output Repro (`structured-output-repro.ts`)
 
@@ -341,7 +341,7 @@ npx tsx examples/limitations.ts
 npx tsx examples/session-management.ts
 ```
 
-**Key concepts**: `providerMetadata['claude-code'].sessionId`, `resume` setting, `forkSession()`, `getSessionInfo()`, `deleteSession()`
+**Key concepts**: `finalStep.providerMetadata['claude-code'].sessionId`, `resume` setting, `forkSession()`, `getSessionInfo()`, `deleteSession()`
 
 **What you'll see**: A session created and resumed (context carries over), forked into a new session ID without running a query, inspected via session metadata, and cleaned up from `~/.claude/projects/`. See [docs/sessions.md](../docs/sessions.md) for the full guide.
 
@@ -355,7 +355,7 @@ npx tsx examples/session-management.ts
 npx tsx examples/hooks-permission-denied.ts
 ```
 
-**Key concepts**: PreToolUse `'allow'` decision vs. no decision (hand the call to the permission system), `canUseTool` call-time deny (note: `disallowedTools` and blanket deny rules remove the tool up front, so no denial would ever fire; an explicit PreToolUse `'defer'` currently breaks canUseTool routing in CLI 2.1.x), PermissionDenied hook (fires only for CLI-internal auto-denials, e.g. the `permissionMode: 'auto'` classifier), `providerMetadata['claude-code'].permissionDenials`
+**Key concepts**: PreToolUse `'allow'` decision vs. no decision (hand the call to the permission system), `canUseTool` call-time deny (note: `disallowedTools` and blanket deny rules remove the tool up front, so no denial would ever fire; an explicit PreToolUse `'defer'` currently breaks canUseTool routing in CLI 2.1.x), PermissionDenied hook (fires only for CLI-internal auto-denials, e.g. the `permissionMode: 'auto'` classifier), `finalStep.providerMetadata['claude-code'].permissionDenials`
 
 ## AI SDK Tool Bridging
 
@@ -369,7 +369,7 @@ npx tsx examples/ai-sdk-tools.ts
 
 **Key concepts**: `createAiSdkMcpServer`, `mcpServers` setting, `allowedTools` with `mcp__<serverName>__<toolName>` naming, provider-executed dynamic tool parts
 
-**What you'll see**: AI SDK tools (Zod schemas, `execute` functions) running in-process via `generateText` and `streamText`. Tool calls/results surface as provider-executed dynamic tool parts on both paths: in the `generateText` steps content and in the `streamText` fullStream (plus an in-process `execute()` log showing the bridged tool actually running locally).
+**What you'll see**: AI SDK tools (Zod schemas, `execute` functions) running in-process via `generateText` and `streamText`. Tool calls/results surface as provider-executed dynamic tool parts on both paths: in the `generateText` steps content and in the `streamText` stream (plus an in-process `execute()` log showing the bridged tool actually running locally).
 
 ## Warm Start & Timing
 
@@ -381,7 +381,7 @@ npx tsx examples/ai-sdk-tools.ts
 npx tsx examples/warm-start.ts
 ```
 
-**Key concepts**: `startup()` / `WarmQuery` (pre-spawned CLI subprocess, one query per handle, `close()`/AsyncDisposable cleanup), timing metadata in `providerMetadata['claude-code']` (`ttftMs`, `ttftStreamMs`, `timeToRequestMs`, `warmSpareClaimed` — absence vs `false` distinguishable), driving the raw SDK message stream directly, since `WarmQuery` cannot accelerate `generateText`/`streamText`
+**Key concepts**: `startup()` / `WarmQuery` (pre-spawned CLI subprocess, one query per handle, `close()`/AsyncDisposable cleanup), timing metadata in `finalStep.providerMetadata['claude-code']` (`ttftMs`, `ttftStreamMs`, `timeToRequestMs`, `warmSpareClaimed` — absence vs `false` distinguishable), driving the raw SDK message stream directly, since `WarmQuery` cannot accelerate `generateText`/`streamText`
 
 ## Context Usage
 
@@ -405,7 +405,7 @@ npx tsx examples/context-usage.ts
 npx tsx examples/prompt-suggestions.ts
 ```
 
-**Key concepts**: Post-finish delivery (suggestion arrives after the result message, so it is a callback rather than providerMetadata — bridge with a promise + bounded race), bounded drain (provider stops at the first suggestion, 10s cap, at most one suggestion per turn), gating (suggestions are enabled when `promptSuggestions` is `true` or left unset, and disabled only when explicitly `false`)
+**Key concepts**: Post-finish delivery (suggestion arrives after the result message, so it is a callback rather than final-step provider metadata — bridge with a promise + bounded race), bounded drain (provider stops at the first suggestion, 10s cap, at most one suggestion per turn), gating (suggestions are enabled when `promptSuggestions` is `true` or left unset, and disabled only when explicitly `false`)
 
 ## Skills Option
 
@@ -424,17 +424,19 @@ npx tsx examples/skills-option.ts
 ### Object Generation
 
 ```typescript
-import { generateObject } from 'ai';
+import { generateText, Output } from 'ai';
 import { z } from 'zod';
 
-const { object } = await generateObject({
+const { output: object } = await generateText({
   model: claudeCode('haiku'),
-  schema: z.object({
-    name: z.string(),
-    age: z.number(),
-    // .email() works: the provider strips the `format` keyword for the CLI
-    // (folding the hint into the description) and Zod validates client-side.
-    email: z.string().email(),
+  output: Output.object({
+    schema: z.object({
+      name: z.string(),
+      age: z.number(),
+      // .email() works: the provider strips the `format` keyword for the CLI
+      // (folding the hint into the description) and Zod validates client-side.
+      email: z.string().email(),
+    }),
   }),
   prompt: 'Generate a random user profile',
 });

@@ -3,13 +3,13 @@
 /**
  * Example: Streaming Object Generation with Partial Updates
  *
- * Demonstrates using streamObject() to receive incremental partial objects
- * as the AI generates structured data. This enables real-time UI updates
- * as each field becomes available.
+ * Demonstrates using streamText() with Output.object() to receive incremental
+ * partial outputs as the AI generates structured data, enabling real-time UI
+ * updates as each field becomes available.
  */
 
 import { createClaudeCode } from '../dist/index.js';
-import { streamObject } from 'ai';
+import { Output, streamText } from 'ai';
 import { z } from 'zod';
 
 const claudeCode = createClaudeCode();
@@ -31,16 +31,16 @@ async function main() {
   let firstPartialTime: number | null = null;
   let partialCount = 0;
 
-  const { partialObjectStream, object } = streamObject({
+  const { partialOutputStream, output } = streamText({
     model: claudeCode('sonnet'),
-    schema: profileSchema,
+    output: Output.object({ schema: profileSchema }),
     prompt:
       'Generate a fictional software developer profile with creative hobbies and an interesting bio.',
   });
 
   console.log('--- Streaming Progress ---\n');
 
-  for await (const partial of partialObjectStream) {
+  for await (const partial of partialOutputStream) {
     partialCount++;
 
     if (!firstPartialTime) {
@@ -65,7 +65,7 @@ async function main() {
   }
 
   // Get the final validated object
-  const finalObject = await object;
+  const finalObject = await output;
   const endTime = Date.now();
 
   console.log('\n--- Final Object ---\n');
