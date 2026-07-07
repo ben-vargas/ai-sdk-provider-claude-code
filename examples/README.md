@@ -349,7 +349,7 @@ npx tsx examples/session-management.ts
 
 ### 29. Permission Hooks (`hooks-permission-denied.ts`)
 
-**Purpose**: Use the SDK 0.3.x permission vocabulary in hooks - a PreToolUse hook that allows known-safe tools (and makes no decision for the rest, handing them to the permission system), a `canUseTool` callback that denies Bash at call time, and the denial surfacing in provider metadata.
+**Purpose**: Use the SDK 0.3.x permission vocabulary in hooks - a PreToolUse hook that allows known-safe tools (and makes no decision for the rest, handing them to the permission system), a `canUseTool` callback that denies Bash at call time, and the denial surfacing in `finalStep.providerMetadata`.
 
 ```bash
 npx tsx examples/hooks-permission-denied.ts
@@ -367,7 +367,7 @@ npx tsx examples/hooks-permission-denied.ts
 npx tsx examples/ai-sdk-tools.ts
 ```
 
-**Key concepts**: `createAiSdkMcpServer`, `mcpServers` setting, `allowedTools` with `mcp__<serverName>__<toolName>` naming, provider-executed dynamic tool parts
+**Key concepts**: `createAiSdkMcpServer`, `mcpServers` setting, `allowedTools` with `mcp__<serverName>__<toolName>` naming, provider-executed dynamic tool parts; AI SDK call-level `toolApproval` does not approve these MCP-routed Claude Code tool calls
 
 **What you'll see**: AI SDK tools (Zod schemas, `execute` functions) running in-process via `generateText` and `streamText`. Tool calls/results surface as provider-executed dynamic tool parts on both paths: in the `generateText` steps content and in the `streamText` stream (plus an in-process `execute()` log showing the bridged tool actually running locally).
 

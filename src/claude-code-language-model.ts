@@ -1545,13 +1545,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
       return { thinking: { type: 'disabled' } };
     }
 
+    // Portable levels map only to Agent SDK effort. Thinking mode is
+    // model-sensitive, so let the SDK/CLI choose what the selected model supports.
     const effort = mapReasoningToProviderEffort({
       reasoning: options.reasoning,
       effortMap: CLAUDE_REASONING_EFFORT_MAP,
       warnings: warnings ?? [],
     });
 
-    return effort === undefined ? {} : { thinking: { type: 'adaptive' }, effort };
+    return effort === undefined ? {} : { effort };
   }
 
   private applyClaudeReasoningProviderOptions(

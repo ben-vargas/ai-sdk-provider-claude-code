@@ -15,6 +15,15 @@ describe('createClaudeCode', () => {
     expect(provider.specificationVersion).toBe('v4');
   });
 
+  it('should leave optional ProviderV4 files and skills interfaces absent', () => {
+    const provider = createClaudeCode();
+
+    expect('files' in provider).toBe(false);
+    expect(provider.files).toBeUndefined();
+    expect('skills' in provider).toBe(false);
+    expect(provider.skills).toBeUndefined();
+  });
+
   it('should create a provider with custom settings', () => {
     const customSettings = {
       pathToClaudeCodeExecutable: '/custom/path/claude',

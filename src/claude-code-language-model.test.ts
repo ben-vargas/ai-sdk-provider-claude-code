@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
 import { getErrorMetadata, isAuthenticationError } from './errors.js';
 import type { Logger } from './types.js';
-import { APICallError, type LanguageModelV4StreamPart } from '@ai-sdk/provider';
+import {
+  APICallError,
+  type LanguageModelV4CallOptions,
+  type LanguageModelV4StreamPart,
+} from '@ai-sdk/provider';
 
 type ExtendedStreamPart = LanguageModelV4StreamPart;
 
@@ -790,7 +794,7 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.effort).toBe('xhigh');
     });
 
-    it("maps portable reasoning 'high' to Claude adaptive thinking effort", async () => {
+    it("maps portable reasoning 'high' to Claude effort without forcing thinking", async () => {
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
           yield {
@@ -809,8 +813,70 @@ describe('ClaudeCodeLanguageModel', () => {
       });
 
       const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
-      expect(call?.options?.thinking).toEqual({ type: 'adaptive' });
+      expect(call?.options?.thinking).toBeUndefined();
       expect(call?.options?.effort).toBe('high');
+    });
+
+    it("maps portable reasoning 'minimal' to effort and surfaces compatibility warning", async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-reasoning-minimal',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      } as unknown as Query; // Minimal Query double; this path only consumes AsyncIterable.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse);
+
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        reasoning: 'minimal',
+      });
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+      expect(call?.options?.thinking).toBeUndefined();
+      expect(call?.options?.effort).toBe('low');
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({
+          type: 'compatibility',
+          feature: 'reasoning',
+          details: expect.stringContaining('reasoning "minimal"'),
+        })
+      );
+    });
+
+    it('warns and ignores unsupported portable reasoning values without throwing', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-reasoning-unsupported',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      } as unknown as Query; // Minimal Query double; this path only consumes AsyncIterable.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse);
+
+      // Simulates an untyped JS caller or future AI SDK value reaching this runtime boundary.
+      const unsupportedReasoning = 'ultra' as unknown as LanguageModelV4CallOptions['reasoning'];
+      const result = await model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        reasoning: unsupportedReasoning,
+      });
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+      expect(call?.options?.thinking).toBeUndefined();
+      expect(call?.options?.effort).toBeUndefined();
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({
+          type: 'unsupported',
+          feature: 'reasoning',
+          details: expect.stringContaining('reasoning "ultra"'),
+        })
+      );
     });
 
     it("maps portable reasoning 'none' to disabled Claude thinking", async () => {
@@ -907,7 +973,7 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.maxThinkingTokens).toBe(333);
     });
 
-    it('warns and ignores invalid claude-code providerOptions reasoning so portable reasoning still applies', async () => {
+    it('warns and ignores invalid claude-code providerOptions reasoning so portable effort still applies', async () => {
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
           yield {
@@ -933,7 +999,7 @@ describe('ClaudeCodeLanguageModel', () => {
       });
 
       const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
-      expect(call?.options?.thinking).toEqual({ type: 'adaptive' });
+      expect(call?.options?.thinking).toBeUndefined();
       expect(call?.options?.effort).toBe('high');
       expect(call?.options?.maxThinkingTokens).toBeUndefined();
       expect(result.warnings).toEqual(

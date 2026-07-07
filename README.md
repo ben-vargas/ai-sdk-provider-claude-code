@@ -134,6 +134,15 @@ This beta ports the provider to AI SDK v7 / `LanguageModelV4` without adding new
 - ESM-only package output; CommonJS `require()` is no longer available
 - Tool failures now use spec `tool-result` parts/events with `isError: true` instead of the provider-specific `tool-error` stream extension
 
+### AI SDK v7 Phase 2 support notes
+
+Phase 2 intentionally keeps optional provider surfaces absent unless the Claude Agent SDK has a durable provider-reference mapping:
+
+- `ProviderV4.files()` is not implemented yet. The AI SDK interface uploads `{ type: 'data' }` or `{ type: 'text' }` bytes and returns a reusable provider reference, but Claude Agent SDK `0.3.197` exposes no direct upload/reuse API for that contract. This provider accepts inline file data in prompts/tool-result replay where Claude Code can represent it, but it does not upload files into durable provider references.
+- `ProviderV4.skills()` is not implemented yet. Claude Code skills are loaded from configured user/project/local skill directories with the existing `skills` setting below; there is no Agent SDK API that uploads a skill bundle and returns an AI SDK provider reference.
+- Workflow serialization is deferred. `@ai-sdk/provider-utils@5.0.5` exposes `WORKFLOW_SERIALIZE`, `WORKFLOW_DESERIALIZE`, and `serializeModelOptions()` for provider model classes in the AI SDK v7 stack, but this provider has not added a serialization contract for provider instances or settings. Callback/function settings such as `canUseTool`, hooks, `logger`, `spawnClaudeCodeProcess`, and `SessionStore` methods are not JSON-serializable and must be recreated by the application.
+- V4 `custom` and `reasoning-file` parts are not emitted as provider output yet. Claude Agent SDK `0.3.197` has no durable reasoning-file artifact output that maps to AI SDK `reasoning-file`; assistant-history `custom` and `reasoning-file` parts have no Claude Code replay representation and are skipped (unknown unsupported content variants still warn).
+
 ### Version 3.0.0 (AI SDK v6 Stable)
 
 This version upgrades to AI SDK v6 stable with updated provider types:
@@ -271,7 +280,7 @@ console.log(output); // Matches the schema above
 - ✅ **No prompt engineering** - Schema enforcement is native to the SDK
 - ✅ **Better performance** - No retry/extraction logic needed
 
-> **Note:** A schema is required for JSON output. Using `responseFormat: { type: 'json' }` without a schema is not supported by Claude Code (matching Anthropic's official provider behavior). An `unsupported-setting` warning will be emitted and the call will be treated as plain text.
+> **Note:** Schema-less JSON output (AI SDK v7 `Output.json()`) is not supported by Claude Code; use `Output.object()` / `Output.array()` / `Output.choice()` with a schema or choices. The provider emits a V4 `unsupported` warning with `feature: 'responseFormat'` and treats the call as plain text.
 >
 > **Current CLI limitation:** Some JSON Schema features can cause the Claude Code CLI to silently fall back to prose (no `structured_output`). The provider mitigates the most common case: `format` keywords (`date-time`, `email`, `uri`, `uuid`, ... — produced by Zod's `.datetime()`, `.email()`, `.url()`, `.uuid()`) are stripped client-side before the schema is sent, with the hint folded into the field's `description` (e.g., `(expected format: email)`). Server-side enforcement of `format` still does not exist in the CLI, but the AI SDK validates `output` against your original Zod schema client-side, so nothing is lost. Complex regex `pattern`s (lookaheads/backreferences) remain unmitigated — `pattern` is passed through untouched because the CLI genuinely rejects some patterns. Keep generation schemas simple and enforce stricter invariants after generation.
 >
@@ -286,6 +295,10 @@ console.log(output); // Matches the schema above
 - 🛑 AbortSignal support
 - 🔧 Tool management (MCP servers, permissions)
 - 🧩 Callbacks (hooks, canUseTool)
+
+## AI SDK v7 app-level features
+
+DevTools and OpenTelemetry/OTel telemetry registration are app-level `ai` package features. This provider exposes standard AI SDK v7 metadata and stream parts for them, but adds no runtime dependencies for DevTools or OTel.
 
 ## Agent SDK Options (Advanced)
 
@@ -356,9 +369,11 @@ const model = claudeCode('sonnet', {
 
 The `OnUserDialog`, `UserDialogRequest`, and `UserDialogResult` types are re-exported. Note that `UserDialogResult.result` is typed `unknown` — the CLI validates it against the dialog kind's own result schema at runtime, and a result that doesn't match (e.g. the wrong shape or an unknown string) is **silently** replaced by the dialog's default (for `'refusal_fallback_prompt'`, `'cancelled'`), so double-check the result values for each kind you handle.
 
-### Permission decisions (`canUseTool` extras)
+### Permission decisions (`canUseTool`, `permissionMode`, and AI SDK `toolApproval`)
 
-SDK 0.3.x enriched the `canUseTool` callback (no provider change needed — these arrive on the existing `options` argument):
+SDK 0.3.x enriched the Claude Agent SDK `canUseTool` callback (no provider change needed — these arrive on the existing `options` argument):
+
+AI SDK v7 `toolApproval` is **not** bridged to Claude Code's internal tool permission system. Use Claude Agent SDK `canUseTool` / `permissionMode` for Claude Code built-in and MCP tools; call-level `toolApproval` on `generateText`/`streamText` applies to app-level AI SDK tools handled by the `ai` package.
 
 - `title` — full permission prompt sentence (e.g. "Claude wants to read foo.txt"); prefer it over reconstructing from `toolName` + input
 - `displayName` — short noun phrase for the tool action (e.g. "Read file"), suitable for button labels
@@ -385,7 +400,7 @@ const model = claudeCode('sonnet', {
 > **Upstream CLI caveats (verified on CLI 2.1.172):**
 >
 > - A `PreToolUse` hook returning `permissionDecision: 'defer'` combined with a `canUseTool` callback fails the tool call **before** `canUseTool` is ever consulted. When `canUseTool` should handle the call, have the hook return no decision (or `'allow'`) instead of `'defer'`.
-> - The `PermissionDenied` hook only fires for CLI-internal auto-mode classifier denials (e.g. `permissionMode: 'auto'`). Denials issued by `canUseTool` do **not** trigger it — they surface via the result message's `permission_denials`, which the provider merges into `providerMetadata['claude-code'].permissionDenials`.
+> - The `PermissionDenied` hook only fires for CLI-internal auto-mode classifier denials (e.g. `permissionMode: 'auto'`). Denials issued by `canUseTool` do **not** trigger it — they surface via the result message's `permission_denials`, which the provider merges into `finalStep.providerMetadata['claude-code'].permissionDenials`.
 
 See [`ClaudeCodeSettings`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/blob/main/src/types.ts) for the full list of supported options (e.g., `allowedTools`, `disallowedTools`, `hooks`, `canUseTool`, `env`, `settingSources`).
 
@@ -600,6 +615,7 @@ Notes:
 
 - Each tool's `execute` runs in your process; string results pass through as MCP text content, everything else is `JSON.stringify`'d, and thrown errors become `isError` tool results instead of crashing the CLI session. Results that cannot be serialized to JSON (e.g. circular objects) also become `isError` results with a serialization message.
 - Tool calls/results surface to the AI SDK as **provider-executed dynamic tool parts** (`tool-call`/`tool-result` with `mcp__<serverName>__<toolName>` names), not as executions of your local `tools` option.
+- AI SDK v7 `toolApproval` is call-level approval for app-level AI SDK tools. Once a tool is exposed to Claude Code as MCP, approve or deny it with Claude Agent SDK controls (`canUseTool`, `permissionMode`, `allowedTools`, `disallowedTools`).
 - Only **Zod object schemas** are supported (`z.object({...})`, the same schema you pass to the AI SDK `tool()` helper). Tools defined with the AI SDK's `jsonSchema()` helper are rejected at creation time because the Agent SDK's `tool()` requires a Zod shape.
 - **Validation scope:** the Agent SDK's `tool()` takes only the schema _shape_ and validates incoming args field-by-field (running field-level validation and transforms, and stripping unknown keys) before `execute` runs. Object-level constructs — `.refine()`/`.superRefine()` (cross-field invariants) and `.strict()`/`.passthrough()`/`.catchall()` (unknown-key modes) — are **not** enforced by the bridge: re-parsing on top of the SDK's output would re-run transforms and reject valid transform schemas (e.g. `z.string().transform(v => v.length)`). Perform cross-field and unknown-key checks inside `execute`.
 - Tools without an `execute` function (client-executed tools) are rejected at creation time.
@@ -609,7 +625,7 @@ See [examples/ai-sdk-tools.ts](examples/ai-sdk-tools.ts) for a runnable example 
 
 ## Session Management
 
-Every request runs as a Claude Code session, persisted under `~/.claude/projects/` by default and identified by `providerMetadata['claude-code'].sessionId`. Sessions can be resumed (`resume`), forked (`forkSession`), pinned to a deterministic ID (`sessionId`), titled (`title`), or kept ephemeral (`persistSession: false`). The provider also re-exports the SDK's session lifecycle helpers — `listSessions()`, `getSessionMessages()`, `forkSession()`, `getSessionInfo()`, `renameSession()`, `tagSession()`, `deleteSession()`, `listSubagents()`, `getSubagentMessages()`, `importSessionToStore()`, and `foldSessionSummary()` — for managing stored sessions outside of a query.
+Every request runs as a Claude Code session, persisted under `~/.claude/projects/` by default. In AI SDK v7, read the session ID from `finalStep.providerMetadata['claude-code'].sessionId` (`result.finalStep` for `generateText`, or `await stream.finalStep` for `streamText`). Sessions can be resumed (`resume`), forked (`forkSession`), pinned to a deterministic ID (`sessionId`), titled (`title`), or kept ephemeral (`persistSession: false`). The provider also re-exports the SDK's session lifecycle helpers — `listSessions()`, `getSessionMessages()`, `forkSession()`, `getSessionInfo()`, `renameSession()`, `tagSession()`, `deleteSession()`, `listSubagents()`, `getSubagentMessages()`, `importSessionToStore()`, and `foldSessionSummary()` — for managing stored sessions outside of a query.
 
 See [docs/sessions.md](docs/sessions.md) for the full guide (settings vs helpers, disk storage vs custom `SessionStore`, `title` vs `renameSession()`), and [examples/session-management.ts](examples/session-management.ts) for a runnable walkthrough (`npm run example:sessions`).
 
@@ -638,7 +654,7 @@ for await (const message of warm.query('Summarize the latest deploy log.')) {
 // await using warm = ...  // WarmQuery is AsyncDisposable
 ```
 
-All requests made through this provider report timing in `providerMetadata['claude-code']` (`ttftMs`, `ttftStreamMs`, `timeToRequestMs`), plus `warmSpareClaimed` when the SDK reports whether the query was served from a pre-warmed spare process (surfaced as `true` or `false` whenever reported) — use these to measure whether warm-start plumbing is worth it for your workload.
+All requests made through this provider report timing in `finalStep.providerMetadata['claude-code']` (`ttftMs`, `ttftStreamMs`, `timeToRequestMs`), plus `warmSpareClaimed` when the SDK reports whether the query was served from a pre-warmed spare process (surfaced as `true` or `false` whenever reported; use `await stream.finalStep` after `streamText`) — use these to measure whether warm-start plumbing is worth it for your workload.
 
 ## Limitations
 
@@ -682,7 +698,7 @@ This enables UIs to build hierarchical views of nested agent execution.
 
 ## Provider Metadata
 
-Each response exposes Claude Code metadata under `providerMetadata['claude-code']` (on the `doGenerate` result, and on the `finish` stream event for `doStream`):
+Each response exposes Claude Code metadata under the final step's `providerMetadata['claude-code']` (AI SDK v7: `result.finalStep.providerMetadata`, or `await stream.finalStep` for `streamText`; internally this comes from the provider `doGenerate` result or `finish` stream event):
 
 | Field                     | Type      | Description                                                                                                                                                                                                                                             |
 | ------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

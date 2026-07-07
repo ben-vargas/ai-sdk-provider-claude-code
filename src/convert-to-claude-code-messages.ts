@@ -3,6 +3,7 @@ import type {
   LanguageModelV4Prompt,
   LanguageModelV4ToolResultOutput,
 } from '@ai-sdk/provider';
+import { detectMediaType } from '@ai-sdk/provider-utils';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 type SDKUserContentPart = SDKUserMessage['message']['content'][number];
@@ -105,6 +106,27 @@ function isConcreteImageMimeType(mediaType: string): boolean {
   return normalized.startsWith('image/') && !normalized.endsWith('/*');
 }
 
+function resolveImageMediaType(mediaType: string, data?: Uint8Array | string): string | undefined {
+  const normalizedMediaType = normalizeMediaType(mediaType);
+
+  if (isConcreteImageMimeType(normalizedMediaType)) {
+    return normalizedMediaType;
+  }
+
+  if ((normalizedMediaType === 'image' || normalizedMediaType === 'image/*') && data) {
+    try {
+      const detectedMediaType = detectMediaType({ data, topLevelType: 'image' });
+      if (detectedMediaType && isConcreteImageMimeType(detectedMediaType)) {
+        return detectedMediaType;
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}
+
 function createImageContent(mediaType: string, data: string): SDKUserContentPart | undefined {
   const normalizedType = normalizeMediaType(mediaType);
   const trimmedData = data.trim().replace(/\s+/g, '');
@@ -123,6 +145,17 @@ function createImageContent(mediaType: string, data: string): SDKUserContentPart
   } as SDKUserContentPart;
 }
 
+function resolveStringImageMediaType(
+  mediaType: string,
+  data: string,
+  fallbackMimeType?: string
+): string | undefined {
+  return (
+    resolveImageMediaType(mediaType, data) ??
+    (fallbackMimeType ? resolveImageMediaType(fallbackMimeType, data) : undefined)
+  );
+}
+
 function parseStringImage(
   value: string,
   fallbackMimeType?: string
@@ -136,21 +169,26 @@ function parseStringImage(
   const dataUrlMatch = trimmed.match(/^data:([^;]+);base64,(.+)$/i);
   if (dataUrlMatch) {
     const [, mediaType, data] = dataUrlMatch;
-    const content = createImageContent(mediaType, data);
+    const resolvedMediaType = resolveStringImageMediaType(mediaType, data, fallbackMimeType);
+    const content = resolvedMediaType ? createImageContent(resolvedMediaType, data) : undefined;
     return content ? { content } : { warning: IMAGE_CONVERSION_WARNING };
   }
 
   const base64Match = trimmed.match(/^base64:([^,]+),(.+)$/i);
   if (base64Match) {
     const [, explicitMimeType, data] = base64Match;
-    const content = createImageContent(explicitMimeType, data);
+    const resolvedMediaType = resolveStringImageMediaType(explicitMimeType, data, fallbackMimeType);
+    const content = resolvedMediaType ? createImageContent(resolvedMediaType, data) : undefined;
     return content ? { content } : { warning: IMAGE_CONVERSION_WARNING };
   }
 
   if (fallbackMimeType) {
-    const content = createImageContent(fallbackMimeType, trimmed);
-    if (content) {
-      return { content };
+    const resolvedMediaType = resolveImageMediaType(fallbackMimeType, trimmed);
+    if (resolvedMediaType) {
+      const content = createImageContent(resolvedMediaType, trimmed);
+      if (content) {
+        return { content };
+      }
     }
   }
 
@@ -160,7 +198,9 @@ function parseStringImage(
 function convertBinaryToBase64(data: Uint8Array | ArrayBuffer): string | undefined {
   if (typeof Buffer !== 'undefined') {
     const buffer =
-      data instanceof Uint8Array ? Buffer.from(data) : Buffer.from(new Uint8Array(data));
+      data instanceof Uint8Array
+        ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+        : Buffer.from(data);
     return buffer.toString('base64');
   }
 
@@ -192,11 +232,16 @@ function parseFilePart(part: FileLikePart): FileConversionResult {
         return parseStringImage(fileData.data, mediaType);
       }
 
+      const resolvedMediaType = resolveImageMediaType(mediaType, fileData.data);
+      if (!resolvedMediaType) {
+        return { warning: IMAGE_CONVERSION_WARNING };
+      }
+
       const base64 = convertBinaryToBase64(fileData.data);
       if (!base64) {
         return { warning: IMAGE_CONVERSION_WARNING };
       }
-      const content = createImageContent(mediaType, base64);
+      const content = createImageContent(resolvedMediaType, base64);
       return content ? { content } : { warning: IMAGE_CONVERSION_WARNING };
     }
 

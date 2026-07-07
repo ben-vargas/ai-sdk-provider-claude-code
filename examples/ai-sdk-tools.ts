@@ -11,7 +11,9 @@
  * with `allowedTools` using the mcp__<serverName>__<toolName> naming.
  *
  * Tool calls/results surface as provider-executed dynamic tool parts on both
- * paths: in generateText steps content and in the streamText stream.
+ * paths: in generateText steps content and in the streamText stream. AI SDK v7
+ * `toolApproval` is not bridged to these MCP-routed tools; use Claude Agent SDK
+ * `canUseTool` / `permissionMode` or `allowedTools` for Claude Code permissions.
  */
 
 import { z } from 'zod';
@@ -110,6 +112,9 @@ async function main() {
   console.log('- createAiSdkMcpServer runs your execute functions in-process via MCP');
   console.log('- Only Zod object schemas are supported (no jsonSchema() tools)');
   console.log('- Allow the tools explicitly: mcp__<serverName>__<toolName>');
+  console.log(
+    '- AI SDK toolApproval is not bridged here; use canUseTool/permissionMode for Claude Code permissions'
+  );
   console.log('- Tool-call/tool-result parts surface in generateText steps and when streaming');
 }
 

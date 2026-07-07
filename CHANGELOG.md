@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Claude Agent SDK pin held at `0.3.197`** - Keeps the exact `@anthropic-ai/claude-agent-sdk` pin on `0.3.197` because upstream releases `0.3.198` through `0.3.202` have a published `.d.ts` defect.
 - **Tool-error stream extension removed** - Failed tool executions now use the AI SDK spec shape: `tool-result` with `isError: true`, replacing the provider-specific `tool-error` stream extension.
 - **AI SDK v6 users** - Stay on the maintained 3.x line (`latest` / `ai-sdk-v6` dist-tags, `ai-sdk-v6` maintenance branch) until adopting the v7 beta.
+- **Phase 2 optional-provider feasibility documented** - `ProviderV4.files()` and `ProviderV4.skills()` remain absent because Claude Agent SDK `0.3.197` has no direct durable provider-reference upload API for files or skill bundles; the README distinguishes inline file data from reusable provider-reference uploads.
+- **Workflow serialization deferred** - Documents that `@ai-sdk/provider-utils@5.0.5` exposes `WORKFLOW_SERIALIZE`, `WORKFLOW_DESERIALIZE`, and `serializeModelOptions()` for provider model classes, while this provider defers serialization for provider instances/settings; callback and function settings must be reconstructed by applications.
+- **Custom/reasoning-file feasibility documented** - Documents current V4 behavior for `custom` and `reasoning-file` parts: assistant-history replay skips parts Claude Code cannot represent, and the provider does not emit custom output or durable reasoning-file artifacts yet.
 
 ### Fixed
 

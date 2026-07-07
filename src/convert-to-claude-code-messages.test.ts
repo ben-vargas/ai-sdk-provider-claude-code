@@ -307,6 +307,12 @@ describe('convertToClaudeCodeMessages', () => {
                   filename: 'rows.csv',
                   data: { type: 'url', url: new URL('https://example.com/rows.csv') },
                 },
+                {
+                  type: 'file',
+                  mediaType: 'application/octet-stream',
+                  filename: 'secret.bin',
+                  data: { type: 'reference', reference: { claude: 'file-secret' } },
+                },
               ],
             },
           },
@@ -318,6 +324,10 @@ describe('convertToClaudeCodeMessages', () => {
 
     expect(result.messagesPrompt).toBe(
       'Tool Result (reader): Report:\nfile body\n[File report.pdf: application/pdf]\n[File rows.csv: text/csv: https://example.com/rows.csv]'
+    );
+    expect(result.messagesPrompt).not.toContain('secret.bin');
+    expect(result.warnings).toContain(
+      'Provider file references are not supported by this provider; supply inline file data.'
     );
   });
 
