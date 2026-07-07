@@ -16,6 +16,21 @@ import { claudeCode } from '../dist/index.js';
 //   systemPrompt: { type: 'preset', preset: 'claude_code' }
 //   settingSources: ['user', 'project', 'local']
 
+type TimeoutController = AbortController & {
+  clearTimeout: () => void;
+};
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isAbortLikeError(error: unknown, extraMessageFragments: string[] = []): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === 'AbortError' ||
+      extraMessageFragments.some((fragment) => error.message.includes(fragment)))
+  );
+}
 async function withTimeout() {
   console.log('🕐 Example 1: Custom timeout for long task\n');
 
@@ -34,10 +49,10 @@ async function withTimeout() {
 
     clearTimeout(timeoutId); // Clear timeout on success
     console.log('Response:', text);
-  } catch (error: any) {
+  } catch (error: unknown) {
     clearTimeout(timeoutId);
 
-    if (error.name === 'AbortError' || error.message?.includes('timeout')) {
+    if (isAbortLikeError(error, ['timeout'])) {
       console.log('❌ Request timed out after 5 minutes');
       console.log('Consider breaking the task into smaller parts');
     } else {
@@ -67,12 +82,9 @@ async function withUserCancellation() {
     });
 
     console.log('Response:', text);
-  } catch (error: any) {
-    // Check for various abort/cancel error patterns
-    const isAborted =
-      error.name === 'AbortError' ||
-      error.message?.includes('cancelled') ||
-      error.message?.includes('aborted');
+  } catch (error: unknown) {
+    // Check for various abort/cancel error patterns.
+    const isAborted = isAbortLikeError(error, ['cancelled', 'aborted']);
 
     if (isAborted) {
       console.log('✅ Request successfully cancelled by user');
@@ -98,10 +110,10 @@ async function withGracefulTimeout() {
 
       clearTimeout(timeoutId);
       return { success: true, text };
-    } catch (error: any) {
+    } catch (error: unknown) {
       clearTimeout(timeoutId);
 
-      if (error.name === 'AbortError') {
+      if (isAbortLikeError(error)) {
         return { success: false, timeout: true };
       }
       throw error;
@@ -127,16 +139,15 @@ async function withGracefulTimeout() {
 }
 
 // Helper function for creating timeout controllers
-function createTimeoutController(ms: number, reason = 'Request timeout'): AbortController {
+function createTimeoutController(ms: number, reason = 'Request timeout'): TimeoutController {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort(new Error(`${reason} after ${ms}ms`));
   }, ms);
 
-  // Add cleanup method
-  (controller as any).clearTimeout = () => clearTimeout(timeoutId);
-
-  return controller;
+  return Object.assign(controller, {
+    clearTimeout: () => clearTimeout(timeoutId),
+  });
 }
 
 async function withHelper() {
@@ -151,10 +162,10 @@ async function withHelper() {
       abortSignal: controller.signal,
     });
 
-    (controller as any).clearTimeout();
+    controller.clearTimeout();
     console.log('Analysis complete:', text);
-  } catch (error: any) {
-    console.error('Analysis failed:', error.message);
+  } catch (error: unknown) {
+    console.error('Analysis failed:', getErrorMessage(error));
   }
 }
 

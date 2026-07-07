@@ -15,9 +15,13 @@ import { createClaudeCode } from '../dist/index.js';
 //   settingSources: ['user', 'project', 'local']
 
 // PreToolUse hook: log and allow
-const preToolHook = async (input: any) => {
-  if (input.hook_event_name === 'PreToolUse') {
-    console.log(`🔧 About to run tool: ${input.tool_name}`);
+const preToolHook = async (input: unknown) => {
+  const hookInput = typeof input === 'object' && input !== null ? input : {};
+  const hookEventName = 'hook_event_name' in hookInput ? hookInput.hook_event_name : undefined;
+  const toolName = 'tool_name' in hookInput ? String(hookInput.tool_name) : 'unknown';
+
+  if (hookEventName === 'PreToolUse') {
+    console.log(`🔧 About to run tool: ${toolName}`);
     return {
       continue: true,
       hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' },
@@ -27,9 +31,13 @@ const preToolHook = async (input: any) => {
 };
 
 // PostToolUse hook: log after tool completes
-const postToolHook = async (input: any) => {
-  if (input.hook_event_name === 'PostToolUse') {
-    console.log(`✅ Tool completed: ${input.tool_name}`);
+const postToolHook = async (input: unknown) => {
+  const hookInput = typeof input === 'object' && input !== null ? input : {};
+  const hookEventName = 'hook_event_name' in hookInput ? hookInput.hook_event_name : undefined;
+  const toolName = 'tool_name' in hookInput ? String(hookInput.tool_name) : 'unknown';
+
+  if (hookEventName === 'PostToolUse') {
+    console.log(`✅ Tool completed: ${toolName}`);
   }
   return { continue: true };
 };

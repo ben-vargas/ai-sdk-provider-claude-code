@@ -69,8 +69,9 @@ async function main() {
     console.log('         Some constraints (e.g., format: "email"/"uri", complex regex) can');
     console.log('         cause the CLI to fall back to prose with no structured_output.');
     console.log('         See examples/structured-output-repro.ts for details.');
-  } catch (error: any) {
-    console.log('   ❌ Error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log('   ❌ Error:', message);
   }
 
   // 3. Tool/Function calling - not supported

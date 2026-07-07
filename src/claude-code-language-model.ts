@@ -412,11 +412,11 @@ function applySupersede(
     guard === 'truthy'
       ? Boolean(supersedes && supersedes.length > 0)
       : Array.isArray(supersedes) && supersedes.length > 0;
-  if (!triggered) {
+  if (!triggered || supersedes === undefined) {
     return false;
   }
-  logger.debug(`[claude-code] Assistant message supersedes ${supersedes!.length} prior message(s)`);
-  evict(new Set<string>(supersedes!));
+  logger.debug(`[claude-code] Assistant message supersedes ${supersedes.length} prior message(s)`);
+  evict(new Set<string>(supersedes));
   return true;
 }
 

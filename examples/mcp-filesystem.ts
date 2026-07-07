@@ -15,13 +15,11 @@
 
 import { streamText } from 'ai';
 import { createClaudeCode } from '../dist/index.js';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 async function main() {
   const verboseLogs = process.env.CLAUDE_EXAMPLE_VERBOSE === '1';
-  const examplesDir = dirname(fileURLToPath(import.meta.url));
   const requestedDir = process.argv[2];
   const targetDir = resolve(requestedDir ?? process.cwd());
 

@@ -146,13 +146,15 @@ async function testErrorHandling() {
 
     console.error('❌ Expected error but got success');
     throw new Error('Error handling test failed - should have thrown an error');
-  } catch (error: any) {
-    if (error.message?.includes('not found') || error.message?.includes('ENOENT')) {
-      console.log('✅ Error handled correctly:', error.message);
-    } else if (error.message?.includes('Error handling test failed')) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (message.includes('not found') || message.includes('ENOENT')) {
+      console.log('✅ Error handled correctly:', message);
+    } else if (message.includes('Error handling test failed')) {
       throw error; // Re-throw our test failure
     } else {
-      console.log('✅ Got error (different than expected):', error.message);
+      console.log('✅ Got error (different than expected):', message);
     }
   }
 }
