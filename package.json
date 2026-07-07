@@ -106,6 +106,7 @@
     "node": ">=18"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "ai-sdk-v6"
   }
 }
