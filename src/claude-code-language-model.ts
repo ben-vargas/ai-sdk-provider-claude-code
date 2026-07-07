@@ -4473,12 +4473,35 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                       );
                   state = {
                     name: toolName,
-                    inputStarted: true,
-                    inputClosed: true,
+                    inputStarted: false,
+                    inputClosed: false,
                     callEmitted: false,
                     parentToolCallId: errorResolvedParentId,
                   };
                   toolStates.set(error.id, state);
+                  // Synthesize input lifecycle to preserve ordering when no prior tool_use was seen
+                  if (!state.inputStarted) {
+                    controller.enqueue({
+                      type: 'tool-input-start',
+                      id: error.id,
+                      toolName,
+                      providerExecuted: true,
+                      dynamic: true, // V4 field: indicates tool is provider-defined
+                      providerMetadata: {
+                        'claude-code': {
+                          parentToolCallId: state.parentToolCallId ?? null,
+                        },
+                      },
+                    });
+                    state.inputStarted = true;
+                  }
+                  if (!state.inputClosed) {
+                    controller.enqueue({
+                      type: 'tool-input-end',
+                      id: error.id,
+                    });
+                    state.inputClosed = true;
+                  }
                 }
 
                 // Ensure tool-call is emitted before the errored tool-result

@@ -65,7 +65,7 @@ npx tsx examples/tool-streaming.ts
 npx tsx examples/images.ts /absolute/path/to/image.png
 ```
 
-**Key concepts**: Local image bytes, AI SDK v7 file parts, `streamingInput: 'always'` for image prompts, multimodal prompts
+**Key concepts**: Local image bytes, AI SDK v7 file parts, default `streamingInput: 'auto'` image streaming, multimodal prompts
 
 ### 5. Conversation History (`conversation-history.ts`)
 

@@ -405,7 +405,8 @@ export function convertToClaudeCodeMessages(prompt: LanguageModelV4Prompt): {
   for (const message of prompt) {
     switch (message.role) {
       case 'system':
-        systemPrompt = message.content;
+        systemPrompt =
+          systemPrompt === undefined ? message.content : `${systemPrompt}\n\n${message.content}`;
         if (message.content.trim().length > 0) {
           addSegment(message.content);
         } else {
@@ -451,7 +452,7 @@ export function convertToClaudeCodeMessages(prompt: LanguageModelV4Prompt): {
         const segmentIndex = addSegment(textContent ? `Human: ${textContent}` : '');
 
         if (textContent) {
-          messages.push(textContent);
+          messages.push(`Human: ${textContent}`);
         }
 
         for (const imagePart of imageParts) {
@@ -578,17 +579,12 @@ export function convertToClaudeCodeMessages(prompt: LanguageModelV4Prompt): {
   }
 
   if (messages.length > 0) {
-    // Format messages
+    // Messages are role-tagged at the point they are collected. Do not infer
+    // role from text prefixes: user-authored content may legitimately start
+    // with "Assistant:" or "Tool Result".
     const formattedMessages: string[] = [];
     for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      // Check if this is a user or assistant message based on content
-      if (msg.startsWith('Assistant:') || msg.startsWith('Tool Result')) {
-        formattedMessages.push(msg);
-      } else {
-        // User messages
-        formattedMessages.push(`Human: ${msg}`);
-      }
+      formattedMessages.push(messages[i]);
     }
 
     // Combine system prompt with messages

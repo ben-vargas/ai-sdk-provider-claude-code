@@ -46,7 +46,7 @@ async function main() {
   const imagePart = toImageFilePart(filePath);
 
   const result = streamText({
-    model: claudeCode('opus', { streamingInput: 'always' }),
+    model: claudeCode('opus'),
     messages: [
       {
         role: 'user',

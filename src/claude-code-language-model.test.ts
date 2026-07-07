@@ -6936,6 +6936,111 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(resultIndex).toBeGreaterThan(callIndex);
     });
 
+    it('synthesizes orphaned tool_error lifecycle with parent metadata', async () => {
+      const parentToolId = 'toolu_parent_task';
+      const toolUseId = 'toolu_orphan_error';
+      const toolName = 'Read';
+      const errorMessage = 'ENOENT: missing.txt';
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage, void, unknown> {
+          // The Claude Agent SDK emits provider tool_error blocks that are narrower
+          // than the public Anthropic MessageParam content union.
+          yield {
+            type: 'user',
+            parent_tool_use_id: parentToolId,
+            message: {
+              role: 'user',
+              content: [
+                {
+                  type: 'tool_error',
+                  tool_use_id: toolUseId,
+                  name: toolName,
+                  error: errorMessage,
+                },
+              ],
+            },
+          } as unknown as SDKMessage;
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'orphan-error-session',
+            usage: { input_tokens: 5, output_tokens: 1 },
+          } as unknown as SDKMessage;
+        },
+      };
+
+      // Minimal Query double; this path only consumes AsyncIterable.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      const { stream } = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Run' }] }],
+      });
+
+      const events: ExtendedStreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+      }
+
+      const orphanEvents = events.filter(
+        (event) =>
+          (event.type === 'tool-input-start' && event.id === toolUseId) ||
+          (event.type === 'tool-input-end' && event.id === toolUseId) ||
+          (event.type === 'tool-call' && event.toolCallId === toolUseId) ||
+          (event.type === 'tool-result' && event.toolCallId === toolUseId)
+      );
+
+      expect(orphanEvents.map((event) => event.type)).toEqual([
+        'tool-input-start',
+        'tool-input-end',
+        'tool-call',
+        'tool-result',
+      ]);
+      expect(orphanEvents[0]).toMatchObject({
+        type: 'tool-input-start',
+        id: toolUseId,
+        toolName,
+        providerExecuted: true,
+        dynamic: true,
+        providerMetadata: {
+          'claude-code': {
+            parentToolCallId: parentToolId,
+          },
+        },
+      });
+      expect(orphanEvents[2]).toMatchObject({
+        type: 'tool-call',
+        toolCallId: toolUseId,
+        toolName,
+        input: '',
+        providerExecuted: true,
+        dynamic: true,
+        providerMetadata: {
+          'claude-code': {
+            rawInput: '',
+            parentToolCallId: parentToolId,
+          },
+        },
+      });
+      expect(orphanEvents[3]).toMatchObject({
+        type: 'tool-result',
+        toolCallId: toolUseId,
+        toolName,
+        result: errorMessage,
+        isError: true,
+        dynamic: true,
+        providerMetadata: {
+          'claude-code': {
+            rawError: errorMessage,
+            parentToolCallId: parentToolId,
+          },
+        },
+      });
+    });
+
     it('does not emit delta for non-prefix input updates', async () => {
       const toolUseId = 'toolu_nonprefix';
       const toolName = 'TestTool';
