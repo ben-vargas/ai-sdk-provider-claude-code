@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, ai-sdk-v7]
   pull_request:
-    branches: [main]
+    branches: [main, ai-sdk-v7]
 
 jobs:
   test:
