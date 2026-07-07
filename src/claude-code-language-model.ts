@@ -4578,12 +4578,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 'stop_reason' in message
                   ? ((message as Record<string, unknown>).stop_reason as string | null | undefined)
                   : undefined;
-              const finishReason: LanguageModelV4FinishReason = mapClaudeCodeFinishReason(
+              let finishReason: LanguageModelV4FinishReason = mapClaudeCodeFinishReason(
                 message.subtype,
                 stopReason
               );
-
-              this.logger.debug(`[claude-code] Stream finish reason: ${finishReason.unified}`);
 
               // Store session ID in the model instance
               this.setSessionId(message.session_id);
@@ -4591,6 +4589,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
               // Use structured output from SDK if available (native JSON schema support)
               const structuredOutput =
                 'structured_output' in message ? message.structured_output : undefined;
+              if (structuredOutput !== undefined && finishReason.unified === 'tool-calls') {
+                // Claude Code implements native structured output via an internal
+                // StructuredOutput tool. AI SDK v7 only treats completed object
+                // generation as parseable when the final step stops, so normalize
+                // successful structured output while preserving the raw CLI reason.
+                finishReason = { unified: 'stop', raw: finishReason.raw };
+              }
+
+              this.logger.debug(`[claude-code] Stream finish reason: ${finishReason.unified}`);
 
               // Check if we've already streamed JSON via input_json_delta
               const alreadyStreamedJson =

@@ -92,7 +92,9 @@ Do not call list_directory on "/" and do not access any path outside ${pathInstr
         console.log(`TOOL CALL: ${part.toolName} (${part.toolCallId})`);
         break;
       case 'tool-result':
-        console.log(`TOOL RESULT: ${part.toolName} (${part.toolCallId})`);
+        console.log(
+          `${'isError' in part && part.isError === true ? 'TOOL ERROR' : 'TOOL RESULT'}: ${part.toolName} (${part.toolCallId})`
+        );
         {
           const output = part.output;
           if (output !== undefined) {
@@ -101,9 +103,6 @@ Do not call list_directory on "/" and do not access any path outside ${pathInstr
             console.log('(no structured tool output payload)');
           }
         }
-        break;
-      case 'tool-error':
-        console.error(`TOOL ERROR: ${part.toolName} -> ${part.error}`);
         break;
       case 'text-delta': {
         process.stdout.write(part.text);

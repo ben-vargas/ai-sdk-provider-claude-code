@@ -86,13 +86,14 @@ async function main() {
       case 'tool-call':
         console.log(`🚀 tool-call → ${part.toolName} (${part.toolCallId})`);
         break;
-      case 'tool-error':
-        console.error('⚠️ tool-error:', part.toolName, part.error);
-        break;
-      case 'tool-result':
-        console.log(`📄 tool-result ← ${part.toolName} (${part.toolCallId})`);
+      case 'tool-result': {
+        const isError = 'isError' in part && part.isError === true;
+        console.log(
+          `${isError ? '⚠️ tool-result error' : '📄 tool-result'} ← ${part.toolName} (${part.toolCallId})`
+        );
         console.dir(part.output, { depth: 4 });
         break;
+      }
       case 'text-start':
         console.log('💬 text-start');
         break;

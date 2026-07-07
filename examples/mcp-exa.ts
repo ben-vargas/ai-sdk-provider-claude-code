@@ -86,7 +86,10 @@ async function main() {
         console.log(`TOOL CALL: ${part.toolName} (${part.toolCallId})`);
         break;
       case 'tool-result': {
-        console.log(`TOOL RESULT: ${part.toolName} (${part.toolCallId})`);
+        const isError = 'isError' in part && part.isError === true;
+        console.log(
+          `${isError ? 'TOOL ERROR' : 'TOOL RESULT'}: ${part.toolName} (${part.toolCallId})`
+        );
         const output = part.output;
         const text =
           typeof output === 'string'
@@ -102,9 +105,6 @@ async function main() {
         console.log(text);
         break;
       }
-      case 'tool-error':
-        console.error(`TOOL ERROR: ${part.toolName} -> ${part.error}`);
-        break;
       case 'text-delta': {
         process.stdout.write(part.text);
         break;

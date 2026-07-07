@@ -5727,6 +5727,49 @@ describe('ClaudeCodeLanguageModel', () => {
       });
     });
 
+    it('should emit structured_output JSON as stop when the internal StructuredOutput tool stops the CLI', async () => {
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'json-structured-tool-session',
+            structured_output: { answer: 42 },
+            usage: {
+              input_tokens: 12,
+              output_tokens: 4,
+            },
+            stop_reason: 'tool_use',
+          };
+        },
+      };
+
+      // Query double implements only the AsyncIterable surface consumed by this test.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Return JSON' }] }],
+        responseFormat: { type: 'json', schema: { type: 'object' } },
+      });
+
+      const chunks: LanguageModelV4StreamPart[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const streamedText = chunks
+        .filter((chunk) => chunk.type === 'text-delta')
+        .map((chunk) => chunk.delta)
+        .join('');
+      expect(streamedText).toBe('{"answer":42}');
+      expect(chunks.find((chunk) => chunk.type === 'finish')).toMatchObject({
+        finishReason: { unified: 'stop', raw: 'tool_use' },
+      });
+    });
+
     it('should handle structured output error from SDK', async () => {
       // SDK 0.1.45+ returns error_max_structured_output_retries when it can't produce valid output
       const mockResponse = {
