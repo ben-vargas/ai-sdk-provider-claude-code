@@ -55,7 +55,7 @@ npx tsx examples/streaming.ts
 npx tsx examples/tool-streaming.ts
 ```
 
-**Key concepts**: Tool streaming, provider-executed tools, detailed stream inspection
+**Key concepts**: AI SDK tool stream parts, provider-executed Claude Code tools, `canUseTool` allow callback, detailed stream inspection
 
 ### 4. Images (`images.ts`)
 
@@ -65,7 +65,7 @@ npx tsx examples/tool-streaming.ts
 npx tsx examples/images.ts /absolute/path/to/image.png
 ```
 
-**Key concepts**: Image data URLs, streaming prerequisite, multimodal prompts
+**Key concepts**: Local image bytes, AI SDK v7 file parts, `streamingInput: 'always'` for image prompts, multimodal prompts
 
 ### 5. Conversation History (`conversation-history.ts`)
 
@@ -173,13 +173,13 @@ npx tsx examples/abort-signal.ts
 
 ### 14. Hooks & Callbacks (`hooks-callbacks.ts`)
 
-**Purpose**: Use lifecycle hooks and dynamic permission callbacks.
+**Purpose**: Use lifecycle hooks to observe and allow Claude Code built-in tool use.
 
 ```bash
 npx tsx examples/hooks-callbacks.ts
 ```
 
-**Key concepts**: PreToolUse/PostToolUse hooks, canUseTool callback, permission control, event lifecycle
+**Key concepts**: PreToolUse/PostToolUse hooks, hook-specific `permissionDecision`, built-in tool lifecycle logging
 
 ### 15. SDK Tools (`sdk-tools-callbacks.ts`)
 
@@ -205,7 +205,7 @@ Optional: pass a specific directory to scope filesystem access:
 npx tsx examples/mcp-filesystem.ts /absolute/path/to/inspect
 ```
 
-**Key concepts**: `mcpServers` stdio config, external MCP transport, MCP tool allowlists, read-only MCP permissions
+**Key concepts**: `mcpServers` stdio config, external MCP transport, MCP tool allowlists, read-only MCP permissions, streamed MCP tool parts
 
 Tip: examples run with concise logs by default. Set `CLAUDE_EXAMPLE_VERBOSE=1` to see low-level provider debug traces.
 
@@ -387,13 +387,13 @@ npx tsx examples/warm-start.ts
 
 ### 32. Context Usage (`context-usage.ts`)
 
-**Purpose**: Read the session's context-window usage via `onQueryCreated` + a Stop hook calling `query.getContextUsage()`, including why a late call fails.
+**Purpose**: Read the session's context-window usage via `onQueryControllerCreated` + `streamingInput: 'always'` + a Stop hook calling `controller.getContextUsage()`, including why a late call fails.
 
 ```bash
 npx tsx examples/context-usage.ts
 ```
 
-**Key concepts**: `onQueryCreated`, Stop hook timing (query must still be live), `getContextUsage()` breakdown (used/remaining tokens per category)
+**Key concepts**: `onQueryControllerCreated`, `ClaudeCodeQueryController`, `streamingInput: 'always'` for Agent SDK control requests, Stop hook timing (query must still be live), `getContextUsage()` breakdown (used/remaining tokens per category), `controller.rawQuery` escape hatch
 
 ## Prompt Suggestions
 
@@ -553,8 +553,8 @@ const result4 = streamText({
 | --------------------------- | ---------------------- | ----------------------- |
 | basic-usage                 | Getting started        | Simple text generation  |
 | streaming                   | Responsive UIs         | Real-time output        |
-| tool-streaming              | Tool observability     | Tool event inspection   |
-| images                      | Multimodal prompts     | Image input support     |
+| tool-streaming              | Tool observability     | Tool stream parts       |
+| images                      | Multimodal prompts     | Image file parts        |
 | conversation-history        | Chatbots               | Context preservation    |
 | logging-default             | Default behavior       | Warn/error only         |
 | logging-verbose             | Development/debugging  | All log levels          |
@@ -570,7 +570,7 @@ const result4 = streamText({
 | skills-option               | Skills enablement      | `skills` allowlist      |
 | session-management          | Session lifecycle      | Resume, fork, inspect   |
 | warm-start                  | Latency optimization   | startup()/WarmQuery     |
-| context-usage               | Context monitoring     | getContextUsage()       |
+| context-usage               | Context monitoring     | Live Query controller   |
 | prompt-suggestions          | Next-prompt prediction | onPromptSuggestion      |
 | long-running-tasks          | Complex reasoning      | Timeout handling        |
 | generate-object             | Object generation      | Core patterns & nesting |
@@ -586,7 +586,7 @@ const result4 = streamText({
 3. **Logging**: `logging-default.ts` → `logging-verbose.ts` → `logging-custom-logger.ts` → `logging-disabled.ts`
 4. **Object Generation**: `generate-object.ts` → `generate-object-constraints.ts` → `stream-object.ts`
 5. **Advanced**: `custom-config.ts` → `tool-management.ts` → `skills-management.ts` → `skills-option.ts` → `hooks-callbacks.ts` → `sdk-tools-callbacks.ts` → `ai-sdk-tools.ts` → `session-management.ts` → `long-running-tasks.ts`
-6. **SDK 0.3.x features**: `warm-start.ts` → `context-usage.ts` → `prompt-suggestions.ts`
+6. **SDK 0.3.x / Phase 3 features**: `warm-start.ts` → `context-usage.ts` → `prompt-suggestions.ts` (plus the callback/controller settings documented in the main README)
 7. **Testing/Troubleshooting**: Run `integration-test.ts`, then `structured-output-repro.ts` and `limitations.ts` if behavior seems off
 
 For more details, see the main [README](../README.md).

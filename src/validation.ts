@@ -170,6 +170,30 @@ export const claudeCodeSettingsSchema = z
     forwardSubagentText: z.boolean().optional(),
     agentProgressSummaries: z.boolean().optional(),
     includeHookEvents: z.boolean().optional(),
+    onSdkMessage: z
+      .any()
+      .refine((v) => v === undefined || typeof v === 'function', {
+        message: 'onSdkMessage must be a function',
+      })
+      .optional(),
+    onTaskEvent: z
+      .any()
+      .refine((v) => v === undefined || typeof v === 'function', {
+        message: 'onTaskEvent must be a function',
+      })
+      .optional(),
+    onHookEvent: z
+      .any()
+      .refine((v) => v === undefined || typeof v === 'function', {
+        message: 'onHookEvent must be a function',
+      })
+      .optional(),
+    onMcpStatusChange: z
+      .any()
+      .refine((v) => v === undefined || typeof v === 'function', {
+        message: 'onMcpStatusChange must be a function',
+      })
+      .optional(),
     taskBudget: z.object({ total: z.number().positive() }).strict().optional(),
     sessionStore: z
       .any()
@@ -198,6 +222,12 @@ export const claudeCodeSettingsSchema = z
       .any()
       .refine((v) => v === undefined || typeof v === 'function', {
         message: 'onUserDialog must be a function',
+      })
+      .optional(),
+    onElicitation: z
+      .any()
+      .refine((v) => v === undefined || typeof v === 'function', {
+        message: 'onElicitation must be a function',
       })
       .optional(),
     supportedDialogKinds: z.array(z.string()).optional(),
@@ -250,6 +280,7 @@ export const claudeCodeSettingsSchema = z
     logger: z.union([z.literal(false), loggerFunctionSchema]).optional(),
     env: z.record(z.string(), z.string().optional()).optional(),
     additionalDirectories: z.array(z.string()).optional(),
+    agent: z.string().optional(),
     agents: z
       .record(
         z.string(),
@@ -299,6 +330,12 @@ export const claudeCodeSettingsSchema = z
       .any()
       .refine((val) => val === undefined || typeof val === 'function', {
         message: 'onQueryCreated must be a function',
+      })
+      .optional(),
+    onQueryControllerCreated: z
+      .any()
+      .refine((val) => val === undefined || typeof val === 'function', {
+        message: 'onQueryControllerCreated must be a function',
       })
       .optional(),
     onStreamStart: z

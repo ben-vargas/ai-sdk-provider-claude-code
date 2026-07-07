@@ -37,7 +37,16 @@ export type {
  * Settings for configuring Claude Code behavior.
  * Includes options for customizing the CLI execution, permissions, and tool usage.
  */
-export type { ClaudeCodeSettings, Logger, MessageInjector } from './types.js';
+export type {
+  ClaudeCodeSettings,
+  Logger,
+  MessageInjector,
+  ClaudeCodeTaskEvent,
+  ClaudeCodeHookEvent,
+  ClaudeCodeMcpStatusEvent,
+  ClaudeCodeQueryController,
+} from './types.js';
+export { createClaudeCodeQueryController } from './query-controller.js';
 
 // Convenience re-exports from the SDK for custom tools and hooks
 export {
@@ -52,6 +61,8 @@ export {
   // Error class thrown by the SDK on abort (relevant on the standalone
   // startup()/WarmQuery path, where SDK errors propagate unwrapped)
   AbortError,
+  resolveSettings,
+  filterEscalatingDefaultMode,
 } from '@anthropic-ai/claude-agent-sdk';
 
 /**
@@ -181,6 +192,7 @@ export type {
   PermissionDecisionClassification,
   // Blocking user-dialog callback (`onUserDialog` setting) and its request/result shapes
   OnUserDialog,
+  OnElicitation,
   UserDialogRequest,
   UserDialogResult,
   // Pre-warmed query handle returned by startup()
@@ -207,6 +219,11 @@ export type {
   EffortLevel,
   // Settings object shape for the `settings`/`managedSettings` options
   Settings,
+  ResolvedSettings,
+  ResolveSettingsOptions,
+  ResolvedSettingSource,
+  ProvenanceEntry,
+  PolicySettingsOrigin,
   // Per-tool configuration for built-in tools (`toolConfig` option)
   ToolConfig,
   // Session transcript mirroring (alpha `sessionStore` options)
@@ -238,6 +255,14 @@ export type {
   // Query.streamInput()/WarmQuery.query() (AsyncIterable<SDKUserMessage>)
   SDKMessage,
   SDKUserMessage,
+  SDKFilesPersistedEvent,
+  SDKHookStartedMessage,
+  SDKHookProgressMessage,
+  SDKHookResponseMessage,
+  SDKTaskStartedMessage,
+  SDKTaskProgressMessage,
+  SDKTaskUpdatedMessage,
+  SDKTaskNotificationMessage,
   // Query method result shapes
   SlashCommand,
   ModelInfo,
@@ -246,12 +271,14 @@ export type {
   McpServerStatus,
   RewindFilesResult,
   McpSetServersResult,
+  SDKControlGetContextUsageResponse,
   // Beta feature identifiers (`betas` setting values)
   SdkBeta,
   // Plugin configuration (`plugins` setting values)
   SdkPluginConfig,
   // Sandbox configuration (`sandbox` setting) and its nested shapes
   SandboxSettings,
+  SandboxCredentialsConfig,
   SandboxNetworkConfig,
   SandboxFilesystemConfig,
   SandboxIgnoreViolations,

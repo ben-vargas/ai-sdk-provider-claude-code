@@ -19,16 +19,25 @@ import {
   isCustomReasoning,
   mapReasoningToProviderEffort,
 } from '@ai-sdk/provider-utils';
-import type { ClaudeCodeSettings, Logger, MessageInjector } from './types.js';
+import type {
+  ClaudeCodeHookEvent,
+  ClaudeCodeMcpStatusEvent,
+  ClaudeCodeSettings,
+  ClaudeCodeTaskEvent,
+  Logger,
+  MessageInjector,
+} from './types.js';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
 import { createAPICallError, createAuthenticationError, createTimeoutError } from './errors.js';
 import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
 import { validateModelId, validatePrompt, validateSessionId, isBlankResume } from './validation.js';
 import { sanitizeJsonSchemaForOutputFormat } from './sanitize-json-schema.js';
 import { getLogger, createVerboseLogger } from './logger.js';
+import { createClaudeCodeQueryController } from './query-controller.js';
 
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
 import type {
+  Query,
   SDKMessage,
   SDKUserMessage,
   SDKPartialAssistantMessage,
@@ -275,7 +284,7 @@ function getBaseProcessEnv(): Record<string, string> {
 }
 
 const STREAMING_FEATURE_WARNING =
-  "Claude Agent SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
+  "Claude Agent SDK image input requires streaming input. Set `streamingInput: 'auto'` or `streamingInput: 'always'`; `streamingInput: 'off'` disables streaming image input.";
 
 const SDK_OPTIONS_BLOCKLIST = new Set(['model', 'abortController', 'prompt', 'outputFormat']);
 
@@ -431,20 +440,20 @@ function buildRetractionEvictor(
  *
  * - 'notification'           REPL-style text notifications (key/priority/timeout)
  * - 'status'                 spinner status ('requesting'/'compacting' and compact_result/compact_error)
- * - 'task_updated'           background-task state patches
  * - 'session_state_changed'  idle/running/requires_action transitions
  * - 'commands_changed'       mid-session slash-command list refresh
  * - 'memory_recall'          surfaced memory files/synthesis
  * - 'plugin_install'         headless plugin installation progress
+ * - 'informational'          generic host/UI text banners
  */
 const INFORMATIONAL_SYSTEM_SUBTYPES = new Set<string>([
   'notification',
   'status',
-  'task_updated',
   'session_state_changed',
   'commands_changed',
   'memory_recall',
   'plugin_install',
+  'informational',
 ]);
 
 /** Narrowed union of SDK system messages (init, api_retry, permission_denied, ...). */
@@ -460,12 +469,32 @@ type PermissionDenialRecord = {
   toolName: string;
   toolUseId?: string;
   reason?: string;
+  agentId?: string;
+  decisionReasonType?: string;
+  raw?: JSONValue;
+};
+
+type ResultPermissionDenialRecord = {
+  tool_name: string;
+  tool_use_id: string;
+  tool_input?: Record<string, unknown>;
+  agent_id?: string;
+  agentId?: string;
+  decision_reason_type?: string;
+  decisionReasonType?: string;
+  decision_reason?: string;
+  reason?: string;
+  message?: string;
+  [key: string]: unknown;
 };
 
 /** Mutable per-request counters surfaced in providerMetadata at finish. */
 type RequestMetadataTracking = {
   apiRetries: number;
   permissionDenials: PermissionDenialRecord[];
+  taskEvents: ClaudeCodeTaskEvent[];
+  hookEvents: ClaudeCodeHookEvent[];
+  mcpServers?: ClaudeCodeMcpStatusEvent['servers'];
   /**
    * SessionStore transcript-mirror append failures (`mirror_error`). Each is a
    * DROPPED transcript batch after retries — surfaced (warn-logged + here) so
@@ -521,6 +550,56 @@ const CLAUDE_EFFORT_LEVELS = new Set<ClaudeEffortLevel>(['low', 'medium', 'high'
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function toJsonSafeValue(value: unknown): JSONValue | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? undefined : (JSON.parse(serialized) as JSONValue);
+  } catch {
+    return String(value) as JSONValue;
+  }
+}
+
+function deepFreezeJsonValue<T extends JSONValue>(value: T): T {
+  if (Array.isArray(value)) {
+    for (const nested of value) {
+      deepFreezeJsonValue(nested);
+    }
+    return Object.freeze(value) as unknown as T;
+  }
+
+  if (!isObjectRecord(value)) {
+    return value;
+  }
+
+  const objectValue = value as JSONObject;
+  for (const nested of Object.values(objectValue)) {
+    if (nested !== undefined) {
+      deepFreezeJsonValue(nested);
+    }
+  }
+  return Object.freeze(objectValue) as unknown as T;
+}
+
+function toJsonSafeClone<T>(value: T): T {
+  const clone = toJsonSafeValue(value);
+  if (clone === undefined) {
+    return undefined as T;
+  }
+  return clone as unknown as T;
+}
+
+function toImmutableJsonSafeClone<T>(value: T): T {
+  const clone = toJsonSafeValue(value);
+  if (clone === undefined) {
+    return undefined as T;
+  }
+  return deepFreezeJsonValue(clone) as unknown as T;
 }
 
 function hasValidThinkingDisplay(value: unknown): boolean {
@@ -1156,6 +1235,98 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
     return undefined;
   }
 
+  private invokeObservabilityCallback<T>(
+    callbackName: string,
+    callback: ((value: T) => void | PromiseLike<void>) | undefined,
+    value: T
+  ): void {
+    if (!callback) {
+      return;
+    }
+
+    const logError = (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`[claude-code] ${callbackName} callback failed; ignoring error: ${message}`);
+      if (error instanceof Error && error.stack) {
+        this.logger.debug(`[claude-code] ${callbackName} callback stack: ${error.stack}`);
+      }
+    };
+
+    try {
+      const result = (callback as (value: T) => unknown)(value);
+      if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+        void Promise.resolve(result).catch(logError);
+      }
+    } catch (error: unknown) {
+      logError(error);
+    }
+  }
+
+  private invokeSdkMessageCallback(message: SDKMessage): void {
+    const onSdkMessage = this.settings.onSdkMessage;
+    if (onSdkMessage === undefined) {
+      return;
+    }
+
+    this.invokeObservabilityCallback(
+      'onSdkMessage',
+      onSdkMessage,
+      toImmutableJsonSafeClone(message)
+    );
+  }
+
+  private notifyQueryCreated(response: Query): void {
+    this.settings.onQueryCreated?.(response);
+    const onQueryControllerCreated = this.settings.onQueryControllerCreated;
+    if (onQueryControllerCreated !== undefined) {
+      this.invokeObservabilityCallback(
+        'onQueryControllerCreated',
+        onQueryControllerCreated,
+        createClaudeCodeQueryController(response)
+      );
+    }
+  }
+
+  private trackTaskEvent(event: ClaudeCodeTaskEvent, tracking: RequestMetadataTracking): void {
+    tracking.taskEvents.push(toJsonSafeClone(event));
+    const onTaskEvent = this.settings.onTaskEvent;
+    if (onTaskEvent !== undefined) {
+      this.invokeObservabilityCallback('onTaskEvent', onTaskEvent, toImmutableJsonSafeClone(event));
+    }
+  }
+
+  private trackHookEvent(event: ClaudeCodeHookEvent, tracking: RequestMetadataTracking): void {
+    tracking.hookEvents.push(toJsonSafeClone(event));
+    const onHookEvent = this.settings.onHookEvent;
+    if (onHookEvent !== undefined) {
+      this.invokeObservabilityCallback('onHookEvent', onHookEvent, toImmutableJsonSafeClone(event));
+    }
+  }
+
+  private trackMcpStatusFromInit(
+    message: Extract<SDKSystemMessageVariant, { subtype: 'init' }>,
+    tracking: RequestMetadataTracking
+  ): void {
+    const servers = message.mcp_servers as unknown as ClaudeCodeMcpStatusEvent['servers'];
+    tracking.mcpServers = toJsonSafeClone(servers);
+
+    const statusEvent: ClaudeCodeMcpStatusEvent = {
+      subtype: 'init',
+      sessionId: message.session_id,
+      uuid: message.uuid,
+      servers,
+      raw: message,
+    };
+    const onMcpStatusChange = this.settings.onMcpStatusChange;
+    if (onMcpStatusChange !== undefined) {
+      this.invokeObservabilityCallback(
+        'onMcpStatusChange',
+        onMcpStatusChange,
+        toImmutableJsonSafeClone(statusEvent)
+      );
+    }
+  }
+
   /**
    * Single source of truth for the CLI's `--session-id` exclusivity rule.
    *
@@ -1713,6 +1884,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
       tools: this.settings.tools,
       mcpServers: this.settings.mcpServers,
       canUseTool: this.settings.canUseTool,
+      onElicitation: this.settings.onElicitation,
+      agent: this.settings.agent,
     };
     Object.assign(
       opts,
@@ -2171,16 +2344,159 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
         break;
       case 'permission_denied': {
         const reason = message.decision_reason ?? message.message;
+        const raw = toJsonSafeValue(message);
         tracking.permissionDenials.push({
           toolName: message.tool_name,
           toolUseId: message.tool_use_id,
+          ...(message.agent_id !== undefined && { agentId: message.agent_id }),
+          ...(message.decision_reason_type !== undefined && {
+            decisionReasonType: message.decision_reason_type,
+          }),
           ...(reason !== undefined && { reason }),
+          ...(raw !== undefined && { raw }),
         });
         this.logger.warn(
           `[claude-code] Permission denied - Tool: ${message.tool_name}${reason ? `, Reason: ${reason}` : ''}`
         );
         break;
       }
+      case 'task_started':
+        this.trackTaskEvent(
+          {
+            subtype: 'task_started',
+            taskId: message.task_id,
+            ...(message.tool_use_id !== undefined && { toolUseId: message.tool_use_id }),
+            description: message.description,
+            ...(message.subagent_type !== undefined && { subagentType: message.subagent_type }),
+            ...(message.task_type !== undefined && { taskType: message.task_type }),
+            ...(message.workflow_name !== undefined && { workflowName: message.workflow_name }),
+            ...(message.prompt !== undefined && { prompt: message.prompt }),
+            ...(message.skip_transcript !== undefined && {
+              skipTranscript: message.skip_transcript,
+            }),
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(`[claude-code] Task started - ID: ${message.task_id}`);
+        break;
+      case 'task_progress':
+        this.trackTaskEvent(
+          {
+            subtype: 'task_progress',
+            taskId: message.task_id,
+            ...(message.tool_use_id !== undefined && { toolUseId: message.tool_use_id }),
+            description: message.description,
+            ...(message.subagent_type !== undefined && { subagentType: message.subagent_type }),
+            usage: message.usage,
+            ...(message.last_tool_name !== undefined && { lastToolName: message.last_tool_name }),
+            ...(message.summary !== undefined && { summary: message.summary }),
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(`[claude-code] Task progress - ID: ${message.task_id}`);
+        break;
+      case 'task_updated':
+        this.trackTaskEvent(
+          {
+            subtype: 'task_updated',
+            taskId: message.task_id,
+            patch: message.patch,
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(`[claude-code] Task updated - ID: ${message.task_id}`);
+        break;
+      case 'task_notification':
+        this.trackTaskEvent(
+          {
+            subtype: 'task_notification',
+            taskId: message.task_id,
+            ...(message.tool_use_id !== undefined && { toolUseId: message.tool_use_id }),
+            status: message.status,
+            outputFile: message.output_file,
+            summary: message.summary,
+            ...(message.usage !== undefined && { usage: message.usage }),
+            ...(message.skip_transcript !== undefined && {
+              skipTranscript: message.skip_transcript,
+            }),
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(
+          `[claude-code] Task notification - ID: ${message.task_id}, Status: ${message.status}`
+        );
+        break;
+      case 'hook_started':
+        this.trackHookEvent(
+          {
+            subtype: 'hook_started',
+            hookId: message.hook_id,
+            hookName: message.hook_name,
+            hookEvent: message.hook_event,
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(
+          `[claude-code] Hook started - ID: ${message.hook_id}, Event: ${message.hook_event}`
+        );
+        break;
+      case 'hook_progress':
+        this.trackHookEvent(
+          {
+            subtype: 'hook_progress',
+            hookId: message.hook_id,
+            hookName: message.hook_name,
+            hookEvent: message.hook_event,
+            stdout: message.stdout,
+            stderr: message.stderr,
+            output: message.output,
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(
+          `[claude-code] Hook progress - ID: ${message.hook_id}, Event: ${message.hook_event}`
+        );
+        break;
+      case 'hook_response':
+        this.trackHookEvent(
+          {
+            subtype: 'hook_response',
+            hookId: message.hook_id,
+            hookName: message.hook_name,
+            hookEvent: message.hook_event,
+            output: message.output,
+            stdout: message.stdout,
+            stderr: message.stderr,
+            ...(message.exit_code !== undefined && { exitCode: message.exit_code }),
+            outcome: message.outcome,
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(
+          `[claude-code] Hook response - ID: ${message.hook_id}, Outcome: ${message.outcome}`
+        );
+        break;
       case 'mirror_error': {
         // SessionStore.append() failed after retries and the transcript batch
         // was DROPPED. Not informational: the response still succeeds, so warn
@@ -2245,19 +2561,47 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
    * `tool_use_id`.
    */
   private mergeResultPermissionDenials(
-    message: { permission_denials?: Array<{ tool_name: string; tool_use_id: string }> },
+    message: { permission_denials?: ResultPermissionDenialRecord[] },
     tracking: RequestMetadataTracking
   ): void {
     for (const denial of message.permission_denials ?? []) {
       const alreadyTracked = tracking.permissionDenials.some(
         (d) => d.toolUseId !== undefined && d.toolUseId === denial.tool_use_id
       );
-      if (!alreadyTracked) {
-        tracking.permissionDenials.push({
-          toolName: denial.tool_name,
-          toolUseId: denial.tool_use_id,
-        });
+      if (alreadyTracked) {
+        continue;
       }
+
+      const agentId =
+        typeof denial.agent_id === 'string'
+          ? denial.agent_id
+          : typeof denial.agentId === 'string'
+            ? denial.agentId
+            : undefined;
+      const decisionReasonType =
+        typeof denial.decision_reason_type === 'string'
+          ? denial.decision_reason_type
+          : typeof denial.decisionReasonType === 'string'
+            ? denial.decisionReasonType
+            : undefined;
+      const reason =
+        typeof denial.decision_reason === 'string'
+          ? denial.decision_reason
+          : typeof denial.reason === 'string'
+            ? denial.reason
+            : typeof denial.message === 'string'
+              ? denial.message
+              : undefined;
+      const raw = toJsonSafeValue(denial);
+
+      tracking.permissionDenials.push({
+        toolName: denial.tool_name,
+        toolUseId: denial.tool_use_id,
+        ...(agentId !== undefined && { agentId }),
+        ...(decisionReasonType !== undefined && { decisionReasonType }),
+        ...(reason !== undefined && { reason }),
+        ...(raw !== undefined && { raw }),
+      });
     }
   }
 
@@ -2267,14 +2611,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
    * suggestion arrives AFTER the result message; the SDK emits at most one
    * per turn, so stop once it is delivered, and a timeout closes the
    * iterator (tearing down the subprocess) if the CLI lingers after the
-   * result without emitting one. Advances the response's own generator, so
-   * the caller's surrounding loop resumes to a finished iterator.
+   * result without emitting one. Drained messages still pass through the
+   * generic raw SDK callback before prompt-specific handling.
    */
   private async drainPromptSuggestion(
-    response: AsyncIterable<SDKMessage>,
-    onPromptSuggestion: (suggestion: string) => void
+    iterator: AsyncIterator<SDKMessage>,
+    onPromptSuggestion?: (suggestion: string) => void
   ): Promise<void> {
-    const iterator = response[Symbol.asyncIterator]();
     let drainTimer: ReturnType<typeof setTimeout> | undefined;
     const drainTimeout = new Promise<'timeout'>((resolve) => {
       drainTimer = setTimeout(
@@ -2298,8 +2641,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
         }
         const trailingMessage = winner.value;
         this.logger.debug(`[claude-code] Post-result message type: ${trailingMessage.type}`);
+        this.invokeSdkMessageCallback(trailingMessage);
         if (trailingMessage.type === 'prompt_suggestion') {
-          onPromptSuggestion(trailingMessage.suggestion);
+          onPromptSuggestion?.(trailingMessage.suggestion);
           // At most one prompt_suggestion per turn (SDK contract).
           void iterator.return?.().catch(() => {});
           break;
@@ -2477,6 +2821,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
       permissionDenials: [],
       mirrorErrors: [],
       estimatedThinkingTokens: 0,
+      taskEvents: [],
+      hookEvents: [],
     };
     const warnings: SharedV4Warning[] = this.generateAllWarnings(
       options,
@@ -2499,7 +2845,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
     const effectivePermissionPromptToolName =
       sdkOptions?.permissionPromptToolName ?? this.settings.permissionPromptToolName;
     const wantsStreamInput =
-      modeSetting === 'always' || (modeSetting === 'auto' && !!effectiveCanUseTool);
+      modeSetting === 'always' ||
+      (modeSetting === 'auto' && (!!effectiveCanUseTool || hasImageParts));
 
     if (!wantsStreamInput && hasImageParts) {
       warnings.push({
@@ -2540,9 +2887,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
         options: queryOptions,
       });
 
-      // Invoke onQueryCreated callback to expose Query object for advanced features
-      // like mid-stream message injection via query.streamInput()
-      this.settings.onQueryCreated?.(response);
+      // Expose the raw SDK Query and the safe controller wrapper for runtime controls.
+      this.notifyQueryCreated(response);
 
       let lastAssistantErrorKind: string | undefined;
       // for-await's implicit cleanup AWAITS iterator.return(), which never
@@ -2562,6 +2908,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
       };
       for await (const message of detachableResponse) {
         this.logger.debug(`[claude-code] Received message type: ${message.type}`);
+        this.invokeSdkMessageCallback(message);
         if (message.type === 'assistant') {
           // SDK 0.3.x delivers API error kinds (e.g. 'overloaded',
           // 'model_not_found') as a structured field on assistant messages.
@@ -2841,23 +3188,26 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
           finishReason = mapClaudeCodeFinishReason(message.subtype, stopReason);
           this.logger.debug(`[claude-code] Finish reason: ${finishReason.unified}`);
 
-          // The result message is terminal. Mirror doStream: when a
-          // prompt_suggestion callback is registered, drain for it with the
-          // shared bounded drain (10s timeout, stops at the first suggestion);
-          // otherwise stop iterating immediately so a lingering CLI cannot
-          // block generateText after the result is already available.
-          // Drain for the post-result prompt_suggestion only when suggestions
-          // can actually be emitted. The SDK enables them when promptSuggestions
-          // is absent OR true and disables them only when explicitly false, so
-          // skip the (up to 10s) drain solely in the explicit-false case.
+          // The result message is terminal. When either the prompt_suggestion callback
+          // or the raw SDK message callback is registered, drain for the post-result
+          // prompt_suggestion with the shared bounded drain (10s timeout, stops at the
+          // first suggestion). Otherwise stop iterating immediately so a lingering CLI
+          // cannot block generateText after the result is already available. The SDK
+          // enables prompt suggestions when promptSuggestions is absent OR true and
+          // disables them only when explicitly false.
           const effectivePromptSuggestions =
             sdkOptions?.promptSuggestions ?? this.settings.promptSuggestions;
-          if (this.settings.onPromptSuggestion && effectivePromptSuggestions !== false) {
-            await this.drainPromptSuggestion(response, this.settings.onPromptSuggestion);
+          const shouldDrainPromptSuggestion =
+            effectivePromptSuggestions !== false &&
+            (this.settings.onPromptSuggestion !== undefined ||
+              this.settings.onSdkMessage !== undefined);
+          if (shouldDrainPromptSuggestion) {
+            await this.drainPromptSuggestion(sdkIterator, this.settings.onPromptSuggestion);
           }
           break;
         } else if (message.type === 'system' && message.subtype === 'init') {
           this.logMcpConnectionIssues(message.mcp_servers);
+          this.trackMcpStatusFromInit(message, metadataTracking);
           this.setSessionId(message.session_id);
           this.logger.info(`[claude-code] Session initialized: ${message.session_id}`);
         } else if (message.type === 'system') {
@@ -2999,6 +3349,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
           ...(metadataTracking.permissionDenials.length > 0 && {
             permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
           }),
+          ...(metadataTracking.taskEvents.length > 0 && {
+            taskEvents: metadataTracking.taskEvents as unknown as JSONValue,
+          }),
+          ...(metadataTracking.hookEvents.length > 0 && {
+            hookEvents: metadataTracking.hookEvents as unknown as JSONValue,
+          }),
+          ...(metadataTracking.mcpServers !== undefined && {
+            mcpServers: metadataTracking.mcpServers as unknown as JSONValue,
+          }),
           ...(metadataTracking.mirrorErrors.length > 0 && {
             mirrorErrors: metadataTracking.mirrorErrors as unknown as JSONValue,
           }),
@@ -3084,7 +3443,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
     const effectivePermissionPromptToolName =
       sdkOptions?.permissionPromptToolName ?? this.settings.permissionPromptToolName;
     const wantsStreamInput =
-      modeSetting === 'always' || (modeSetting === 'auto' && !!effectiveCanUseTool);
+      modeSetting === 'always' ||
+      (modeSetting === 'auto' && (!!effectiveCanUseTool || hasImageParts));
 
     if (!wantsStreamInput && hasImageParts) {
       warnings.push({
@@ -3181,6 +3541,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
           permissionDenials: [],
           mirrorErrors: [],
           estimatedThinkingTokens: 0,
+          taskEvents: [],
+          hookEvents: [],
         };
 
         // Content block streaming: Map block indices to tool IDs and accumulated JSON
@@ -3286,12 +3648,22 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
             options: queryOptions,
           });
 
-          // Invoke onQueryCreated callback to expose Query object for advanced features
-          // like mid-stream message injection via query.streamInput()
-          this.settings.onQueryCreated?.(response);
+          // Expose the raw SDK Query and the safe controller wrapper for runtime controls.
+          this.notifyQueryCreated(response);
 
-          for await (const message of response) {
+          const sdkIterator = response[Symbol.asyncIterator]();
+          const detachableResponse: AsyncIterable<SDKMessage> = {
+            [Symbol.asyncIterator]: () => ({
+              next: () => sdkIterator.next(),
+              return: () => {
+                void sdkIterator.return?.().catch(() => {});
+                return Promise.resolve({ done: true as const, value: undefined });
+              },
+            }),
+          };
+          for await (const message of detachableResponse) {
             this.logger.debug(`[claude-code] Stream received message type: ${message.type}`);
+            this.invokeSdkMessageCallback(message);
             if (options.includeRawChunks) {
               controller.enqueue({ type: 'raw', rawValue: message });
             }
@@ -4333,6 +4705,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                     ...(metadataTracking.permissionDenials.length > 0 && {
                       permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
                     }),
+                    ...(metadataTracking.taskEvents.length > 0 && {
+                      taskEvents: metadataTracking.taskEvents as unknown as JSONValue,
+                    }),
+                    ...(metadataTracking.hookEvents.length > 0 && {
+                      hookEvents: metadataTracking.hookEvents as unknown as JSONValue,
+                    }),
+                    ...(metadataTracking.mcpServers !== undefined && {
+                      mcpServers: metadataTracking.mcpServers as unknown as JSONValue,
+                    }),
                     ...(metadataTracking.mirrorErrors.length > 0 && {
                       mirrorErrors: metadataTracking.mirrorErrors as unknown as JSONValue,
                     }),
@@ -4352,25 +4733,27 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
 
               // The prompt_suggestion message (promptSuggestions: true) arrives
               // AFTER the result message, so the AI SDK stream has already
-              // finished above. Drain the remaining SDK messages to deliver it
-              // via the callback; only done when a callback is registered so
-              // everyone else keeps the immediate return-on-result behavior.
-              // The drain is bounded: the SDK emits at most one prompt_suggestion
-              // per turn, so stop once it is delivered, and a timeout closes the
-              // iterator (tearing down the subprocess) if the CLI lingers after
-              // the result without emitting one.
-              // Drain for the post-result prompt_suggestion only when
-              // suggestions can be emitted (promptSuggestions absent or true;
-              // disabled only when explicitly false), skipping the up-to-10s
-              // drain in the explicit-false case.
+              // finished above. Drain the remaining SDK messages only when the
+              // prompt_suggestion callback or raw SDK message callback is registered;
+              // everyone else keeps the immediate return-on-result behavior. The
+              // drain is bounded: the SDK emits at most one prompt_suggestion per turn,
+              // so stop once it is delivered, and a timeout closes the iterator
+              // (tearing down the subprocess) if the CLI lingers after the result
+              // without emitting one. The SDK enables suggestions when promptSuggestions
+              // is absent OR true and disables them only when explicitly false.
               const effectivePromptSuggestions =
                 sdkOptions?.promptSuggestions ?? this.settings.promptSuggestions;
-              if (this.settings.onPromptSuggestion && effectivePromptSuggestions !== false) {
-                await this.drainPromptSuggestion(response, this.settings.onPromptSuggestion);
+              const shouldDrainPromptSuggestion =
+                effectivePromptSuggestions !== false &&
+                (this.settings.onPromptSuggestion !== undefined ||
+                  this.settings.onSdkMessage !== undefined);
+              if (shouldDrainPromptSuggestion) {
+                await this.drainPromptSuggestion(sdkIterator, this.settings.onPromptSuggestion);
               }
               return;
             } else if (message.type === 'system' && message.subtype === 'init') {
               this.logMcpConnectionIssues(message.mcp_servers);
+              this.trackMcpStatusFromInit(message, metadataTracking);
 
               // Store session ID for future use
               this.setSessionId(message.session_id);
@@ -4457,6 +4840,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                   }),
                   ...(metadataTracking.permissionDenials.length > 0 && {
                     permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
+                  }),
+                  ...(metadataTracking.taskEvents.length > 0 && {
+                    taskEvents: metadataTracking.taskEvents as unknown as JSONValue,
+                  }),
+                  ...(metadataTracking.hookEvents.length > 0 && {
+                    hookEvents: metadataTracking.hookEvents as unknown as JSONValue,
+                  }),
+                  ...(metadataTracking.mcpServers !== undefined && {
+                    mcpServers: metadataTracking.mcpServers as unknown as JSONValue,
                   }),
                   ...(metadataTracking.mirrorErrors.length > 0 && {
                     mirrorErrors: metadataTracking.mirrorErrors as unknown as JSONValue,

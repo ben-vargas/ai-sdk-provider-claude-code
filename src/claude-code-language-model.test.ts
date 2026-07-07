@@ -2,7 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
 import { getErrorMetadata, isAuthenticationError } from './errors.js';
-import type { Logger } from './types.js';
+import type {
+  ClaudeCodeHookEvent,
+  ClaudeCodeMcpStatusEvent,
+  ClaudeCodeQueryController,
+  ClaudeCodeTaskEvent,
+  Logger,
+} from './types.js';
 import {
   APICallError,
   type LanguageModelV4CallOptions,
@@ -27,10 +33,36 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
 
 // Import the mocked module to get typed references
 import { query as mockQuery, AbortError as MockAbortError } from '@anthropic-ai/claude-agent-sdk';
-import type { Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  McpServerStatus,
+  OnElicitation,
+  Query,
+  SDKMessage,
+  SDKUserMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 
-const STREAMING_WARNING_MESSAGE =
-  "Claude Agent SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
+const IMAGE_STREAMING_WARNING_MESSAGE_FRAGMENT =
+  'Claude Agent SDK image input requires streaming input';
+
+function attemptObserverMutation(mutator: () => void): void {
+  try {
+    mutator();
+  } catch {
+    return;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function expectJsonRoundTrip(value: unknown): void {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new Error('Expected value to be JSON serializable');
+  }
+  expect(JSON.parse(serialized)).toEqual(value);
+}
 
 describe('ClaudeCodeLanguageModel', () => {
   let model: ClaudeCodeLanguageModel;
@@ -72,6 +104,97 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(onQueryCreated).toHaveBeenCalledWith(mockResponse);
     });
 
+    it('invokes onQueryControllerCreated with a controller without replacing raw onQueryCreated', async () => {
+      const interrupt = vi.fn(async () => {});
+      const onQueryCreated = vi.fn();
+      let capturedController: ClaudeCodeQueryController | undefined;
+      const onQueryControllerCreated = vi.fn((controller: ClaudeCodeQueryController) => {
+        capturedController = controller;
+      });
+      const modelWithHooks = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onQueryCreated, onQueryControllerCreated },
+      });
+
+      const mockResponse = {
+        interrupt,
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-onquery-controller',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      // Query double implements only the AsyncIterable/control surface exercised here.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      await modelWithHooks.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      });
+
+      expect(onQueryCreated).toHaveBeenCalledWith(mockResponse);
+      expect(onQueryControllerCreated).toHaveBeenCalledWith(
+        expect.objectContaining({ rawQuery: mockResponse })
+      );
+      if (capturedController === undefined) {
+        throw new Error('Expected onQueryControllerCreated to receive a controller');
+      }
+      await capturedController.interrupt();
+      expect(interrupt).toHaveBeenCalledTimes(1);
+    });
+
+    it('isolates onQueryControllerCreated throw/reject failures in doGenerate', async () => {
+      const failures = [
+        {
+          label: 'sync throw',
+          callback: () => {
+            throw new Error('controller observer failed');
+          },
+        },
+        {
+          label: 'async reject',
+          callback: async () => {
+            throw new Error('controller observer rejected');
+          },
+        },
+      ];
+
+      for (const failure of failures) {
+        const warn = vi.fn();
+        const logger: Logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+        const onQueryControllerCreated = vi.fn(failure.callback);
+        const modelWithHook = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: { logger, onQueryControllerCreated },
+        });
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: `gen-controller-isolation-${failure.label}`,
+              usage: { input_tokens: 0, output_tokens: 0 },
+            };
+          },
+        } as unknown as Query; // Minimal Query double; this path only consumes AsyncIterable.
+        vi.mocked(mockQuery).mockReturnValue(mockResponse);
+
+        const result = await modelWithHook.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        });
+
+        expect(result.finishReason.unified).toBe('stop');
+        expect(onQueryControllerCreated).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => {
+          expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining('onQueryControllerCreated callback failed')
+          );
+        });
+      }
+    });
+
     it('uses AsyncIterable prompt when streamingInput auto and canUseTool provided', async () => {
       const hooks = {} as any;
       const canUseTool = async () => ({ behavior: 'allow', updatedInput: {} });
@@ -102,10 +225,10 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(typeof call.prompt?.[Symbol.asyncIterator]).toBe('function');
     });
 
-    it('includes image content in streaming prompts when enabled', async () => {
+    it('auto-enables streaming input for image prompts when streamingInput is auto', async () => {
       const modelWithImages = new ClaudeCodeLanguageModel({
         id: 'sonnet',
-        settings: { streamingInput: 'always' } as any,
+        settings: { streamingInput: 'auto' },
       });
 
       const mockResponse = {
@@ -119,7 +242,9 @@ describe('ClaudeCodeLanguageModel', () => {
         },
       };
 
-      let promptContentPromise: Promise<any> | undefined;
+      let promptContentPromise:
+        | Promise<SDKUserMessage['message']['content'] | undefined>
+        | undefined;
 
       const isAsyncIterable = (value: unknown): value is AsyncIterable<unknown> => {
         return Boolean(
@@ -137,10 +262,11 @@ describe('ClaudeCodeLanguageModel', () => {
             .next()
             .then(({ value }) => (value as SDKUserMessage | undefined)?.message?.content);
         }
-        return mockResponse as any;
+        return mockResponse as unknown as Query;
       });
 
-      await modelWithImages.doGenerate({
+      // The tagged file prompt shape is the behavior under test.
+      const result = await modelWithImages.doGenerate({
         prompt: [
           {
             role: 'user',
@@ -154,21 +280,28 @@ describe('ClaudeCodeLanguageModel', () => {
             ],
           },
         ],
-      } as any);
+      } as unknown as LanguageModelV4CallOptions);
 
       expect(promptContentPromise).toBeDefined();
-      const content = await promptContentPromise!;
-      expect(Array.isArray(content)).toBe(true);
-      expect(content).toHaveLength(2);
-      expect(content[0]).toEqual({ type: 'text', text: 'Human: Describe this image.' });
-      expect(content[1]).toEqual({
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: 'image/png',
-          data: 'aGVsbG8=',
+      const content = await promptContentPromise;
+      expect(content).toEqual([
+        { type: 'text', text: 'Human: Describe this image.' },
+        {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: 'image/png',
+            data: 'aGVsbG8=',
+          },
         },
-      });
+      ]);
+      expect(result.warnings).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message: expect.stringContaining(IMAGE_STREAMING_WARNING_MESSAGE_FRAGMENT),
+          }),
+        ])
+      );
     });
 
     it('keeps string prompt when streamingInput off even if canUseTool provided', async () => {
@@ -718,6 +851,38 @@ describe('ClaudeCodeLanguageModel', () => {
       const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
       expect(call?.options?.onUserDialog).toBe(onUserDialog);
       expect(call?.options?.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
+    });
+
+    it('should pass through onElicitation and agent to SDK query options', async () => {
+      const onElicitation: OnElicitation = async () => ({ action: 'decline' });
+      const modelWithAgentOptions = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          agent: 'reviewer',
+          onElicitation,
+        },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-agent-options',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+      // Query double implements only the AsyncIterable surface consumed by this test.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      await modelWithAgentOptions.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      });
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+      expect(call?.options?.agent).toBe('reviewer');
+      expect(call?.options?.onElicitation).toBe(onElicitation);
     });
 
     it('should omit onUserDialog and supportedDialogKinds when unset', async () => {
@@ -1897,6 +2062,566 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(result.usage.inputTokens.total).toBe(10);
       expect(result.usage.outputTokens.total).toBe(5);
       expect(result.finishReason.unified).toBe('stop');
+    });
+
+    it('invokes onSdkMessage for doGenerate SDK messages and isolates callback errors', async () => {
+      const seenMessages: SDKMessage[] = [];
+      const onSdkMessage = vi.fn((message: SDKMessage) => {
+        seenMessages.push(message);
+        if (message.type === 'assistant') {
+          throw new Error('observer failed');
+        }
+      });
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onSdkMessage },
+      });
+      const systemMessage = {
+        type: 'system',
+        subtype: 'init',
+        session_id: 'sdk-message-generate',
+        mcp_servers: [],
+      };
+      const assistantMessage = {
+        type: 'assistant',
+        session_id: 'sdk-message-generate',
+        uuid: 'uuid-assistant-generate',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: 'Hello from SDK' }] },
+      };
+      const resultMessage = {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sdk-message-generate',
+        usage: { input_tokens: 1, output_tokens: 2 },
+        total_cost_usd: 0.001,
+        duration_ms: 25,
+      };
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield systemMessage;
+          yield assistantMessage;
+          yield resultMessage;
+        },
+      };
+      // Query double implements only the AsyncIterable surface consumed by this test.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      const result = await modelWithCallback.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+
+      expect(result.content).toEqual([{ type: 'text', text: 'Hello from SDK' }]);
+      expect(onSdkMessage).toHaveBeenCalledTimes(3);
+      expect(seenMessages).toEqual([systemMessage, assistantMessage, resultMessage]);
+    });
+
+    it('isolates mutable onSdkMessage observers from generated content and metadata', async () => {
+      const seenMessages: SDKMessage[] = [];
+      const onSdkMessage = vi.fn((message: SDKMessage) => {
+        seenMessages.push(message);
+        if (message.type === 'assistant') {
+          const content = Reflect.get(message.message, 'content');
+          if (Array.isArray(content)) {
+            const firstBlock = content[0];
+            if (isRecord(firstBlock)) {
+              attemptObserverMutation(() => {
+                Reflect.set(firstBlock, 'text', 'Mutated by observer');
+              });
+            }
+            attemptObserverMutation(() => {
+              content.push({ type: 'text', text: 'Injected by observer' });
+            });
+          }
+        }
+        if (message.type === 'result') {
+          attemptObserverMutation(() => {
+            Reflect.set(message, 'subtype', 'error');
+          });
+          attemptObserverMutation(() => {
+            Reflect.set(message, 'duration_ms', 999);
+          });
+          const usage = Reflect.get(message, 'usage');
+          if (isRecord(usage)) {
+            attemptObserverMutation(() => {
+              Reflect.set(usage, 'output_tokens', 999);
+            });
+          }
+        }
+      });
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onSdkMessage },
+      });
+      const assistantMessage = {
+        type: 'assistant',
+        session_id: 'sdk-message-immutable',
+        uuid: 'uuid-assistant-immutable',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: 'Original SDK text' }] },
+      };
+      const resultMessage = {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sdk-message-immutable',
+        usage: { input_tokens: 1, output_tokens: 2 },
+        total_cost_usd: 0.001,
+        duration_ms: 25,
+      };
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield assistantMessage;
+          yield resultMessage;
+        },
+      };
+      // Query double implements only the AsyncIterable surface consumed by this test.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      const result = await modelWithCallback.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+
+      expect(result.content).toEqual([{ type: 'text', text: 'Original SDK text' }]);
+      expect(result.usage.outputTokens.total).toBe(2);
+      expect(onSdkMessage).toHaveBeenCalledTimes(2);
+      expect(seenMessages[0]).not.toBe(assistantMessage);
+      expect(seenMessages[1]).not.toBe(resultMessage);
+      expectJsonRoundTrip(seenMessages);
+      const claudeMetadata = result.providerMetadata?.['claude-code'];
+      expect(claudeMetadata).toEqual(
+        expect.objectContaining({
+          costUsd: 0.001,
+          durationMs: 25,
+        })
+      );
+      expectJsonRoundTrip(claudeMetadata);
+    });
+
+    it('invokes raw onSdkMessage for post-result prompt_suggestion in doGenerate', async () => {
+      const seenMessages: SDKMessage[] = [];
+      const onSdkMessage = vi.fn((message: SDKMessage) => {
+        seenMessages.push(message);
+      });
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onSdkMessage },
+      });
+      const resultMessage = {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'raw-gen-suggestion-session',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      };
+      const promptSuggestionMessage = {
+        type: 'prompt_suggestion',
+        suggestion: 'Try a follow-up generate prompt',
+        session_id: 'raw-gen-suggestion-session',
+      };
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield resultMessage;
+          yield promptSuggestionMessage;
+        },
+      } as unknown as Query; // Replayable Query double; callback delivery is asserted below.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse);
+
+      await modelWithCallback.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+
+      expect(seenMessages).toEqual([resultMessage, promptSuggestionMessage]);
+      expect(onSdkMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not duplicate onSdkMessage delivery while draining replayable doGenerate iterables', async () => {
+      const seenMessages: SDKMessage[] = [];
+      const onSdkMessage = vi.fn((message: SDKMessage) => {
+        seenMessages.push(message);
+      });
+      const onPromptSuggestion = vi.fn();
+      const modelWithCallbacks = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion, onSdkMessage },
+      });
+      const assistantMessage = {
+        type: 'assistant',
+        session_id: 'replayable-gen-suggestion-session',
+        message: { content: [{ type: 'text', text: 'Replay-safe generate' }] },
+      };
+      const resultMessage = {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'replayable-gen-suggestion-session',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      };
+      const promptSuggestionMessage = {
+        type: 'prompt_suggestion',
+        suggestion: 'Replay-safe generate follow-up',
+        session_id: 'replayable-gen-suggestion-session',
+      };
+      const messages = [assistantMessage, resultMessage, promptSuggestionMessage];
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield* messages;
+        },
+      } as unknown as Query; // Deliberately replayable; a second iterator would re-emit prior messages.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse);
+
+      const result = await modelWithCallbacks.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+
+      expect(result.content).toEqual([{ type: 'text', text: 'Replay-safe generate' }]);
+      expect(seenMessages).toEqual(messages);
+      expect(onSdkMessage).toHaveBeenCalledTimes(3);
+      expect(onPromptSuggestion).toHaveBeenCalledTimes(1);
+      expect(onPromptSuggestion).toHaveBeenCalledWith('Replay-safe generate follow-up');
+    });
+
+    it('surfaces init MCP servers through providerMetadata and onMcpStatusChange', async () => {
+      const mcpServers = [
+        { name: 'filesystem', status: 'connected' },
+        { name: 'exa', status: 'pending' },
+      ] satisfies McpServerStatus[];
+      const mcpSnapshots: ClaudeCodeMcpStatusEvent[] = [];
+      const onMcpStatusChange = vi.fn((status: ClaudeCodeMcpStatusEvent) => {
+        mcpSnapshots.push(status);
+      });
+      const modelWithMcpCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onMcpStatusChange },
+      });
+      const initMessage = {
+        type: 'system',
+        subtype: 'init',
+        session_id: 'mcp-metadata-session',
+        mcp_servers: mcpServers,
+      };
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield initMessage;
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'mcp-metadata-session',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        },
+      };
+      // Query double implements only the AsyncIterable surface consumed by this test.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      const result = await modelWithMcpCallback.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+
+      expect(result.providerMetadata?.['claude-code']).toEqual(
+        expect.objectContaining({
+          mcpServers,
+        })
+      );
+      expect(mcpSnapshots).toEqual([
+        expect.objectContaining({
+          subtype: 'init',
+          sessionId: 'mcp-metadata-session',
+          servers: mcpServers,
+          raw: initMessage,
+        }),
+      ]);
+    });
+
+    it('surfaces task and hook system messages through callbacks and providerMetadata', async () => {
+      const taskEvents: ClaudeCodeTaskEvent[] = [];
+      const hookEvents: ClaudeCodeHookEvent[] = [];
+      const onTaskEvent = vi.fn((event: ClaudeCodeTaskEvent) => {
+        taskEvents.push(event);
+      });
+      const onHookEvent = vi.fn((event: ClaudeCodeHookEvent) => {
+        hookEvents.push(event);
+      });
+      const modelWithEventCallbacks = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onTaskEvent, onHookEvent, includeHookEvents: true },
+      });
+      const taskStarted = {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'task-1',
+        tool_use_id: 'tool-task-1',
+        description: 'Review the diff',
+        subagent_type: 'reviewer',
+        uuid: 'uuid-task-started',
+        session_id: 'event-metadata-session',
+      };
+      const taskProgress = {
+        type: 'system',
+        subtype: 'task_progress',
+        task_id: 'task-1',
+        tool_use_id: 'tool-task-1',
+        description: 'Inspecting tests',
+        subagent_type: 'reviewer',
+        usage: { total_tokens: 42, tool_uses: 2, duration_ms: 500 },
+        summary: 'Reading relevant tests',
+        uuid: 'uuid-task-progress',
+        session_id: 'event-metadata-session',
+      };
+      const hookResponse = {
+        type: 'system',
+        subtype: 'hook_response',
+        hook_id: 'hook-1',
+        hook_name: 'pre-tool-check',
+        hook_event: 'PreToolUse',
+        output: 'allowed',
+        stdout: 'allowed',
+        stderr: '',
+        outcome: 'success',
+        uuid: 'uuid-hook-response',
+        session_id: 'event-metadata-session',
+      };
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield taskStarted;
+          yield taskProgress;
+          yield hookResponse;
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'event-metadata-session',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        },
+      };
+      // Query double implements only the AsyncIterable surface consumed by this test.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      const result = await modelWithEventCallbacks.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+
+      expect(taskEvents.map((event) => event.subtype)).toEqual(['task_started', 'task_progress']);
+      expect(hookEvents.map((event) => event.subtype)).toEqual(['hook_response']);
+      expect(taskEvents[0]).toEqual(
+        expect.objectContaining({
+          subtype: 'task_started',
+          taskId: 'task-1',
+          toolUseId: 'tool-task-1',
+          subagentType: 'reviewer',
+          sessionId: 'event-metadata-session',
+          raw: taskStarted,
+        })
+      );
+      expect(taskEvents[1]).toEqual(
+        expect.objectContaining({
+          subtype: 'task_progress',
+          taskId: 'task-1',
+          summary: 'Reading relevant tests',
+          raw: taskProgress,
+        })
+      );
+      expect(hookEvents[0]).toEqual(
+        expect.objectContaining({
+          subtype: 'hook_response',
+          hookId: 'hook-1',
+          hookEvent: 'PreToolUse',
+          outcome: 'success',
+          raw: hookResponse,
+        })
+      );
+      expect(result.providerMetadata?.['claude-code']).toEqual(
+        expect.objectContaining({
+          taskEvents: expect.arrayContaining([
+            expect.objectContaining({
+              subtype: 'task_started',
+              taskId: 'task-1',
+              raw: taskStarted,
+            }),
+            expect.objectContaining({
+              subtype: 'task_progress',
+              taskId: 'task-1',
+              raw: taskProgress,
+            }),
+          ]),
+          hookEvents: expect.arrayContaining([
+            expect.objectContaining({
+              subtype: 'hook_response',
+              hookId: 'hook-1',
+              raw: hookResponse,
+            }),
+          ]),
+        })
+      );
+    });
+
+    it('isolates task, hook, and MCP callback mutations from providerMetadata', async () => {
+      const taskEvents: ClaudeCodeTaskEvent[] = [];
+      const hookEvents: ClaudeCodeHookEvent[] = [];
+      const mcpSnapshots: ClaudeCodeMcpStatusEvent[] = [];
+      const onTaskEvent = vi.fn((event: ClaudeCodeTaskEvent) => {
+        taskEvents.push(event);
+        attemptObserverMutation(() => {
+          event.taskId = 'mutated-task';
+        });
+        attemptObserverMutation(() => {
+          Reflect.set(event.raw, 'task_id', 'mutated-task');
+        });
+      });
+      const onHookEvent = vi.fn((event: ClaudeCodeHookEvent) => {
+        hookEvents.push(event);
+        attemptObserverMutation(() => {
+          event.hookId = 'mutated-hook';
+        });
+        attemptObserverMutation(() => {
+          Reflect.set(event.raw, 'hook_id', 'mutated-hook');
+        });
+      });
+      const onMcpStatusChange = vi.fn((status: ClaudeCodeMcpStatusEvent) => {
+        mcpSnapshots.push(status);
+        const firstServer = status.servers[0];
+        if (firstServer !== undefined) {
+          attemptObserverMutation(() => {
+            firstServer.status = 'failed';
+          });
+        }
+        if (isRecord(status.raw)) {
+          const rawServers = Reflect.get(status.raw, 'mcp_servers');
+          if (Array.isArray(rawServers) && isRecord(rawServers[0])) {
+            attemptObserverMutation(() => {
+              Reflect.set(rawServers[0], 'status', 'failed');
+            });
+          }
+        }
+      });
+      const modelWithEventCallbacks = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onTaskEvent, onHookEvent, onMcpStatusChange, includeHookEvents: true },
+      });
+      const mcpServers = [{ name: 'filesystem', status: 'connected' }] satisfies McpServerStatus[];
+      const initMessage = {
+        type: 'system',
+        subtype: 'init',
+        session_id: 'immutable-events-session',
+        mcp_servers: mcpServers,
+      };
+      const taskStarted = {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'task-immutable',
+        tool_use_id: 'tool-task-immutable',
+        description: 'Review immutable callback handling',
+        uuid: 'uuid-task-immutable',
+        session_id: 'immutable-events-session',
+      };
+      const hookResponse = {
+        type: 'system',
+        subtype: 'hook_response',
+        hook_id: 'hook-immutable',
+        hook_name: 'pre-tool-check',
+        hook_event: 'PreToolUse',
+        output: 'allowed',
+        stdout: 'allowed',
+        stderr: '',
+        outcome: 'success',
+        uuid: 'uuid-hook-immutable',
+        session_id: 'immutable-events-session',
+      };
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield initMessage;
+          yield taskStarted;
+          yield hookResponse;
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'immutable-events-session',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        },
+      };
+      // Query double implements only the AsyncIterable surface consumed by this test.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      const result = await modelWithEventCallbacks.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+
+      expectJsonRoundTrip(taskEvents);
+      expectJsonRoundTrip(hookEvents);
+      expectJsonRoundTrip(mcpSnapshots);
+      expect(taskEvents[0]?.raw).not.toBe(taskStarted);
+      expect(hookEvents[0]?.raw).not.toBe(hookResponse);
+      expect(mcpSnapshots[0]?.raw).not.toBe(initMessage);
+
+      const claudeMetadata = result.providerMetadata?.['claude-code'];
+      expectJsonRoundTrip(claudeMetadata);
+      if (!isRecord(claudeMetadata)) {
+        throw new Error('Expected claude-code provider metadata');
+      }
+      const metadataMcpServers = Reflect.get(claudeMetadata, 'mcpServers');
+      const metadataTaskEvents = Reflect.get(claudeMetadata, 'taskEvents');
+      const metadataHookEvents = Reflect.get(claudeMetadata, 'hookEvents');
+      expect(metadataMcpServers).toEqual(mcpServers);
+      expect(metadataMcpServers).not.toBe(mcpSnapshots[0]?.servers);
+      expect(metadataTaskEvents).not.toBe(taskEvents);
+      expect(metadataHookEvents).not.toBe(hookEvents);
+      if (!Array.isArray(metadataTaskEvents) || !Array.isArray(metadataHookEvents)) {
+        throw new Error('Expected task and hook metadata arrays');
+      }
+      expect(metadataTaskEvents[0]).not.toBe(taskEvents[0]);
+      expect(metadataHookEvents[0]).not.toBe(hookEvents[0]);
+      expect(metadataTaskEvents[0]).toEqual(
+        expect.objectContaining({
+          subtype: 'task_started',
+          taskId: 'task-immutable',
+          raw: expect.objectContaining({ task_id: 'task-immutable' }),
+        })
+      );
+      expect(metadataHookEvents[0]).toEqual(
+        expect.objectContaining({
+          subtype: 'hook_response',
+          hookId: 'hook-immutable',
+          raw: expect.objectContaining({ hook_id: 'hook-immutable' }),
+        })
+      );
+    });
+
+    it('debug-logs informational system messages as intentional telemetry', async () => {
+      const debug = vi.fn();
+      const logger: Logger = { debug, info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const modelWithLogger = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { logger, verbose: true },
+      });
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'system',
+            subtype: 'informational',
+            content: 'Stop hook feedback for the host UI',
+            level: 'notice',
+            uuid: 'uuid-informational',
+            session_id: 'informational-session',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'informational-session',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        },
+      };
+      // Query double implements only the AsyncIterable surface consumed by this test.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      await modelWithLogger.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+
+      expect(debug).toHaveBeenCalledWith(
+        '[claude-code] Ignoring informational system message: informational'
+      );
+      expect(debug).not.toHaveBeenCalledWith(
+        expect.stringContaining('Unhandled system message subtype: informational')
+      );
     });
 
     it('should log actionable MCP warnings for failed and needs-auth servers on init', async () => {
@@ -3498,6 +4223,240 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(onQueryCreated).toHaveBeenCalledWith(mockResponse);
     });
 
+    it('isolates onQueryControllerCreated throw/reject failures in doStream', async () => {
+      const failures = [
+        {
+          label: 'sync throw',
+          callback: () => {
+            throw new Error('stream controller observer failed');
+          },
+        },
+        {
+          label: 'async reject',
+          callback: async () => {
+            throw new Error('stream controller observer rejected');
+          },
+        },
+      ];
+
+      for (const failure of failures) {
+        const warn = vi.fn();
+        const logger: Logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+        const onQueryControllerCreated = vi.fn(failure.callback);
+        const modelWithHook = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: { logger, onQueryControllerCreated },
+        });
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text: 'Controller stream' }] },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: `stream-controller-isolation-${failure.label}`,
+              usage: { input_tokens: 1, output_tokens: 1 },
+            };
+          },
+        } as unknown as Query; // Minimal Query double; this path only consumes AsyncIterable.
+        vi.mocked(mockQuery).mockReturnValue(mockResponse);
+
+        const { stream } = await modelWithHook.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+        });
+        const chunks: LanguageModelV4StreamPart[] = [];
+        const reader = stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        expect(chunks).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ type: 'text-delta', delta: 'Controller stream' }),
+            expect.objectContaining({ type: 'finish' }),
+          ])
+        );
+        expect(chunks.some((chunk) => chunk.type === 'error')).toBe(false);
+        expect(onQueryControllerCreated).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => {
+          expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining('onQueryControllerCreated callback failed')
+          );
+        });
+      }
+    });
+
+    it('invokes onSdkMessage for doStream SDK messages and isolates callback errors', async () => {
+      const seenMessages: SDKMessage[] = [];
+      const onSdkMessage = vi.fn((message: SDKMessage) => {
+        seenMessages.push(message);
+        if (message.type === 'assistant') {
+          throw new Error('observer failed');
+        }
+      });
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onSdkMessage },
+      });
+      const systemMessage = {
+        type: 'system',
+        subtype: 'init',
+        session_id: 'sdk-message-stream',
+        mcp_servers: [],
+      };
+      const assistantMessage = {
+        type: 'assistant',
+        session_id: 'sdk-message-stream',
+        uuid: 'uuid-assistant-stream',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: 'Hello stream' }] },
+      };
+      const resultMessage = {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sdk-message-stream',
+        usage: { input_tokens: 1, output_tokens: 2 },
+        total_cost_usd: 0.001,
+        duration_ms: 25,
+      };
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield systemMessage;
+          yield assistantMessage;
+          yield resultMessage;
+        },
+      };
+      // Query double implements only the AsyncIterable surface consumed by this test.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      const result = await modelWithCallback.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+
+      const chunks: LanguageModelV4StreamPart[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      expect(chunks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'text-delta', delta: 'Hello stream' }),
+          expect.objectContaining({ type: 'finish' }),
+        ])
+      );
+      expect(onSdkMessage).toHaveBeenCalledTimes(3);
+      expect(seenMessages).toEqual([systemMessage, assistantMessage, resultMessage]);
+    });
+
+    it('invokes raw onSdkMessage for post-result prompt_suggestion in doStream', async () => {
+      const seenMessages: SDKMessage[] = [];
+      const onSdkMessage = vi.fn((message: SDKMessage) => {
+        seenMessages.push(message);
+      });
+      const modelWithCallback = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onSdkMessage },
+      });
+      const resultMessage = {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'raw-stream-suggestion-session',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      };
+      const promptSuggestionMessage = {
+        type: 'prompt_suggestion',
+        suggestion: 'Try a follow-up stream prompt',
+        session_id: 'raw-stream-suggestion-session',
+      };
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield resultMessage;
+          yield promptSuggestionMessage;
+        },
+      } as unknown as Query; // Replayable Query double; callback delivery is asserted below.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse);
+
+      const { stream } = await modelWithCallback.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+      const reader = stream.getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+
+      await vi.waitFor(() => {
+        expect(seenMessages).toEqual([resultMessage, promptSuggestionMessage]);
+      });
+      expect(onSdkMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not duplicate onSdkMessage delivery while draining replayable doStream iterables', async () => {
+      const seenMessages: SDKMessage[] = [];
+      const onSdkMessage = vi.fn((message: SDKMessage) => {
+        seenMessages.push(message);
+      });
+      const onPromptSuggestion = vi.fn();
+      const modelWithCallbacks = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onPromptSuggestion, onSdkMessage },
+      });
+      const assistantMessage = {
+        type: 'assistant',
+        session_id: 'replayable-stream-suggestion-session',
+        message: { content: [{ type: 'text', text: 'Replay-safe stream' }] },
+      };
+      const resultMessage = {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'replayable-stream-suggestion-session',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      };
+      const promptSuggestionMessage = {
+        type: 'prompt_suggestion',
+        suggestion: 'Replay-safe stream follow-up',
+        session_id: 'replayable-stream-suggestion-session',
+      };
+      const messages = [assistantMessage, resultMessage, promptSuggestionMessage];
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield* messages;
+        },
+      } as unknown as Query; // Deliberately replayable; a second iterator would re-emit prior messages.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse);
+
+      const { stream } = await modelWithCallbacks.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Say hello' }] }],
+      });
+      const chunks: LanguageModelV4StreamPart[] = [];
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      expect(chunks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'text-delta', delta: 'Replay-safe stream' }),
+          expect.objectContaining({ type: 'finish' }),
+        ])
+      );
+      await vi.waitFor(() => {
+        expect(seenMessages).toEqual(messages);
+      });
+      expect(onSdkMessage).toHaveBeenCalledTimes(3);
+      expect(onPromptSuggestion).toHaveBeenCalledTimes(1);
+      expect(onPromptSuggestion).toHaveBeenCalledWith('Replay-safe stream follow-up');
+    });
+
     it('should log actionable MCP warnings on stream init for failed servers', async () => {
       const warn = vi.fn();
       const logger: Logger = {
@@ -4530,10 +5489,71 @@ describe('ClaudeCodeLanguageModel', () => {
       });
     });
 
+    it('auto-enables streaming input for image prompts in doStream when streamingInput is auto', async () => {
+      const modelWithAutoImages = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { streamingInput: 'auto' },
+      });
+
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'stream-auto-image-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+
+      // Query double implements only the AsyncIterable surface consumed by this test.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      const result = await modelWithAutoImages.doStream({
+        prompt: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Look at this image.' },
+              {
+                type: 'file',
+                mediaType: 'image/png',
+                data: { type: 'url', url: 'data:image/png;base64,aGVsbG8=' },
+              },
+            ],
+          },
+        ],
+      } as unknown as LanguageModelV4CallOptions);
+
+      const chunks: LanguageModelV4StreamPart[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+      const prompt = call?.prompt;
+      expect(
+        prompt !== undefined && typeof prompt === 'object' && Symbol.asyncIterator in prompt
+      ).toBe(true);
+      expect(chunks[0]).toEqual(
+        expect.objectContaining({
+          type: 'stream-start',
+          warnings: expect.not.arrayContaining([
+            expect.objectContaining({
+              message: expect.stringContaining(IMAGE_STREAMING_WARNING_MESSAGE_FRAGMENT),
+            }),
+          ]),
+        })
+      );
+    });
+
     it('emits streaming prerequisite warning when images are provided without streaming input', async () => {
       const modelWithStreamingOff = new ClaudeCodeLanguageModel({
         id: 'sonnet',
-        settings: { streamingInput: 'off' } as any,
+        settings: { streamingInput: 'off' },
       });
 
       const mockResponse = {
@@ -4547,7 +5567,8 @@ describe('ClaudeCodeLanguageModel', () => {
         },
       };
 
-      vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+      // Query double implements only the AsyncIterable surface consumed by this test.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
 
       const result = await modelWithStreamingOff.doStream({
         prompt: [
@@ -4563,7 +5584,7 @@ describe('ClaudeCodeLanguageModel', () => {
             ],
           },
         ],
-      } as any);
+      } as unknown as LanguageModelV4CallOptions);
 
       const reader = result.stream.getReader();
       const start = await reader.read();
@@ -4573,7 +5594,7 @@ describe('ClaudeCodeLanguageModel', () => {
         warnings: expect.arrayContaining([
           expect.objectContaining({
             type: 'other',
-            message: STREAMING_WARNING_MESSAGE,
+            message: expect.stringContaining(IMAGE_STREAMING_WARNING_MESSAGE_FRAGMENT),
           }),
         ]),
       });
@@ -6666,9 +7687,11 @@ describe('ClaudeCodeLanguageModel', () => {
             subtype: 'permission_denied',
             tool_name: 'Bash',
             tool_use_id: 'tool-1',
+            agent_id: 'agent-1',
             decision_reason_type: 'rule',
             decision_reason: 'Matched deny rule',
             message: 'Permission denied by rule',
+            uuid: 'uuid-denied-1',
             session_id: 'denied-session',
           };
           yield {
@@ -6698,10 +7721,125 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const finishChunk = chunks.find((c) => c.type === 'finish');
       expect(finishChunk.providerMetadata['claude-code'].permissionDenials).toEqual([
-        { toolName: 'Bash', toolUseId: 'tool-1', reason: 'Matched deny rule' },
+        expect.objectContaining({
+          toolName: 'Bash',
+          toolUseId: 'tool-1',
+          reason: 'Matched deny rule',
+          agentId: 'agent-1',
+          decisionReasonType: 'rule',
+          raw: expect.objectContaining({
+            subtype: 'permission_denied',
+            agent_id: 'agent-1',
+            decision_reason_type: 'rule',
+          }),
+        }),
       ]);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('Permission denied - Tool: Bash'));
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('Matched deny rule'));
+    });
+
+    it('should surface task and hook events in doStream finish metadata and callbacks', async () => {
+      const taskEvents: ClaudeCodeTaskEvent[] = [];
+      const hookEvents: ClaudeCodeHookEvent[] = [];
+      const onTaskEvent = vi.fn((event: ClaudeCodeTaskEvent) => {
+        taskEvents.push(event);
+      });
+      const onHookEvent = vi.fn((event: ClaudeCodeHookEvent) => {
+        hookEvents.push(event);
+      });
+      const modelWithEventCallbacks = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { onTaskEvent, onHookEvent, includeHookEvents: true },
+      });
+      const taskNotification = {
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'task-stream-1',
+        tool_use_id: 'tool-task-stream-1',
+        status: 'completed',
+        output_file: '/tmp/task-stream-1.txt',
+        summary: 'Finished review',
+        usage: { total_tokens: 100, tool_uses: 3, duration_ms: 1000 },
+        uuid: 'uuid-task-notification-stream',
+        session_id: 'stream-event-session',
+      };
+      const hookStarted = {
+        type: 'system',
+        subtype: 'hook_started',
+        hook_id: 'hook-stream-1',
+        hook_name: 'post-tool',
+        hook_event: 'PostToolUse',
+        uuid: 'uuid-hook-started-stream',
+        session_id: 'stream-event-session',
+      };
+      const mockResponse = {
+        async *[Symbol.asyncIterator]() {
+          yield taskNotification;
+          yield hookStarted;
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'stream-event-session',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            total_cost_usd: 0.001,
+            duration_ms: 500,
+          };
+        },
+      };
+      // Query double implements only the AsyncIterable surface consumed by this test.
+      vi.mocked(mockQuery).mockReturnValue(mockResponse as unknown as Query);
+
+      const result = await modelWithEventCallbacks.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+
+      const chunks: LanguageModelV4StreamPart[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const finishChunk = chunks.find((chunk) => chunk.type === 'finish');
+      expect(taskEvents).toEqual([
+        expect.objectContaining({
+          subtype: 'task_notification',
+          taskId: 'task-stream-1',
+          outputFile: '/tmp/task-stream-1.txt',
+          raw: taskNotification,
+        }),
+      ]);
+      expect(hookEvents).toEqual([
+        expect.objectContaining({
+          subtype: 'hook_started',
+          hookId: 'hook-stream-1',
+          hookEvent: 'PostToolUse',
+          raw: hookStarted,
+        }),
+      ]);
+      expect(finishChunk).toEqual(
+        expect.objectContaining({
+          providerMetadata: {
+            'claude-code': expect.objectContaining({
+              taskEvents: expect.arrayContaining([
+                expect.objectContaining({
+                  subtype: 'task_notification',
+                  taskId: 'task-stream-1',
+                  raw: taskNotification,
+                }),
+              ]),
+              hookEvents: expect.arrayContaining([
+                expect.objectContaining({
+                  subtype: 'hook_started',
+                  hookId: 'hook-stream-1',
+                  raw: hookStarted,
+                }),
+              ]),
+            }),
+          },
+        })
+      );
     });
 
     it('should record api_retry and permission_denied in doGenerate providerMetadata', async () => {
@@ -6722,7 +7860,11 @@ describe('ClaudeCodeLanguageModel', () => {
             subtype: 'permission_denied',
             tool_name: 'Write',
             tool_use_id: 'tool-2',
+            agent_id: 'agent-2',
+            decision_reason_type: 'mode',
+            decision_reason: 'Auto-denied in dontAsk mode',
             message: 'Auto-denied in dontAsk mode',
+            uuid: 'uuid-denied-2',
             session_id: 'gen-meta-session',
           };
           yield {
@@ -6745,7 +7887,18 @@ describe('ClaudeCodeLanguageModel', () => {
       const metadata = result.providerMetadata?.['claude-code'] as Record<string, unknown>;
       expect(metadata.apiRetries).toBe(1);
       expect(metadata.permissionDenials).toEqual([
-        { toolName: 'Write', toolUseId: 'tool-2', reason: 'Auto-denied in dontAsk mode' },
+        expect.objectContaining({
+          toolName: 'Write',
+          toolUseId: 'tool-2',
+          reason: 'Auto-denied in dontAsk mode',
+          agentId: 'agent-2',
+          decisionReasonType: 'mode',
+          raw: expect.objectContaining({
+            subtype: 'permission_denied',
+            agent_id: 'agent-2',
+            decision_reason_type: 'mode',
+          }),
+        }),
       ]);
     });
 
@@ -6776,7 +7929,9 @@ describe('ClaudeCodeLanguageModel', () => {
       } as any);
 
       const metadata = result.providerMetadata?.['claude-code'] as Record<string, unknown>;
-      expect(metadata.permissionDenials).toEqual([{ toolName: 'Bash', toolUseId: 'hook-tool-1' }]);
+      expect(metadata.permissionDenials).toEqual([
+        expect.objectContaining({ toolName: 'Bash', toolUseId: 'hook-tool-1' }),
+      ]);
     });
 
     it('should dedupe result permission_denials against stream-recorded denials by tool_use_id', async () => {
@@ -6823,8 +7978,12 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const finishChunk = chunks.find((c) => c.type === 'finish');
       expect(finishChunk.providerMetadata['claude-code'].permissionDenials).toEqual([
-        { toolName: 'Write', toolUseId: 'tool-9', reason: 'Auto-denied in dontAsk mode' },
-        { toolName: 'Edit', toolUseId: 'tool-10' },
+        expect.objectContaining({
+          toolName: 'Write',
+          toolUseId: 'tool-9',
+          reason: 'Auto-denied in dontAsk mode',
+        }),
+        expect.objectContaining({ toolName: 'Edit', toolUseId: 'tool-10' }),
       ]);
     });
 
@@ -7743,16 +8902,28 @@ describe('ClaudeCodeLanguageModel', () => {
     it('should debug-log and ignore informational SDK 0.3.x system messages in doStream', async () => {
       const debug = vi.fn();
       const logger: Logger = { debug, info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const taskEvents: ClaudeCodeTaskEvent[] = [];
+      const onTaskEvent = vi.fn((event: ClaudeCodeTaskEvent) => {
+        taskEvents.push(event);
+      });
       const modelWithLogger = new ClaudeCodeLanguageModel({
         id: 'sonnet',
-        settings: { logger, verbose: true },
+        settings: { logger, verbose: true, onTaskEvent },
       });
+
+      const taskUpdatedMessage = {
+        type: 'system',
+        subtype: 'task_updated',
+        session_id: 'info-session',
+        task_id: 't1',
+        patch: { status: 'running' },
+        uuid: 'uuid-task-updated',
+      };
 
       const informationalMessages = [
         { subtype: 'notification', key: 'k', text: 'note', priority: 'low' },
         { subtype: 'status', status: 'requesting' },
         { subtype: 'status', status: null, compact_result: 'failed', compact_error: 'boom' },
-        { subtype: 'task_updated', task_id: 't1', patch: { status: 'running' } },
         { subtype: 'session_state_changed', state: 'running' },
         { subtype: 'commands_changed', commands: [] },
         { subtype: 'memory_recall', mode: 'select', memories: [] },
@@ -7761,6 +8932,7 @@ describe('ClaudeCodeLanguageModel', () => {
 
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
+          yield taskUpdatedMessage;
           for (const informational of informationalMessages) {
             yield { type: 'system', session_id: 'info-session', ...informational };
           }
@@ -7802,12 +8974,25 @@ describe('ClaudeCodeLanguageModel', () => {
         .join('');
       expect(streamedText).toBe('Still working');
 
-      // Each informational subtype is debug-logged as intentionally ignored
+      // Each remaining informational subtype is debug-logged as intentionally ignored
       for (const informational of informationalMessages) {
         expect(debug).toHaveBeenCalledWith(
           expect.stringContaining(`Ignoring informational system message: ${informational.subtype}`)
         );
       }
+
+      expect(onTaskEvent).toHaveBeenCalledTimes(1);
+      expect(taskEvents).toEqual([
+        expect.objectContaining({
+          subtype: 'task_updated',
+          taskId: 't1',
+          patch: { status: 'running' },
+          raw: taskUpdatedMessage,
+        }),
+      ]);
+      expect(debug).not.toHaveBeenCalledWith(
+        expect.stringContaining('Ignoring informational system message: task_updated')
+      );
     });
 
     it('surfaces mirror_error (dropped transcript batch) as a warning and in providerMetadata', async () => {
@@ -8006,7 +9191,11 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(metadata.truncated).toBe(true);
       expect(metadata.apiRetries).toBe(1);
       expect(metadata.permissionDenials).toEqual([
-        { toolName: 'Bash', toolUseId: 'tool-1', reason: 'Matched deny rule' },
+        expect.objectContaining({
+          toolName: 'Bash',
+          toolUseId: 'tool-1',
+          reason: 'Matched deny rule',
+        }),
       ]);
     });
 
@@ -8174,7 +9363,7 @@ describe('ClaudeCodeLanguageModel', () => {
       }
     });
 
-    it('should return doGenerate immediately at result when no suggestion callback is set', async () => {
+    it('should return doGenerate immediately at result when neither prompt suggestion nor raw SDK callback is set', async () => {
       let generatorClosed = false;
       const mockResponse = (async function* () {
         try {

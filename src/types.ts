@@ -18,9 +18,158 @@ import type {
   SessionStore,
   SessionStoreFlush,
   OnUserDialog,
+  OnElicitation,
+  SDKMessage,
+  SDKUserMessage,
+  SDKTaskStartedMessage,
+  SDKTaskProgressMessage,
+  SDKTaskUpdatedMessage,
+  SDKTaskNotificationMessage,
+  SDKHookStartedMessage,
+  SDKHookProgressMessage,
+  SDKHookResponseMessage,
+  McpServerStatus,
+  McpSetServersResult,
+  RewindFilesResult,
+  SDKControlGetContextUsageResponse,
 } from '@anthropic-ai/claude-agent-sdk';
 
 export type StreamingInputMode = 'auto' | 'always' | 'off';
+
+/**
+ * Normalized Task/subagent lifecycle events surfaced by the provider.
+ * The original Agent SDK message is preserved on `raw`.
+ */
+export type ClaudeCodeTaskEvent =
+  | {
+      subtype: 'task_started';
+      taskId: string;
+      toolUseId?: string;
+      description: string;
+      subagentType?: string;
+      taskType?: string;
+      workflowName?: string;
+      prompt?: string;
+      skipTranscript?: boolean;
+      uuid: string;
+      sessionId: string;
+      raw: SDKTaskStartedMessage;
+    }
+  | {
+      subtype: 'task_progress';
+      taskId: string;
+      toolUseId?: string;
+      description: string;
+      subagentType?: string;
+      usage: SDKTaskProgressMessage['usage'];
+      lastToolName?: string;
+      summary?: string;
+      uuid: string;
+      sessionId: string;
+      raw: SDKTaskProgressMessage;
+    }
+  | {
+      subtype: 'task_updated';
+      taskId: string;
+      patch: SDKTaskUpdatedMessage['patch'];
+      uuid: string;
+      sessionId: string;
+      raw: SDKTaskUpdatedMessage;
+    }
+  | {
+      subtype: 'task_notification';
+      taskId: string;
+      toolUseId?: string;
+      status: SDKTaskNotificationMessage['status'];
+      outputFile: string;
+      summary: string;
+      usage?: SDKTaskNotificationMessage['usage'];
+      skipTranscript?: boolean;
+      uuid: string;
+      sessionId: string;
+      raw: SDKTaskNotificationMessage;
+    };
+
+/**
+ * Normalized hook lifecycle events surfaced by the provider.
+ * The original Agent SDK message is preserved on `raw`.
+ */
+export type ClaudeCodeHookEvent =
+  | {
+      subtype: 'hook_started';
+      hookId: string;
+      hookName: string;
+      hookEvent: string;
+      uuid: string;
+      sessionId: string;
+      raw: SDKHookStartedMessage;
+    }
+  | {
+      subtype: 'hook_progress';
+      hookId: string;
+      hookName: string;
+      hookEvent: string;
+      stdout: string;
+      stderr: string;
+      output: string;
+      uuid: string;
+      sessionId: string;
+      raw: SDKHookProgressMessage;
+    }
+  | {
+      subtype: 'hook_response';
+      hookId: string;
+      hookName: string;
+      hookEvent: string;
+      output: string;
+      stdout: string;
+      stderr: string;
+      exitCode?: number;
+      outcome: SDKHookResponseMessage['outcome'];
+      uuid: string;
+      sessionId: string;
+      raw: SDKHookResponseMessage;
+    };
+
+/**
+ * Snapshot of MCP server connection state reported by the provider.
+ */
+export interface ClaudeCodeMcpStatusEvent {
+  subtype: 'init' | 'status';
+  sessionId?: string;
+  uuid?: string;
+  servers: McpServerStatus[];
+  raw?: unknown;
+}
+
+/**
+ * Safe runtime controller for common Agent SDK Query operations.
+ * The underlying Query is intentionally exposed as `rawQuery`.
+ */
+export interface ClaudeCodeQueryController {
+  readonly rawQuery: Query;
+  interrupt(): Promise<void>;
+  setPermissionMode(mode: PermissionMode): Promise<void>;
+  setMcpPermissionModeOverride(
+    serverName: string,
+    mode: 'default' | 'auto' | null
+  ): Promise<{ warning?: string }>;
+  setModel(model?: string): Promise<void>;
+  setMaxThinkingTokens(
+    maxThinkingTokens: number | null,
+    thinkingDisplay?: 'summarized' | 'omitted' | null
+  ): Promise<void>;
+  applyFlagSettings(settings: { [K in keyof Settings]?: Settings[K] | null }): Promise<void>;
+  mcpServerStatus(): Promise<McpServerStatus[]>;
+  reconnectMcpServer(serverName: string): Promise<void>;
+  toggleMcpServer(serverName: string, enabled: boolean): Promise<void>;
+  setMcpServers(servers: Record<string, McpServerConfig>): Promise<McpSetServersResult>;
+  getContextUsage(): Promise<SDKControlGetContextUsageResponse>;
+  rewindFiles(userMessageId: string, options?: { dryRun?: boolean }): Promise<RewindFilesResult>;
+  stopTask(taskId: string): Promise<void>;
+  backgroundTasks(toolUseId?: string): Promise<boolean>;
+  streamInput?(stream: AsyncIterable<SDKUserMessage>): Promise<void>;
+}
 
 /**
  * Logger interface for custom logging.
@@ -345,6 +494,34 @@ export interface ClaudeCodeSettings {
   includeHookEvents?: boolean;
 
   /**
+   * Callback invoked for every raw Agent SDK message emitted by the query.
+   * Use this as a forward-compatible escape hatch when the provider does not
+   * yet expose a dedicated callback or metadata field for a new SDK subtype.
+   */
+  onSdkMessage?: (message: SDKMessage) => void | PromiseLike<void>;
+
+  /**
+   * Callback invoked for Task/subagent lifecycle messages after they are
+   * normalized to camelCase provider events. The original SDK message is
+   * available on `event.raw`.
+   */
+  onTaskEvent?: (event: ClaudeCodeTaskEvent) => void | PromiseLike<void>;
+
+  /**
+   * Callback invoked for hook lifecycle messages when hook events are emitted.
+   * Set `includeHookEvents: true` to receive all hook event types; the SDK may
+   * still emit startup/setup hook events independently.
+   */
+  onHookEvent?: (event: ClaudeCodeHookEvent) => void | PromiseLike<void>;
+
+  /**
+   * Callback invoked with an MCP server status snapshot when the SDK reports
+   * initial or refreshed server state. The payload contains the full server
+   * list for that snapshot rather than one callback per server.
+   */
+  onMcpStatusChange?: (status: ClaudeCodeMcpStatusEvent) => void | PromiseLike<void>;
+
+  /**
    * MCP server configuration
    */
   mcpServers?: Record<string, McpServerConfig>;
@@ -417,6 +594,13 @@ export interface ClaudeCodeSettings {
   onUserDialog?: OnUserDialog;
 
   /**
+   * Callback for MCP elicitation requests that are not handled by hooks.
+   * Return an Agent SDK elicitation result to accept, decline, or cancel the
+   * request; when omitted, the SDK declines unhandled elicitations.
+   */
+  onElicitation?: OnElicitation;
+
+  /**
    * Dialog kinds (`request_user_dialog` `dialog_kind` values, e.g.
    * `'refusal_fallback_prompt'`) that your `onUserDialog` callback can
    * actually render. The CLI only emits dialog kinds declared here and
@@ -432,10 +616,12 @@ export interface ClaudeCodeSettings {
   supportedDialogKinds?: string[];
 
   /**
-   * Controls whether to send streaming input to the SDK (enables canUseTool).
-   * - 'auto' (default): stream when canUseTool is provided
+   * Controls whether to send streaming input to the SDK.
+   * - 'auto' (default): stream when canUseTool is provided or the prompt contains
+   *   image parts
    * - 'always': always stream
-   * - 'off': never stream (legacy behavior)
+   * - 'off': disable streaming input, including streaming image input; emits a
+   *   warning when the prompt contains image parts
    */
   streamingInput?: StreamingInputMode;
 
@@ -493,6 +679,13 @@ export interface ClaudeCodeSettings {
    * Additional directories Claude can access.
    */
   additionalDirectories?: string[];
+
+  /**
+   * Named agent persona for the main conversation. The agent must be defined
+   * in `agents` or loaded from settings; its prompt/tools/model augment the
+   * main thread similarly to the Claude Code `--agent` flag.
+   */
+  agent?: string;
 
   /**
    * Programmatically defined subagents.
@@ -625,6 +818,13 @@ export interface ClaudeCodeSettings {
    * ```
    */
   onQueryCreated?: (query: Query) => void;
+
+  /**
+   * Callback invoked when a safe Claude Code query controller is created.
+   * Prefer this over `onQueryCreated` for common runtime controls; the raw
+   * SDK Query remains available as `controller.rawQuery`.
+   */
+  onQueryControllerCreated?: (controller: ClaudeCodeQueryController) => void | PromiseLike<void>;
 
   /**
    * Callback invoked when streaming input mode starts.

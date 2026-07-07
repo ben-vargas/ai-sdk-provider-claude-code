@@ -59,10 +59,12 @@ type MappedKey =
   | 'canUseTool'
   // --- conditionally-set block (only assigned when the setting is defined) ---
   | 'onUserDialog'
+  | 'onElicitation'
   | 'supportedDialogKinds'
   | 'systemPrompt' // also fed by deprecated customSystemPrompt/appendSystemPrompt
   | 'settingSources' // pinned to [] when unset (isolation default)
   | 'additionalDirectories'
+  | 'agent'
   | 'agents'
   | 'skills'
   | 'settings'
@@ -104,18 +106,10 @@ type ProviderManagedKey =
   | 'outputFormat'; // derived from the AI SDK responseFormat (json_schema)
 
 /**
- * Consciously not exposed as `ClaudeCodeSettings`. Each entry needs a reason.
- * All remain reachable through the `sdkOptions` escape hatch.
+ * SDK Options currently have no intentionally-unmapped provider settings.
+ * New exclusions must be documented here with a product reason.
  */
-type KnownExcludedKey =
-  // Selects a named agent persona for the MAIN thread (its prompt/tools/model
-  // override the conversation) — conflicts with the AI SDK contract where the
-  // model id and system prompt come from the AI SDK call itself.
-  | 'agent'
-  // Interactive host-UI callback for MCP elicitation (form/URL-auth prompts);
-  // headless AI SDK usage has no dialog surface, and unhandled requests are
-  // safely auto-declined by the SDK.
-  | 'onElicitation';
+type KnownExcludedKey = never;
 
 type AccountedKey = MappedKey | ProviderManagedKey | KnownExcludedKey;
 
