@@ -95,6 +95,7 @@
         "node": ">=20"
     },
     "publishConfig": {
-        "access": "public"
+        "access": "public",
+        "tag": "v1-claude-code-sdk"
     }
 }
