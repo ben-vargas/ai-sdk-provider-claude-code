@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Structured output tool envelope suppressed** - JSON-mode structured output now streams and returns only the object text, without leaking the Agent SDK's internal `StructuredOutput` tool lifecycle as provider-executed tool parts.
 - **Assistant history tool-result replay** - Replayed assistant history now round-trips tool results correctly under the v7 message/content model instead of losing the result context.
 - **Non-data image URL schemes rejected safely** - Image file parts whose URL uses a scheme other than `data:` (for example `file://` or `blob:`) now emit the image-URL warning instead of falling through to the base64 fallback, which previously encoded the URL string itself as image data.
 

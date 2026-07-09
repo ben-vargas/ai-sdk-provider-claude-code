@@ -3408,6 +3408,46 @@ describe('ClaudeCodeLanguageModel', () => {
     });
 
     describe('provider-executed tool content parts', () => {
+      it('suppresses the internal StructuredOutput tool-call in JSON-mode doGenerate content', async () => {
+        const toolUseId = 'toolu_gen_structured_output';
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: toolUseId,
+                    name: 'StructuredOutput',
+                    input: { name: 'Alice' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'gen-structured-output-session',
+              structured_output: { name: 'Alice' },
+              stop_reason: 'tool_use',
+              usage: { input_tokens: 8, output_tokens: 4 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+          responseFormat: { type: 'json', schema: { type: 'object' } },
+        } as any);
+
+        expect(result.content.some((part: any) => part.type === 'tool-call')).toBe(false);
+        expect(result.content).toEqual([{ type: 'text', text: '{"name":"Alice"}' }]);
+        expect(result.finishReason).toEqual({ unified: 'stop', raw: 'tool_use' });
+      });
+
       it('emits ordered tool-call and tool-result content parts interleaved with text', async () => {
         const toolUseId = 'toolu_gen_calc';
         const toolName = 'mcp__myTools__calculator';
@@ -5308,6 +5348,20 @@ describe('ClaudeCodeLanguageModel', () => {
         },
       });
 
+      const createToolUseStartEvent = (id: string, name: string, index = 0) => ({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_start',
+          index,
+          content_block: { type: 'tool_use', id, name },
+        },
+      });
+
+      const createContentBlockStopEvent = (index = 0) => ({
+        type: 'stream_event',
+        event: { type: 'content_block_stop', index },
+      });
+
       it('streams JSON via input_json_delta events in JSON mode', async () => {
         const mockResponse = {
           async *[Symbol.asyncIterator]() {
@@ -5347,6 +5401,137 @@ describe('ClaudeCodeLanguageModel', () => {
         expect(textDeltas[1].delta).toBe('"Alice"');
         expect(textDeltas[2].delta).toBe(',"age":');
         expect(textDeltas[3].delta).toBe('30}');
+      });
+
+      it('suppresses the internal StructuredOutput tool lifecycle while streaming JSON', async () => {
+        const toolUseId = 'toolu_stream_structured_output';
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield createToolUseStartEvent(toolUseId, 'StructuredOutput');
+            yield createJsonDeltaEvent('{"name":');
+            yield createJsonDeltaEvent('"Alice"}');
+            yield createContentBlockStopEvent();
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: toolUseId,
+                    name: 'StructuredOutput',
+                    input: { name: 'Alice' },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'stream-structured-output-session',
+              structured_output: { name: 'Alice' },
+              stop_reason: 'tool_use',
+              usage: { input_tokens: 8, output_tokens: 4 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+          responseFormat: { type: 'json', schema: { type: 'object' } },
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        expect(
+          chunks
+            .filter((chunk) => chunk.type === 'text-delta')
+            .map((chunk) => chunk.delta)
+            .join('')
+        ).toBe('{"name":"Alice"}');
+        expect(
+          chunks.filter((chunk) =>
+            ['tool-input-start', 'tool-input-delta', 'tool-input-end', 'tool-call'].includes(
+              chunk.type
+            )
+          )
+        ).toEqual([]);
+        expect(chunks.find((chunk) => chunk.type === 'finish')).toMatchObject({
+          finishReason: { unified: 'stop', raw: 'tool_use' },
+        });
+      });
+
+      it('still emits a StructuredOutput-named tool lifecycle outside JSON mode', async () => {
+        const toolUseId = 'toolu_non_json_structured_output';
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield createToolUseStartEvent(toolUseId, 'StructuredOutput');
+            yield createJsonDeltaEvent('{"value":');
+            yield createJsonDeltaEvent('42}');
+            yield createContentBlockStopEvent();
+            yield createResultMessage('non-json-structured-output-tool');
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Use a tool' }] }],
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        const lifecycleParts = chunks.filter((chunk) =>
+          ['tool-input-start', 'tool-input-delta', 'tool-input-end', 'tool-call'].includes(
+            chunk.type
+          )
+        );
+        expect(lifecycleParts.map((part) => part.type)).toEqual([
+          'tool-input-start',
+          'tool-input-delta',
+          'tool-input-delta',
+          'tool-input-end',
+          'tool-call',
+        ]);
+        expect(lifecycleParts[0]).toMatchObject({
+          type: 'tool-input-start',
+          id: toolUseId,
+          toolName: 'StructuredOutput',
+        });
+        expect(lifecycleParts[1]).toMatchObject({
+          type: 'tool-input-delta',
+          id: toolUseId,
+          delta: '{"value":',
+        });
+        expect(lifecycleParts[2]).toMatchObject({
+          type: 'tool-input-delta',
+          id: toolUseId,
+          delta: '42}',
+        });
+        expect(lifecycleParts[3]).toMatchObject({
+          type: 'tool-input-end',
+          id: toolUseId,
+        });
+        expect(lifecycleParts[4]).toMatchObject({
+          type: 'tool-call',
+          toolCallId: toolUseId,
+          toolName: 'StructuredOutput',
+          input: '{"value":42}',
+          providerExecuted: true,
+        });
       });
 
       it('ignores input_json_delta events in non-JSON mode', async () => {

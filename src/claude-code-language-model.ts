@@ -135,6 +135,17 @@ const MISSING_STRUCTURED_OUTPUT_ERROR_MESSAGE =
   'This usually means the schema contains constructs the CLI cannot enforce (e.g. complex regex patterns with lookaheads/backreferences), causing it to silently fall back to prose. ' +
   "Simplify the generation schema and validate strictly client-side. See the 'Structured Outputs' section of the ai-sdk-provider-claude-code README for the list of known limitations.";
 
+const INTERNAL_STRUCTURED_OUTPUT_TOOL_NAME = 'StructuredOutput';
+
+function isInternalStructuredOutputTool(
+  toolName: string,
+  options: LanguageModelV4CallOptions
+): boolean {
+  return (
+    options.responseFormat?.type === 'json' && toolName === INTERNAL_STRUCTURED_OUTPUT_TOOL_NAME
+  );
+}
+
 /**
  * Attempts to recover a JSON object/array from prose text returned when the
  * CLI silently skipped structured output. Tries the trimmed text first, then
@@ -2954,6 +2965,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
               } else if (block.type === 'tool_use') {
                 const [tool] = this.extractToolUses([block]);
                 if (!tool) continue;
+                if (isInternalStructuredOutputTool(tool.name, options)) continue;
                 // Prefer SDK message-level parent (works for parallel agents)
                 // Fall back to content-level parent, then timing-based inference
                 // Task tools never have a parent (they're top-level)
@@ -3790,6 +3802,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
 
                 hasReceivedStreamEvents = true;
 
+                if (isInternalStructuredOutputTool(toolName, options)) {
+                  continue;
+                }
+
                 // Close any active text part before tool starts
                 if (textPartId) {
                   const closedTextId = textPartId;
@@ -4060,7 +4076,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 .parent_tool_use_id;
 
               const content = message.message.content;
-              const tools = this.extractToolUses(content);
+              const tools = this.extractToolUses(content).filter(
+                (tool) => !isInternalStructuredOutputTool(tool.name, options)
+              );
 
               // Close any active text part before tool calls start.
               // This ensures tool calls split text into separate parts.
