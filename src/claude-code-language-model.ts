@@ -1148,8 +1148,12 @@ function truncateToolResultForStream(
  * });
  *
  * const result = await model.doGenerate({
- *   prompt: [{ role: 'user', content: 'Hello!' }],
- *   mode: { type: 'regular' }
+ *   prompt: [
+ *     {
+ *       role: 'user',
+ *       content: [{ type: 'text', text: 'Hello!' }]
+ *     }
+ *   ]
  * });
  * ```
  */
@@ -3566,6 +3570,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
 
         // Content block streaming: Map block indices to tool IDs and accumulated JSON
         const toolBlocksByIndex = new Map<number, string>();
+        const structuredOutputBlockIndexes = new Set<number>();
         const toolInputAccumulators = new Map<string, string>();
 
         // Track text content blocks by index for correlating text_delta with text parts
@@ -3727,8 +3732,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 streamedTextLength += deltaText.length;
                 emittedTextSinceLastAssistant += deltaText;
               }
-              // Handle input_json_delta events for structured output streaming
-              // The SDK uses a StructuredOutput tool internally, and JSON is streamed via input_json_delta
+              // Handle input_json_delta events for structured output and tool input streaming.
               if (
                 event.type === 'content_block_delta' &&
                 event.delta.type === 'input_json_delta' &&
@@ -3738,10 +3742,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 const jsonDelta = event.delta.partial_json;
                 hasReceivedStreamEvents = true;
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
+                const isStructuredOutputDelta =
+                  structuredOutputBlockIndexes.has(blockIndex) ||
+                  !toolBlocksByIndex.has(blockIndex);
 
-                // In JSON mode, prioritize streaming to text-delta for streamObject() support
-                // The SDK's internal StructuredOutput tool uses input_json_delta to stream JSON responses
-                if (options.responseFormat?.type === 'json') {
+                // In JSON mode, only the SDK's internal StructuredOutput tool streams object
+                // JSON as response text. Ordinary tool_use blocks still use input_json_delta
+                // for their arguments and must keep the normal tool-input lifecycle.
+                if (options.responseFormat?.type === 'json' && isStructuredOutputDelta) {
                   // Emit text-start if this is the first JSON delta
                   if (!textPartId) {
                     textPartId = generateId();
@@ -3762,7 +3770,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                   continue;
                 }
 
-                // In non-JSON mode, route to tool-input-delta if we have a tracked tool
+                // Route to tool-input-delta if we have a tracked tool block.
                 const toolId = toolBlocksByIndex.get(blockIndex);
                 if (toolId) {
                   // Accumulate and emit tool-input-delta
@@ -3803,8 +3811,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 hasReceivedStreamEvents = true;
 
                 if (isInternalStructuredOutputTool(toolName, options)) {
+                  structuredOutputBlockIndexes.add(blockIndex);
                   continue;
                 }
+                // A reused index cannot still belong to a structured-output block.
+                structuredOutputBlockIndexes.delete(blockIndex);
 
                 // Close any active text part before tool starts
                 if (textPartId) {
@@ -4006,6 +4017,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                   }
                   toolBlocksByIndex.delete(blockIndex);
                   toolInputAccumulators.delete(toolId);
+                  continue;
+                }
+
+                if (structuredOutputBlockIndexes.delete(blockIndex)) {
                   continue;
                 }
 

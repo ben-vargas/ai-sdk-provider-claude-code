@@ -29,6 +29,11 @@ const IMAGE_CONVERSION_WARNING = 'Unable to convert image content; supply base64
 const FILE_REFERENCE_WARNING =
   'Provider file references are not supported by this provider; supply inline file data.';
 
+function createUnsupportedFilePartWarning(mediaType: string | undefined): string {
+  const mediaTypeLabel = mediaType && mediaType.trim() ? mediaType : 'unknown';
+  return `Unsupported file part (${mediaTypeLabel}) was ignored; this provider forwards only image file parts inline.`;
+}
+
 /**
  * Maximum serialized length for a single tool-call input when replaying
  * conversation history. Mirrors the spirit of the model's tool-result
@@ -225,7 +230,7 @@ function parseFilePart(part: FileLikePart): FileConversionResult {
   switch (fileData.type) {
     case 'data': {
       if (!mediaType || !isImageMimeType(mediaType)) {
-        return {};
+        return { warning: createUnsupportedFilePartWarning(mediaType) };
       }
 
       if (typeof fileData.data === 'string') {
@@ -247,7 +252,7 @@ function parseFilePart(part: FileLikePart): FileConversionResult {
 
     case 'url': {
       if (!mediaType || !isImageMimeType(mediaType)) {
-        return {};
+        return { warning: createUnsupportedFilePartWarning(mediaType) };
       }
       const url = fileData.url.toString();
       // Only data: URLs carry inline bytes; other schemes (http, file, blob, ...)

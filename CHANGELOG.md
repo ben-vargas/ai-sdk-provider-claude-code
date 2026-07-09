@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Phase 3 Claude Agent SDK callbacks** - Adds first-class `onSdkMessage`, `onTaskEvent`, `onHookEvent`, `onMcpStatusChange`, `onElicitation`, and `agent` settings so hosts can observe raw SDK messages, task/subagent lifecycle, hook lifecycle, the request's initial MCP server status snapshot, MCP elicitation, and named main-thread agents without reaching through `sdkOptions`.
-- **Query controller API** - Exports `createClaudeCodeQueryController(query)` and the `ClaudeCodeQueryController` type, and adds `onQueryControllerCreated` for safe live-query controls (`interrupt`, `setPermissionMode`, `setModel`, `setMaxThinkingTokens`, `applyFlagSettings`, `mcpServerStatus`, `reconnectMcpServer`, `toggleMcpServer`, `setMcpServers`, `getContextUsage`, `rewindFiles`, `stopTask`, and optional `streamInput`) while keeping the raw SDK `Query` reachable via `controller.rawQuery`. Control-protocol calls require the SDK `Query` to still be live, and most require SDK streaming input/output.
+- **Query controller API** - Exports `createClaudeCodeQueryController(query)` and the `ClaudeCodeQueryController` type, and adds `onQueryControllerCreated` for safe live-query controls (`interrupt`, `setPermissionMode`, `setMcpPermissionModeOverride`, `setModel`, `setMaxThinkingTokens`, `applyFlagSettings`, `mcpServerStatus`, `reconnectMcpServer`, `toggleMcpServer`, `setMcpServers`, `getContextUsage`, `rewindFiles`, `stopTask`, `backgroundTasks`, and optional `streamInput`) while keeping the raw SDK `Query` reachable via `controller.rawQuery`. Control-protocol calls require the SDK `Query` to still be live, and most require SDK streaming input/output.
 - **Phase 3 provider metadata** - Adds `taskEvents`, `hookEvents`, initial MCP server-status snapshots in `mcpServers`, and enriched `permissionDenials` (`agentId`, `decisionReasonType`, and `raw` when available) under `providerMetadata['claude-code']`.
 - **Additional SDK helper re-exports** - Re-exports `resolveSettings`, `filterEscalatingDefaultMode`, `SandboxCredentialsConfig`, and `SDKFilesPersistedEvent`.
 - **Auto image streaming** - With `streamingInput: 'auto'`, supported image payloads now enable the Agent SDK streaming-input path automatically instead of requiring callers to set `streamingInput: 'always'` only for image prompts; `streamingInput: 'off'` disables that path and emits a generic `type: 'other'` image streaming-input warning.
@@ -29,8 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Structured output tool envelope suppressed** - JSON-mode structured output now streams and returns only the object text, without leaking the Agent SDK's internal `StructuredOutput` tool lifecycle as provider-executed tool parts.
+- **JSON-mode tool argument streaming isolated** - Ordinary tool calls in JSON-mode requests no longer leak their argument deltas into response text, emit empty-input tool calls, or produce out-of-order tool-input deltas after the tool call.
 - **Assistant history tool-result replay** - Replayed assistant history now round-trips tool results correctly under the v7 message/content model instead of losing the result context.
 - **Non-data image URL schemes rejected safely** - Image file parts whose URL uses a scheme other than `data:` (for example `file://` or `blob:`) now emit the image-URL warning instead of falling through to the base64 fallback, which previously encoded the URL string itself as image data.
+- **Non-image file parts warn instead of vanishing** - Inline file parts with a non-image media type (for example `application/pdf`) now emit an `Unsupported file part` call warning instead of being silently dropped from the prompt.
 
 ## [3.5.1] - 2026-07-06
 
@@ -100,7 +102,9 @@ This release upgrades the provider to `@anthropic-ai/claude-agent-sdk` 0.3.x (fr
 - **doStream supersedes retraction no longer requires replacement text** - Superseded segments are now evicted from the text accumulators on arrival of the superseding assistant message (matching `doGenerate`), even when the canonical replacement carries no text blocks (e.g. tool_use-only), so retracted text can no longer resurface through the JSON-mode or truncation fallback paths.
 - **`'fable'` recognized as a known model alias** - The model-ID and `agents[].model` typo warnings no longer flag `'fable'`, which the SDK documents as a valid alias.
 
-### Planned for 4.0.0
+### Planned for next major (5.0.0)
+
+(4.0.0 shipped with these settings still deprecated rather than removed; this cleanup remains pending for the next major.)
 
 Deferred breaking cleanups, collected here for visibility:
 

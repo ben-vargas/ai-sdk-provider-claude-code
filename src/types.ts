@@ -135,7 +135,7 @@ export type ClaudeCodeHookEvent =
  * Snapshot of MCP server connection state reported by the provider.
  */
 export interface ClaudeCodeMcpStatusEvent {
-  subtype: 'init' | 'status';
+  subtype: 'init';
   sessionId?: string;
   uuid?: string;
   servers: McpServerStatus[];
@@ -515,9 +515,10 @@ export interface ClaudeCodeSettings {
   onHookEvent?: (event: ClaudeCodeHookEvent) => void | PromiseLike<void>;
 
   /**
-   * Callback invoked with an MCP server status snapshot when the SDK reports
-   * initial or refreshed server state. The payload contains the full server
-   * list for that snapshot rather than one callback per server.
+   * Callback invoked once with the initial MCP server status snapshot observed
+   * from the SDK init message. For live status after runtime MCP changes, call
+   * `controller.mcpServerStatus()` while the query is live and SDK streaming
+   * input/output is active.
    */
   onMcpStatusChange?: (status: ClaudeCodeMcpStatusEvent) => void | PromiseLike<void>;
 

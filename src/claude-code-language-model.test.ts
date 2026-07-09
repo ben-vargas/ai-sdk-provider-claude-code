@@ -5348,6 +5348,14 @@ describe('ClaudeCodeLanguageModel', () => {
         },
       });
 
+      const createIndexlessJsonDeltaEvent = (partialJson: string) => ({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          delta: { type: 'input_json_delta', partial_json: partialJson },
+        },
+      });
+
       const createToolUseStartEvent = (id: string, name: string, index = 0) => ({
         type: 'stream_event',
         event: {
@@ -5401,6 +5409,44 @@ describe('ClaudeCodeLanguageModel', () => {
         expect(textDeltas[1].delta).toBe('"Alice"');
         expect(textDeltas[2].delta).toBe(',"age":');
         expect(textDeltas[3].delta).toBe('30}');
+      });
+
+      it('streams index-less JSON via input_json_delta events in JSON mode', async () => {
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield createIndexlessJsonDeltaEvent('{"status":');
+            yield createIndexlessJsonDeltaEvent('"ok"}');
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'indexless-json-stream-session',
+              structured_output: { status: 'ok' },
+              usage: { input_tokens: 8, output_tokens: 3 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+          responseFormat: { type: 'json', schema: { type: 'object' } },
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        expect(
+          chunks
+            .filter((chunk) => chunk.type === 'text-delta')
+            .map((chunk) => chunk.delta)
+            .join('')
+        ).toBe('{"status":"ok"}');
       });
 
       it('suppresses the internal StructuredOutput tool lifecycle while streaming JSON', async () => {
@@ -5463,6 +5509,148 @@ describe('ClaudeCodeLanguageModel', () => {
             )
           )
         ).toEqual([]);
+        expect(chunks.find((chunk) => chunk.type === 'finish')).toMatchObject({
+          finishReason: { unified: 'stop', raw: 'tool_use' },
+        });
+      });
+
+      it('keeps ordinary tool JSON input out of JSON-mode structured-output text', async () => {
+        const readToolUseId = 'toolu_read_1';
+        const structuredToolUseId = 'toolu_structured_output_1';
+        const readInput = '{"file_path":"/tmp/a.txt"}';
+        const structuredJson = '{"answer":42}';
+        const lifecycleTypes = [
+          'tool-input-start',
+          'tool-input-delta',
+          'tool-input-end',
+          'tool-call',
+        ];
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield createToolUseStartEvent(readToolUseId, 'Read', 0);
+            yield createJsonDeltaEvent('{"file_path":', 0);
+            yield createJsonDeltaEvent('"/tmp/a.txt"}', 0);
+            yield createContentBlockStopEvent(0);
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: readToolUseId,
+                    name: 'Read',
+                    input: { file_path: '/tmp/a.txt' },
+                  },
+                ],
+              },
+            };
+            yield createToolUseStartEvent(structuredToolUseId, 'StructuredOutput', 1);
+            yield createJsonDeltaEvent('{"answer":', 1);
+            yield createJsonDeltaEvent('42}', 1);
+            yield createContentBlockStopEvent(1);
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: structuredToolUseId,
+                    name: 'StructuredOutput',
+                    input: { answer: 42 },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'json-mode-ordinary-tool-session',
+              structured_output: { answer: 42 },
+              stop_reason: 'tool_use',
+              usage: { input_tokens: 14, output_tokens: 6 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Read then answer JSON' }] }],
+          responseFormat: { type: 'json', schema: { type: 'object' } },
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        expect(
+          chunks
+            .filter((chunk) => chunk.type === 'text-delta')
+            .map((chunk) => chunk.delta)
+            .join('')
+        ).toBe(structuredJson);
+
+        const readLifecycleParts = chunks.filter(
+          (chunk) =>
+            lifecycleTypes.includes(chunk.type) &&
+            (chunk.id === readToolUseId || chunk.toolCallId === readToolUseId)
+        );
+        expect(readLifecycleParts.map((chunk) => chunk.type)).toEqual([
+          'tool-input-start',
+          'tool-input-delta',
+          'tool-input-delta',
+          'tool-input-end',
+          'tool-call',
+        ]);
+        expect(readLifecycleParts[0]).toMatchObject({
+          type: 'tool-input-start',
+          id: readToolUseId,
+          toolName: 'Read',
+        });
+        expect(
+          readLifecycleParts
+            .filter((chunk) => chunk.type === 'tool-input-delta')
+            .map((chunk) => chunk.delta)
+            .join('')
+        ).toBe(readInput);
+        expect(readLifecycleParts[3]).toMatchObject({
+          type: 'tool-input-end',
+          id: readToolUseId,
+        });
+        expect(readLifecycleParts[4]).toMatchObject({
+          type: 'tool-call',
+          toolCallId: readToolUseId,
+          toolName: 'Read',
+          input: readInput,
+          providerExecuted: true,
+        });
+
+        expect(
+          chunks.filter(
+            (chunk) =>
+              lifecycleTypes.includes(chunk.type) &&
+              (chunk.id === structuredToolUseId ||
+                chunk.toolCallId === structuredToolUseId ||
+                chunk.toolName === 'StructuredOutput')
+          )
+        ).toEqual([]);
+
+        const readToolCallIndex = chunks.findIndex(
+          (chunk) => chunk.type === 'tool-call' && chunk.toolCallId === readToolUseId
+        );
+        expect(readToolCallIndex).toBeGreaterThanOrEqual(0);
+        expect(
+          chunks.some(
+            (chunk, index) =>
+              index > readToolCallIndex &&
+              chunk.type === 'tool-input-delta' &&
+              chunk.id === readToolUseId
+          )
+        ).toBe(false);
         expect(chunks.find((chunk) => chunk.type === 'finish')).toMatchObject({
           finishReason: { unified: 'stop', raw: 'tool_use' },
         });

@@ -130,7 +130,7 @@ describe('convertToClaudeCodeMessages', () => {
     expect(result.hasImageParts).toBe(false);
   });
 
-  it('should ignore non-image binary file parts gracefully', () => {
+  it('should warn and skip non-image binary file parts', () => {
     const prompt = [
       {
         role: 'user',
@@ -144,7 +144,9 @@ describe('convertToClaudeCodeMessages', () => {
     const result = convertToClaudeCodeMessages(prompt);
 
     expect(result.messagesPrompt).toBe('Human: Check this file:');
-    expect(result.warnings).toBeUndefined();
+    expect(result.warnings).toContain(
+      'Unsupported file part (application/pdf) was ignored; this provider forwards only image file parts inline.'
+    );
   });
 
   it('should warn and skip provider file references', () => {
