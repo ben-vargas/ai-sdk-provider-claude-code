@@ -15,13 +15,13 @@
 
 ## Version Compatibility
 
-| Provider Version | AI SDK Version | Underlying SDK                   | NPM Tag               | Status | Branch      |
-| ---------------- | -------------- | -------------------------------- | --------------------- | ------ | ----------- |
-| 4.x.x            | v7             | `@anthropic-ai/claude-agent-sdk` | `latest`              | Stable | `main`      |
-| 3.x.x            | v6             | `@anthropic-ai/claude-agent-sdk` | `ai-sdk-v6`           | Maintenance | `ai-sdk-v6` |
-| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk` | `ai-sdk-v5`           | Legacy | `ai-sdk-v5` |
-| 1.x.x            | v5             | `@anthropic-ai/claude-code`      | `v1-claude-code-sdk`  | Legacy | `v1`        |
-| 0.x.x            | v4             | `@anthropic-ai/claude-code`      | `ai-sdk-v4`           | Legacy | `ai-sdk-v4` |
+| Provider Version | AI SDK Version | Underlying SDK                   | NPM Tag              | Status      | Branch      |
+| ---------------- | -------------- | -------------------------------- | -------------------- | ----------- | ----------- |
+| 4.x.x            | v7             | `@anthropic-ai/claude-agent-sdk` | `latest`             | Stable      | `main`      |
+| 3.x.x            | v6             | `@anthropic-ai/claude-agent-sdk` | `ai-sdk-v6`          | Maintenance | `ai-sdk-v6` |
+| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk` | `ai-sdk-v5`          | Legacy      | `ai-sdk-v5` |
+| 1.x.x            | v5             | `@anthropic-ai/claude-code`      | `v1-claude-code-sdk` | Legacy      | `v1`        |
+| 0.x.x            | v4             | `@anthropic-ai/claude-code`      | `ai-sdk-v4`          | Legacy      | `ai-sdk-v4` |
 
 Install commands for each line are listed under [Installation](#installation) below.
 
