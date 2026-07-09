@@ -49,12 +49,12 @@ jobs:
           cache: 'npm'
 
       - name: Install pinned dependencies
-        run: npm ci --legacy-peer-deps
+        run: npm ci
 
       - name: Install @anthropic-ai/claude-agent-sdk@latest (not saved)
         # --ignore-scripts: do not run lifecycle scripts from the unpinned
         # @latest package or its transitive deps in a job that holds issues:write.
-        run: npm install --no-save --ignore-scripts --legacy-peer-deps @anthropic-ai/claude-agent-sdk@latest
+        run: npm install --no-save --ignore-scripts @anthropic-ai/claude-agent-sdk@latest
 
       - name: Print resolved SDK version
         run: |

@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **SDK peer lockfile fidelity restored** - Restores the `@anthropic-ai/sdk` and `@modelcontextprotocol/sdk` peer dependency lockfile entries so clean installs get the Agent SDK's full derived type fidelity, and removes the CI `--legacy-peer-deps` flag now that standard peer resolution succeeds.
 - **Structured output tool envelope suppressed** - JSON-mode structured output now streams and returns only the object text, without leaking the Agent SDK's internal `StructuredOutput` tool lifecycle as provider-executed tool parts.
 - **JSON-mode tool argument streaming isolated** - Ordinary tool calls in JSON-mode requests no longer leak their argument deltas into response text, emit empty-input tool calls, or produce out-of-order tool-input deltas after the tool call; server/MCP tool blocks (`server_tool_use` / `mcp_tool_use`) also no longer leak their argument deltas into response text.
 - **Assistant history tool-result replay** - Replayed assistant history now round-trips tool results correctly under the v7 message/content model instead of losing the result context.
