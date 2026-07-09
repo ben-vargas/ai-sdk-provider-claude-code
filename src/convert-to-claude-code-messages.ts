@@ -249,7 +249,14 @@ function parseFilePart(part: FileLikePart): FileConversionResult {
       if (!mediaType || !isImageMimeType(mediaType)) {
         return {};
       }
-      return parseStringImage(fileData.url.toString(), mediaType);
+      const url = fileData.url.toString();
+      // Only data: URLs carry inline bytes; other schemes (http, file, blob, ...)
+      // must not reach parseStringImage's fallback, which would wrap the URL
+      // string itself as base64 image data.
+      if (!/^data:/i.test(url.trim())) {
+        return { warning: IMAGE_URL_WARNING };
+      }
+      return parseStringImage(url, mediaType);
     }
 
     case 'text':

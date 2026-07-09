@@ -1,6 +1,6 @@
 {
   "name": "ai-sdk-provider-claude-code",
-  "version": "3.5.1",
+  "version": "4.0.0",
   "description": "AI SDK v7 provider for Claude via Claude Agent SDK (use Pro/Max subscription)",
   "keywords": [
     "ai-sdk",
@@ -79,7 +79,7 @@
   "dependencies": {
     "@ai-sdk/provider": "^4.0.2",
     "@ai-sdk/provider-utils": "^5.0.5",
-    "@anthropic-ai/claude-agent-sdk": "0.3.197"
+    "@anthropic-ai/claude-agent-sdk": "0.3.205"
   },
   "devDependencies": {
     "@edge-runtime/vm": "5.0.0",
@@ -105,6 +105,6 @@
   },
   "publishConfig": {
     "access": "public",
-    "tag": "beta"
+    "tag": "latest"
   }
 }

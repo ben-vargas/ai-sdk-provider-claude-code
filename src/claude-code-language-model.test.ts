@@ -2163,7 +2163,7 @@ describe('ClaudeCodeLanguageModel', () => {
               });
             }
             attemptObserverMutation(() => {
-              content.push({ type: 'text', text: 'Injected by observer' });
+              content.push({ type: 'text', text: 'Injected by observer', citations: null });
             });
           }
         }

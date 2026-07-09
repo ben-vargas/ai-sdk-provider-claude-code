@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/status-beta-F59E0B" alt="beta status">
+  <img src="https://img.shields.io/badge/status-stable-00A79E" alt="stable status">
   <a href="https://www.npmjs.com/package/ai-sdk-provider-claude-code"><img src="https://img.shields.io/npm/v/ai-sdk-provider-claude-code?color=00A79E" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/ai-sdk-provider-claude-code"><img src="https://img.shields.io/npm/unpacked-size/ai-sdk-provider-claude-code?color=00A79E" alt="install size" /></a>
   <a href="https://www.npmjs.com/package/ai-sdk-provider-claude-code"><img src="https://img.shields.io/npm/dy/ai-sdk-provider-claude-code.svg?color=00A79E" alt="npm downloads" /></a>
@@ -9,7 +9,7 @@
 
 # AI SDK Provider for Claude Agent SDK
 
-> **Latest Release**: Version 3.x remains the `latest` stable line for AI SDK v6. Version 4.x is an AI SDK v7 beta published under the `beta` tag.
+> **Latest Release**: Version 4.x supports AI SDK v7 stable with the Claude Agent SDK. Version 3.x moves to maintenance for AI SDK v6 under the `ai-sdk-v6` tag.
 
 **ai-sdk-provider-claude-code** lets you use Claude via the [Vercel AI SDK](https://sdk.vercel.ai/docs) through the official `@anthropic-ai/claude-agent-sdk` and the Claude Code CLI.
 
@@ -17,8 +17,8 @@
 
 | Provider Version | AI SDK Version | Underlying SDK                   | NPM Tag               | Status | Branch      |
 | ---------------- | -------------- | -------------------------------- | --------------------- | ------ | ----------- |
-| 4.x.x            | v7             | `@anthropic-ai/claude-agent-sdk` | `beta`                | Beta   | `main`      |
-| 3.x.x            | v6             | `@anthropic-ai/claude-agent-sdk` | `latest`, `ai-sdk-v6` | Stable | `ai-sdk-v6` |
+| 4.x.x            | v7             | `@anthropic-ai/claude-agent-sdk` | `latest`              | Stable | `main`      |
+| 3.x.x            | v6             | `@anthropic-ai/claude-agent-sdk` | `ai-sdk-v6`           | Maintenance | `ai-sdk-v6` |
 | 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk` | `ai-sdk-v5`           | Legacy | `ai-sdk-v5` |
 | 1.x.x            | v5             | `@anthropic-ai/claude-code`      | `v1-claude-code-sdk`  | Legacy | `v1`        |
 | 0.x.x            | v4             | `@anthropic-ai/claude-code`      | `ai-sdk-v4`           | Legacy | `ai-sdk-v4` |
@@ -27,10 +27,10 @@ Install commands for each line are listed under [Installation](#installation) be
 
 ## Zod Compatibility
 
-**The 4.x beta line requires Zod `^4.1.8`.** Version 3.x remains on the `latest` stable line during the beta window.
+**The 4.x line requires Zod `^4.1.8`.** Version 3.x remains available for AI SDK v6 under the `ai-sdk-v6` tag.
 
 ```bash
-npm install ai-sdk-provider-claude-code@beta ai zod@^4.1.8
+npm install ai-sdk-provider-claude-code ai zod@^4.1.8
 ```
 
 > **Note:** Zod 3 support was dropped in v3.2.0 due to the underlying `@anthropic-ai/claude-agent-sdk@0.2.x` requiring Zod 4. If you need Zod 3 support, use `ai-sdk-provider-claude-code@3.1.x`.
@@ -49,12 +49,11 @@ claude auth login
 ### 2. Add the provider
 
 ```bash
-# For AI SDK v7 beta (4.x)
-npm install ai-sdk-provider-claude-code@beta ai
+# For AI SDK v7 (4.x; current latest tag)
+npm install ai-sdk-provider-claude-code ai
 
-# For AI SDK v6 stable (3.x; current latest tag)
-npm install ai-sdk-provider-claude-code@latest ai@^6.0.0
-# or explicitly: npm install ai-sdk-provider-claude-code@ai-sdk-v6 ai@^6.0.0
+# For AI SDK v6 maintenance (3.x)
+npm install ai-sdk-provider-claude-code@ai-sdk-v6 ai@^6.0.0
 
 # For AI SDK v5
 npm install ai-sdk-provider-claude-code@ai-sdk-v5 ai@^5.0.0
@@ -76,10 +75,10 @@ Please ensure you have appropriate permissions and comply with all applicable te
 
 ## Quick Start
 
-### AI SDK v7 beta
+### AI SDK v7 (`latest`)
 
 ```typescript
-// npm install ai-sdk-provider-claude-code@beta ai
+// npm install ai-sdk-provider-claude-code ai
 import { streamText } from 'ai';
 import { claudeCode } from 'ai-sdk-provider-claude-code';
 
@@ -92,10 +91,10 @@ const text = await result.text;
 console.log(text);
 ```
 
-### AI SDK v6 (`latest`)
+### AI SDK v6 (maintenance)
 
 ```typescript
-// npm install ai-sdk-provider-claude-code@latest ai@^6.0.0
+// npm install ai-sdk-provider-claude-code@ai-sdk-v6 ai@^6.0.0
 import { streamText } from 'ai';
 import { claudeCode } from 'ai-sdk-provider-claude-code';
 
@@ -126,9 +125,9 @@ console.log(text);
 
 ## Breaking Changes
 
-### Version 4.0.0-beta.1 (AI SDK v7 Beta)
+### Version 4.0.0 (AI SDK v7)
 
-This beta ports the provider to AI SDK v7 / `LanguageModelV4`, adds the Phase 3 Claude Agent SDK callback/controller/MCP/image updates, and keeps the v7 support boundaries explicit:
+This release ports the provider to AI SDK v7 / `LanguageModelV4`, adds the Phase 3 Claude Agent SDK callback/controller/MCP/image updates, and keeps the v7 support boundaries explicit:
 
 - Requires Node.js ≥ 22 and Zod `^4.1.8`
 - ESM-only package output; CommonJS `require()` is no longer available
@@ -138,10 +137,10 @@ This beta ports the provider to AI SDK v7 / `LanguageModelV4`, adds the Phase 3 
 
 Phase 2 intentionally keeps optional provider surfaces absent unless the Claude Agent SDK has a durable provider-reference mapping:
 
-- `ProviderV4.files()` is not implemented yet. The AI SDK interface uploads `{ type: 'data' }` or `{ type: 'text' }` bytes and returns a reusable provider reference, but Claude Agent SDK `0.3.197` exposes no direct upload/reuse API for that contract. This provider accepts inline file data in prompts/tool-result replay where Claude Code can represent it, but it does not upload files into durable provider references.
+- `ProviderV4.files()` is not implemented yet. The AI SDK interface uploads `{ type: 'data' }` or `{ type: 'text' }` bytes and returns a reusable provider reference, but Claude Agent SDK `0.3.205` exposes no direct upload/reuse API for that contract. This provider accepts inline file data in prompts/tool-result replay where Claude Code can represent it, but it does not upload files into durable provider references.
 - `ProviderV4.skills()` is not implemented yet. Claude Code skills are loaded from configured user/project/local skill directories with the existing `skills` setting below; there is no Agent SDK API that uploads a skill bundle and returns an AI SDK provider reference.
 - Workflow serialization is deferred. `@ai-sdk/provider-utils@5.0.5` exposes `WORKFLOW_SERIALIZE`, `WORKFLOW_DESERIALIZE`, and `serializeModelOptions()` for provider model classes in the AI SDK v7 stack, but this provider has not added a serialization contract for provider instances or settings. Callback/function settings such as `canUseTool`, hooks, `logger`, `spawnClaudeCodeProcess`, and `SessionStore` methods are not JSON-serializable and must be recreated by the application.
-- V4 `custom` and `reasoning-file` parts are not emitted as provider output yet. Claude Agent SDK `0.3.197` has no durable reasoning-file artifact output that maps to AI SDK `reasoning-file`; assistant-history `custom` and `reasoning-file` parts have no Claude Code replay representation and are skipped (unknown unsupported content variants still warn).
+- V4 `custom` and `reasoning-file` parts are not emitted as provider output yet. Claude Agent SDK `0.3.205` has no durable reasoning-file artifact output that maps to AI SDK `reasoning-file`; assistant-history `custom` and `reasoning-file` parts have no Claude Code replay representation and are skipped (unknown unsupported content variants still warn).
 
 ### Version 3.0.0 (AI SDK v6 Stable)
 
@@ -473,7 +472,7 @@ const model = claudeCode('sonnet', {
 
 ## Claude Agent SDK 0.3.x Notes
 
-This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.197` (exact pin), because 0.3.198-0.3.202 ship a broken `sdk.d.ts` (`SDKMessage` collapses to `any`); the pin moves only after upstream fixes it. The 0.3.x line introduces a few changes worth knowing about:
+This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.205` (exact pin). The pin is exact rather than a caret because upstream releases have shipped broken `sdk.d.ts` declarations before (0.3.198–0.3.202 collapsed `SDKMessage` to `any`, fixed in 0.3.203); the weekly canary gates each pin move. The 0.3.x line introduces a few changes worth knowing about:
 
 ### New peer dependencies
 

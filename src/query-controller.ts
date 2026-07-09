@@ -12,7 +12,10 @@ type QueryWithOptionalStreamInput = Omit<Query, 'streamInput'> & {
 export function createClaudeCodeQueryController(query: Query): ClaudeCodeQueryController {
   const controller: ClaudeCodeQueryController = {
     rawQuery: query,
-    interrupt: () => query.interrupt(),
+    // SDK 0.3.205 returns the control-protocol response; the public contract stays Promise<void>.
+    interrupt: async () => {
+      await query.interrupt();
+    },
     setPermissionMode: (mode) => query.setPermissionMode(mode),
     setMcpPermissionModeOverride: (serverName, mode) =>
       query.setMcpPermissionModeOverride(serverName, mode),

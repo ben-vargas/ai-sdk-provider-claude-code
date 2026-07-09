@@ -199,6 +199,31 @@ describe('convertToClaudeCodeMessages (images)', () => {
     expect(result.streamingContentParts).toHaveLength(1);
   });
 
+  it('warns and skips non-data image URL schemes instead of encoding the URL string', () => {
+    const prompt = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Local image' },
+          {
+            type: 'file',
+            mediaType: 'image/png',
+            data: { type: 'url', url: new URL('file:///tmp/image.png') },
+          },
+        ],
+      },
+    ] satisfies LanguageModelV4Prompt;
+
+    const result = convertToClaudeCodeMessages(prompt);
+
+    expect(result.hasImageParts).toBe(false);
+    expect(result.warnings).toContain(
+      'Image URLs are not supported by this provider; supply base64/data URLs.'
+    );
+    expect(result.streamingContentParts).toHaveLength(1);
+    expect(JSON.stringify(result.streamingContentParts)).not.toContain('file:///tmp/image.png');
+  });
+
   it('accepts file parts with image media type', () => {
     const prompt = [
       {
