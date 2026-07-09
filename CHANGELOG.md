@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Structured output tool envelope suppressed** - JSON-mode structured output now streams and returns only the object text, without leaking the Agent SDK's internal `StructuredOutput` tool lifecycle as provider-executed tool parts.
-- **JSON-mode tool argument streaming isolated** - Ordinary tool calls in JSON-mode requests no longer leak their argument deltas into response text, emit empty-input tool calls, or produce out-of-order tool-input deltas after the tool call.
+- **JSON-mode tool argument streaming isolated** - Ordinary tool calls in JSON-mode requests no longer leak their argument deltas into response text, emit empty-input tool calls, or produce out-of-order tool-input deltas after the tool call; server/MCP tool blocks (`server_tool_use` / `mcp_tool_use`) also no longer leak their argument deltas into response text.
 - **Assistant history tool-result replay** - Replayed assistant history now round-trips tool results correctly under the v7 message/content model instead of losing the result context.
 - **Non-data image URL schemes rejected safely** - Image file parts whose URL uses a scheme other than `data:` (for example `file://` or `blob:`) now emit the image-URL warning instead of falling through to the base64 fallback, which previously encoded the URL string itself as image data.
 - **Non-image file parts warn instead of vanishing** - Inline file parts with a non-image media type (for example `application/pdf`) now emit an `Unsupported file part` call warning instead of being silently dropped from the prompt.

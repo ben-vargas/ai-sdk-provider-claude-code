@@ -146,6 +146,10 @@ function isInternalStructuredOutputTool(
   );
 }
 
+function isNonTextToolUseContentBlockType(type: unknown): boolean {
+  return type === 'server_tool_use' || type === 'mcp_tool_use';
+}
+
 /**
  * Attempts to recover a JSON object/array from prose text returned when the
  * CLI silently skipped structured output. Tries the trimmed text first, then
@@ -3571,6 +3575,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
         // Content block streaming: Map block indices to tool IDs and accumulated JSON
         const toolBlocksByIndex = new Map<number, string>();
         const structuredOutputBlockIndexes = new Set<number>();
+        const nonTextToolBlockIndexes = new Set<number>();
         const toolInputAccumulators = new Map<string, string>();
 
         // Track text content blocks by index for correlating text_delta with text parts
@@ -3744,7 +3749,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
                 const isStructuredOutputDelta =
                   structuredOutputBlockIndexes.has(blockIndex) ||
-                  !toolBlocksByIndex.has(blockIndex);
+                  (!toolBlocksByIndex.has(blockIndex) && !nonTextToolBlockIndexes.has(blockIndex));
 
                 // In JSON mode, only the SDK's internal StructuredOutput tool streams object
                 // JSON as response text. Ordinary tool_use blocks still use input_json_delta
@@ -3784,7 +3789,22 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                   });
                   continue;
                 }
-                // input_json_delta without tool context in non-JSON mode is ignored
+                // input_json_delta without tool context is ignored. In JSON mode this includes
+                // tracked non-text tool blocks such as server/MCP tool use.
+              }
+
+              // Handle non-text tool blocks that stream args via input_json_delta but should not
+              // surface as AI SDK tool-call lifecycle parts in this provider.
+              if (
+                event.type === 'content_block_start' &&
+                'content_block' in event &&
+                isNonTextToolUseContentBlockType(event.content_block?.type)
+              ) {
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
+                hasReceivedStreamEvents = true;
+                nonTextToolBlockIndexes.add(blockIndex);
+                structuredOutputBlockIndexes.delete(blockIndex);
+                continue;
               }
 
               // Handle content_block_start for tool_use - emit tool-input-start immediately
@@ -3809,6 +3829,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                     : ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
 
                 hasReceivedStreamEvents = true;
+                // A reused index cannot still belong to a non-text tool block.
+                nonTextToolBlockIndexes.delete(blockIndex);
 
                 if (isInternalStructuredOutputTool(toolName, options)) {
                   structuredOutputBlockIndexes.add(blockIndex);
@@ -4021,6 +4043,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 }
 
                 if (structuredOutputBlockIndexes.delete(blockIndex)) {
+                  continue;
+                }
+
+                if (nonTextToolBlockIndexes.delete(blockIndex)) {
                   continue;
                 }
 

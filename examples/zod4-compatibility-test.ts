@@ -294,7 +294,7 @@ async function main() {
   } catch (error) {
     console.error('❌ Error:', error);
     console.log('\n💡 Make sure you have Zod 4.x installed:');
-    console.log('   npm install zod@^4.0.0');
+    console.log('   npm install zod@^4.1.8');
     process.exit(1);
   }
 }

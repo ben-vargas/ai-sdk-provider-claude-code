@@ -5365,6 +5365,15 @@ describe('ClaudeCodeLanguageModel', () => {
         },
       });
 
+      const createServerToolUseStartEvent = (id: string, name: string, index = 0) => ({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_start',
+          index,
+          content_block: { type: 'server_tool_use', id, name },
+        },
+      });
+
       const createContentBlockStopEvent = (index = 0) => ({
         type: 'stream_event',
         event: { type: 'content_block_stop', index },
@@ -5653,6 +5662,81 @@ describe('ClaudeCodeLanguageModel', () => {
         ).toBe(false);
         expect(chunks.find((chunk) => chunk.type === 'finish')).toMatchObject({
           finishReason: { unified: 'stop', raw: 'tool_use' },
+        });
+      });
+
+      it('keeps server tool JSON input out of JSON-mode structured-output text', async () => {
+        const serverToolUseId = 'srv_1';
+        const structuredToolUseId = 'toolu_structured_output_server_tool_1';
+        const structuredJson = '{"answer":42}';
+        const lifecycleTypes = [
+          'tool-input-start',
+          'tool-input-delta',
+          'tool-input-end',
+          'tool-call',
+        ];
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield createServerToolUseStartEvent(serverToolUseId, 'web_search', 0);
+            yield createJsonDeltaEvent('{"query":"x"}', 0);
+            yield createContentBlockStopEvent(0);
+            yield createToolUseStartEvent(structuredToolUseId, 'StructuredOutput', 1);
+            yield createJsonDeltaEvent('{"answer":', 1);
+            yield createJsonDeltaEvent('42}', 1);
+            yield createContentBlockStopEvent(1);
+            yield {
+              type: 'assistant',
+              message: {
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: structuredToolUseId,
+                    name: 'StructuredOutput',
+                    input: { answer: 42 },
+                  },
+                ],
+              },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'json-mode-server-tool-session',
+              structured_output: { answer: 42 },
+              stop_reason: 'tool_use',
+              usage: { input_tokens: 14, output_tokens: 6 },
+            };
+          },
+        };
+
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Search then answer JSON' }] }],
+          responseFormat: { type: 'json', schema: { type: 'object' } },
+        });
+
+        const chunks: any[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        expect(
+          chunks
+            .filter((chunk) => chunk.type === 'text-delta')
+            .map((chunk) => chunk.delta)
+            .join('')
+        ).toBe(structuredJson);
+        expect(chunks.filter((chunk) => lifecycleTypes.includes(chunk.type))).toEqual([]);
+        expect(chunks.find((chunk) => chunk.type === 'finish')).toMatchObject({
+          finishReason: { unified: 'stop', raw: 'tool_use' },
+          providerMetadata: {
+            'claude-code': {
+              sessionId: 'json-mode-server-tool-session',
+            },
+          },
         });
       });
 
