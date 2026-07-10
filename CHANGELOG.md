@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.2] - 2026-07-10
+
+### Changed
+
+- **`@anthropic-ai/claude-agent-sdk` floor raised to `^0.3.205`** - The previous range (`^0.3.170`) still admitted the `0.3.198`–`0.3.202` releases whose published `sdk.d.ts` referenced undeclared `SDKMessage` union members (upstream anthropics/claude-agent-sdk-typescript#363, fixed in `0.3.203`), so a constrained resolver or stale lockfile could settle on a broken-types SDK while satisfying the declared range. The new floor excludes that window. Fresh installs already resolved above it; compatibility with current `@latest` (`0.3.206`) is verified by the SDK canary on this branch. No runtime behavior changes.
+
 ## [3.5.1] - 2026-07-06
 
 ### Fixed
