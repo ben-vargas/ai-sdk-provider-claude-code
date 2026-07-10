@@ -399,9 +399,7 @@ describe('validateSettings', () => {
     const result = validateSettings({ onPromptSuggestion: () => {} });
 
     expect(result.valid).toBe(true);
-    expect(result.warnings.some((w) => w.includes('onPromptSuggestion is registered'))).toBe(
-      true
-    );
+    expect(result.warnings.some((w) => w.includes('onPromptSuggestion is registered'))).toBe(true);
   });
 
   it('should warn when onPromptSuggestion is set and promptSuggestions is false', () => {
@@ -411,9 +409,7 @@ describe('validateSettings', () => {
     });
 
     expect(result.valid).toBe(true);
-    expect(result.warnings.some((w) => w.includes('onPromptSuggestion is registered'))).toBe(
-      true
-    );
+    expect(result.warnings.some((w) => w.includes('onPromptSuggestion is registered'))).toBe(true);
   });
 
   it('should not warn when onPromptSuggestion is set and promptSuggestions is true', () => {
@@ -423,9 +419,7 @@ describe('validateSettings', () => {
     });
 
     expect(result.valid).toBe(true);
-    expect(result.warnings.some((w) => w.includes('onPromptSuggestion is registered'))).toBe(
-      false
-    );
+    expect(result.warnings.some((w) => w.includes('onPromptSuggestion is registered'))).toBe(false);
   });
 
   it('should not warn when sdkOptions enables promptSuggestions', () => {
@@ -436,9 +430,7 @@ describe('validateSettings', () => {
     });
 
     expect(result.valid).toBe(true);
-    expect(result.warnings.some((w) => w.includes('onPromptSuggestion is registered'))).toBe(
-      false
-    );
+    expect(result.warnings.some((w) => w.includes('onPromptSuggestion is registered'))).toBe(false);
   });
 
   it('should not warn when onPromptSuggestion is absent', () => {

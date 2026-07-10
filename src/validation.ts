@@ -516,10 +516,7 @@ export function validateSettings(settings: unknown): {
       );
     }
 
-    if (
-      validSettings.onPromptSuggestion !== undefined &&
-      effective('promptSuggestions') !== true
-    ) {
+    if (validSettings.onPromptSuggestion !== undefined && effective('promptSuggestions') !== true) {
       warnings.push(
         'onPromptSuggestion is registered but promptSuggestions is not enabled. The CLI only emits prompt_suggestion messages when promptSuggestions is true, so the callback will never fire. Set promptSuggestions: true.'
       );
