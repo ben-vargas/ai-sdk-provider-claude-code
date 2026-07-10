@@ -7,7 +7,7 @@
  *   back to the normal permission system (rules, canUseTool, etc.)
  * - A canUseTool callback (the permission system those undecided calls land
  *   in) that denies Bash at call time
- * - The denial surfacing in providerMetadata['claude-code'].permissionDenials
+ * - The denial surfacing in finalStep.providerMetadata['claude-code'].permissionDenials
  *   (from the result message's permission_denials list)
  *
  * Notes on what does / does not trigger a visible denial (CLI 2.1.x):
@@ -37,16 +37,20 @@ import { createClaudeCode } from '../dist/index.js';
 // decision, which defers the call to the permission system (canUseTool).
 // Note: do NOT return permissionDecision 'defer' here when canUseTool is
 // set — see the header note.
-const preToolHook = async (input: any) => {
-  if (input.hook_event_name === 'PreToolUse') {
-    if (input.tool_name === 'Read' || input.tool_name === 'Glob') {
-      console.log(`✅ PreToolUse: allowing ${input.tool_name}`);
+const preToolHook = async (input: unknown) => {
+  const hookInput = typeof input === 'object' && input !== null ? input : {};
+  const hookEventName = 'hook_event_name' in hookInput ? hookInput.hook_event_name : undefined;
+  const toolName = 'tool_name' in hookInput ? String(hookInput.tool_name) : 'unknown';
+
+  if (hookEventName === 'PreToolUse') {
+    if (toolName === 'Read' || toolName === 'Glob') {
+      console.log(`✅ PreToolUse: allowing ${toolName}`);
       return {
         continue: true,
         hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' },
       };
     }
-    console.log(`🤷 PreToolUse: no decision for ${input.tool_name} (permission system decides)`);
+    console.log(`🤷 PreToolUse: no decision for ${toolName} (permission system decides)`);
     return { continue: true };
   }
   return { continue: true };
@@ -54,9 +58,14 @@ const preToolHook = async (input: any) => {
 
 // PermissionDenied hook: fires when the CLI auto-denies a tool call internally
 // (currently only the permissionMode 'auto' classifier — see header note).
-const permissionDeniedHook = async (input: any) => {
-  if (input.hook_event_name === 'PermissionDenied') {
-    console.log(`🚫 PermissionDenied: ${input.tool_name} — ${input.reason}`);
+const permissionDeniedHook = async (input: unknown) => {
+  const hookInput = typeof input === 'object' && input !== null ? input : {};
+  const hookEventName = 'hook_event_name' in hookInput ? hookInput.hook_event_name : undefined;
+  const toolName = 'tool_name' in hookInput ? String(hookInput.tool_name) : 'unknown';
+  const reason = 'reason' in hookInput ? String(hookInput.reason) : 'unknown reason';
+
+  if (hookEventName === 'PermissionDenied') {
+    console.log(`🚫 PermissionDenied: ${toolName} — ${reason}`);
   }
   return { continue: true };
 };
@@ -110,9 +119,9 @@ async function main() {
   }
   console.log('Response:', text.trim());
 
-  const metadata = (await result.providerMetadata)?.['claude-code'];
+  const metadata = (await result.finalStep).providerMetadata?.['claude-code'];
   if (metadata?.permissionDenials) {
-    console.log('Permission denials (providerMetadata):', metadata.permissionDenials);
+    console.log('Permission denials (finalStep.providerMetadata):', metadata.permissionDenials);
   }
 }
 

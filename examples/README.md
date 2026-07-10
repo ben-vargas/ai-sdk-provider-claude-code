@@ -2,7 +2,7 @@
 
 This directory contains curated examples demonstrating the most important features of the Claude Code AI SDK Provider. Each example serves a specific purpose and demonstrates a key pattern or capability.
 
-> **Note**: These examples are written for Vercel AI SDK v5. If you're using AI SDK v4, please refer to the v4 branch.
+> **Note**: These examples are written for Vercel AI SDK v7. Use the maintenance branches for older AI SDK versions.
 
 ## Prerequisites
 
@@ -55,7 +55,7 @@ npx tsx examples/streaming.ts
 npx tsx examples/tool-streaming.ts
 ```
 
-**Key concepts**: Tool streaming, provider-executed tools, detailed stream inspection
+**Key concepts**: AI SDK tool stream parts, provider-executed Claude Code tools, `canUseTool` allow callback, detailed stream inspection
 
 ### 4. Images (`images.ts`)
 
@@ -65,7 +65,7 @@ npx tsx examples/tool-streaming.ts
 npx tsx examples/images.ts /absolute/path/to/image.png
 ```
 
-**Key concepts**: Image data URLs, streaming prerequisite, multimodal prompts
+**Key concepts**: Local image bytes, AI SDK v7 file parts, default `streamingInput: 'auto'` image streaming, multimodal prompts
 
 ### 5. Conversation History (`conversation-history.ts`)
 
@@ -173,13 +173,13 @@ npx tsx examples/abort-signal.ts
 
 ### 14. Hooks & Callbacks (`hooks-callbacks.ts`)
 
-**Purpose**: Use lifecycle hooks and dynamic permission callbacks.
+**Purpose**: Use lifecycle hooks to observe and allow Claude Code built-in tool use.
 
 ```bash
 npx tsx examples/hooks-callbacks.ts
 ```
 
-**Key concepts**: PreToolUse/PostToolUse hooks, canUseTool callback, permission control, event lifecycle
+**Key concepts**: PreToolUse/PostToolUse hooks, hook-specific `permissionDecision`, built-in tool lifecycle logging
 
 ### 15. SDK Tools (`sdk-tools-callbacks.ts`)
 
@@ -205,7 +205,7 @@ Optional: pass a specific directory to scope filesystem access:
 npx tsx examples/mcp-filesystem.ts /absolute/path/to/inspect
 ```
 
-**Key concepts**: `mcpServers` stdio config, external MCP transport, MCP tool allowlists, read-only MCP permissions
+**Key concepts**: `mcpServers` stdio config, external MCP transport, MCP tool allowlists, read-only MCP permissions, streamed MCP tool parts
 
 Tip: examples run with concise logs by default. Set `CLAUDE_EXAMPLE_VERBOSE=1` to see low-level provider debug traces.
 
@@ -287,7 +287,7 @@ npx tsx examples/generate-object-constraints.ts
 npx tsx examples/stream-object.ts
 ```
 
-**Key concepts**: Partial object streaming, real-time updates, field-by-field progress, `streamObject()` API
+**Key concepts**: Partial output streaming, real-time updates, field-by-field progress, `streamText()` with `Output.object()`
 
 ### 24. Structured Output Repro (`structured-output-repro.ts`)
 
@@ -341,7 +341,7 @@ npx tsx examples/limitations.ts
 npx tsx examples/session-management.ts
 ```
 
-**Key concepts**: `providerMetadata['claude-code'].sessionId`, `resume` setting, `forkSession()`, `getSessionInfo()`, `deleteSession()`
+**Key concepts**: `finalStep.providerMetadata['claude-code'].sessionId`, `resume` setting, `forkSession()`, `getSessionInfo()`, `deleteSession()`
 
 **What you'll see**: A session created and resumed (context carries over), forked into a new session ID without running a query, inspected via session metadata, and cleaned up from `~/.claude/projects/`. See [docs/sessions.md](../docs/sessions.md) for the full guide.
 
@@ -349,13 +349,13 @@ npx tsx examples/session-management.ts
 
 ### 29. Permission Hooks (`hooks-permission-denied.ts`)
 
-**Purpose**: Use the SDK 0.3.x permission vocabulary in hooks - a PreToolUse hook that allows known-safe tools (and makes no decision for the rest, handing them to the permission system), a `canUseTool` callback that denies Bash at call time, and the denial surfacing in provider metadata.
+**Purpose**: Use the SDK 0.3.x permission vocabulary in hooks - a PreToolUse hook that allows known-safe tools (and makes no decision for the rest, handing them to the permission system), a `canUseTool` callback that denies Bash at call time, and the denial surfacing in `finalStep.providerMetadata`.
 
 ```bash
 npx tsx examples/hooks-permission-denied.ts
 ```
 
-**Key concepts**: PreToolUse `'allow'` decision vs. no decision (hand the call to the permission system), `canUseTool` call-time deny (note: `disallowedTools` and blanket deny rules remove the tool up front, so no denial would ever fire; an explicit PreToolUse `'defer'` currently breaks canUseTool routing in CLI 2.1.x), PermissionDenied hook (fires only for CLI-internal auto-denials, e.g. the `permissionMode: 'auto'` classifier), `providerMetadata['claude-code'].permissionDenials`
+**Key concepts**: PreToolUse `'allow'` decision vs. no decision (hand the call to the permission system), `canUseTool` call-time deny (note: `disallowedTools` and blanket deny rules remove the tool up front, so no denial would ever fire; an explicit PreToolUse `'defer'` currently breaks canUseTool routing in CLI 2.1.x), PermissionDenied hook (fires only for CLI-internal auto-denials, e.g. the `permissionMode: 'auto'` classifier), `finalStep.providerMetadata['claude-code'].permissionDenials`
 
 ## AI SDK Tool Bridging
 
@@ -367,9 +367,9 @@ npx tsx examples/hooks-permission-denied.ts
 npx tsx examples/ai-sdk-tools.ts
 ```
 
-**Key concepts**: `createAiSdkMcpServer`, `mcpServers` setting, `allowedTools` with `mcp__<serverName>__<toolName>` naming, provider-executed dynamic tool parts
+**Key concepts**: `createAiSdkMcpServer`, `mcpServers` setting, `allowedTools` with `mcp__<serverName>__<toolName>` naming, provider-executed dynamic tool parts; AI SDK call-level `toolApproval` does not approve these MCP-routed Claude Code tool calls
 
-**What you'll see**: AI SDK tools (Zod schemas, `execute` functions) running in-process via `generateText` and `streamText`. Tool calls/results surface as provider-executed dynamic tool parts on both paths: in the `generateText` steps content and in the `streamText` fullStream (plus an in-process `execute()` log showing the bridged tool actually running locally).
+**What you'll see**: AI SDK tools (Zod schemas, `execute` functions) running in-process via `generateText` and `streamText`. Tool calls/results surface as provider-executed dynamic tool parts on both paths: in the `generateText` steps content and in the `streamText` stream (plus an in-process `execute()` log showing the bridged tool actually running locally).
 
 ## Warm Start & Timing
 
@@ -381,19 +381,19 @@ npx tsx examples/ai-sdk-tools.ts
 npx tsx examples/warm-start.ts
 ```
 
-**Key concepts**: `startup()` / `WarmQuery` (pre-spawned CLI subprocess, one query per handle, `close()`/AsyncDisposable cleanup), timing metadata in `providerMetadata['claude-code']` (`ttftMs`, `ttftStreamMs`, `timeToRequestMs`, `warmSpareClaimed` — absence vs `false` distinguishable), driving the raw SDK message stream directly, since `WarmQuery` cannot accelerate `generateText`/`streamText`
+**Key concepts**: `startup()` / `WarmQuery` (pre-spawned CLI subprocess, one query per handle, `close()`/AsyncDisposable cleanup), timing metadata in `finalStep.providerMetadata['claude-code']` (`ttftMs`, `ttftStreamMs`, `timeToRequestMs`, `warmSpareClaimed` — absence vs `false` distinguishable), driving the raw SDK message stream directly, since `WarmQuery` cannot accelerate `generateText`/`streamText`
 
 ## Context Usage
 
 ### 32. Context Usage (`context-usage.ts`)
 
-**Purpose**: Read the session's context-window usage via `onQueryCreated` + a Stop hook calling `query.getContextUsage()`, including why a late call fails.
+**Purpose**: Read the session's context-window usage via `onQueryControllerCreated` + `streamingInput: 'always'` + a Stop hook calling `controller.getContextUsage()`, including why a late call fails.
 
 ```bash
 npx tsx examples/context-usage.ts
 ```
 
-**Key concepts**: `onQueryCreated`, Stop hook timing (query must still be live), `getContextUsage()` breakdown (used/remaining tokens per category)
+**Key concepts**: `onQueryControllerCreated`, `ClaudeCodeQueryController`, `streamingInput: 'always'` for Agent SDK control requests, Stop hook timing (query must still be live), `getContextUsage()` breakdown (used/remaining tokens per category), `controller.rawQuery` escape hatch
 
 ## Prompt Suggestions
 
@@ -405,7 +405,7 @@ npx tsx examples/context-usage.ts
 npx tsx examples/prompt-suggestions.ts
 ```
 
-**Key concepts**: Post-finish delivery (suggestion arrives after the result message, so it is a callback rather than providerMetadata — bridge with a promise + bounded race), bounded drain (provider stops at the first suggestion, 10s cap, at most one suggestion per turn), gating (suggestions are enabled when `promptSuggestions` is `true` or left unset, and disabled only when explicitly `false`)
+**Key concepts**: Post-finish delivery (suggestion arrives after the result message, so it is a callback rather than final-step provider metadata — bridge with a promise + bounded race), bounded drain (provider stops at the first suggestion, 10s cap, at most one suggestion per turn), gating (suggestions require `promptSuggestions: true`; unset or `false` both disable them)
 
 ## Skills Option
 
@@ -424,17 +424,19 @@ npx tsx examples/skills-option.ts
 ### Object Generation
 
 ```typescript
-import { generateObject } from 'ai';
+import { generateText, Output } from 'ai';
 import { z } from 'zod';
 
-const { object } = await generateObject({
+const { output: object } = await generateText({
   model: claudeCode('haiku'),
-  schema: z.object({
-    name: z.string(),
-    age: z.number(),
-    // .email() works: the provider strips the `format` keyword for the CLI
-    // (folding the hint into the description) and Zod validates client-side.
-    email: z.string().email(),
+  output: Output.object({
+    schema: z.object({
+      name: z.string(),
+      age: z.number(),
+      // .email() works: the provider strips the `format` keyword for the CLI
+      // (folding the hint into the description) and Zod validates client-side.
+      email: z.string().email(),
+    }),
   }),
   prompt: 'Generate a random user profile',
 });
@@ -551,8 +553,8 @@ const result4 = streamText({
 | --------------------------- | ---------------------- | ----------------------- |
 | basic-usage                 | Getting started        | Simple text generation  |
 | streaming                   | Responsive UIs         | Real-time output        |
-| tool-streaming              | Tool observability     | Tool event inspection   |
-| images                      | Multimodal prompts     | Image input support     |
+| tool-streaming              | Tool observability     | Tool stream parts       |
+| images                      | Multimodal prompts     | Image file parts        |
 | conversation-history        | Chatbots               | Context preservation    |
 | logging-default             | Default behavior       | Warn/error only         |
 | logging-verbose             | Development/debugging  | All log levels          |
@@ -568,7 +570,7 @@ const result4 = streamText({
 | skills-option               | Skills enablement      | `skills` allowlist      |
 | session-management          | Session lifecycle      | Resume, fork, inspect   |
 | warm-start                  | Latency optimization   | startup()/WarmQuery     |
-| context-usage               | Context monitoring     | getContextUsage()       |
+| context-usage               | Context monitoring     | Live Query controller   |
 | prompt-suggestions          | Next-prompt prediction | onPromptSuggestion      |
 | long-running-tasks          | Complex reasoning      | Timeout handling        |
 | generate-object             | Object generation      | Core patterns & nesting |
@@ -584,7 +586,7 @@ const result4 = streamText({
 3. **Logging**: `logging-default.ts` → `logging-verbose.ts` → `logging-custom-logger.ts` → `logging-disabled.ts`
 4. **Object Generation**: `generate-object.ts` → `generate-object-constraints.ts` → `stream-object.ts`
 5. **Advanced**: `custom-config.ts` → `tool-management.ts` → `skills-management.ts` → `skills-option.ts` → `hooks-callbacks.ts` → `sdk-tools-callbacks.ts` → `ai-sdk-tools.ts` → `session-management.ts` → `long-running-tasks.ts`
-6. **SDK 0.3.x features**: `warm-start.ts` → `context-usage.ts` → `prompt-suggestions.ts`
+6. **SDK 0.3.x features**: `warm-start.ts` → `context-usage.ts` → `prompt-suggestions.ts` (plus the callback/controller settings documented in the main README)
 7. **Testing/Troubleshooting**: Run `integration-test.ts`, then `structured-output-repro.ts` and `limitations.ts` if behavior seems off
 
 For more details, see the main [README](../README.md).

@@ -2,7 +2,7 @@
  * Example: Session Management
  *
  * Demonstrates the full session lifecycle:
- * 1. Create a session with generateText (capture the session ID from providerMetadata)
+ * 1. Create a session with generateText (capture the session ID from finalStep.providerMetadata)
  * 2. Resume the session (context carries over)
  * 3. Fork the stored transcript with forkSession() — no query needed
  * 4. Inspect both sessions with getSessionInfo()
@@ -40,9 +40,11 @@ async function main() {
     });
     console.log('Assistant:', first.text);
 
-    const sessionId = first.providerMetadata?.['claude-code']?.sessionId as string | undefined;
+    const sessionId = first.finalStep.providerMetadata?.['claude-code']?.sessionId as
+      | string
+      | undefined;
     if (!sessionId) {
-      throw new Error('No session ID in providerMetadata — cannot continue.');
+      throw new Error('No session ID in finalStep.providerMetadata — cannot continue.');
     }
     console.log('Session ID:', sessionId);
     createdSessionIds.push(sessionId);

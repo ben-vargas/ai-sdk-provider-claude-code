@@ -5,6 +5,7 @@
  * additional user message via the underlying Query object.
  */
 
+import { randomUUID } from 'node:crypto';
 import { streamText } from 'ai';
 import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import { claudeCode, type Query } from '../dist/index.js';
@@ -44,7 +45,7 @@ async function main() {
   let activeQuery: Query | undefined;
   let injected = false;
   let streamedChars = 0;
-  let sessionId: string | undefined;
+  const sessionId = randomUUID();
 
   const tryInject = async () => {
     if (injected || !activeQuery) return;
@@ -55,7 +56,7 @@ async function main() {
       await activeQuery.streamInput(
         singleMessage(
           'Mid-stream update: switch to nautical metaphors and add a short 3-bullet list of benefits.',
-          sessionId ?? ''
+          sessionId
         )
       );
       console.log('\n\n[Injected a mid-stream update]\n');
@@ -65,6 +66,7 @@ async function main() {
   };
 
   const model = claudeCode('sonnet', {
+    sessionId,
     streamingInput: 'always',
     canUseTool: allowAllTools,
     permissionMode: 'bypassPermissions',
@@ -84,35 +86,20 @@ async function main() {
 
   console.log('--- Streaming response (watch for the tone shift) ---\n');
 
-  const stream = result.fullStream as AsyncIterable<unknown>;
+  const stream = result.stream;
 
   for await (const part of stream) {
-    if (!part || typeof part !== 'object') continue;
-    const typed = part as {
-      type?: string;
-      id?: string;
-      delta?: unknown;
-      text?: unknown;
-    };
-
-    if (typed.type === 'response-metadata') {
-      sessionId = typed.id;
+    if (part.type === 'tool-call') {
       void tryInject();
+      continue;
     }
 
-    if (typed.type === 'tool-call') {
-      void tryInject();
-    }
+    if (part.type === 'text-delta') {
+      process.stdout.write(part.text);
+      streamedChars += part.text.length;
 
-    if (typed.type === 'text-delta') {
-      const chunk = typed.delta ?? typed.text;
-      if (typeof chunk === 'string') {
-        process.stdout.write(chunk);
-        streamedChars += chunk.length;
-
-        if (streamedChars > 200) {
-          void tryInject();
-        }
+      if (streamedChars > 200) {
+        void tryInject();
       }
     }
   }

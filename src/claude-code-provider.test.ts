@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { NoSuchModelError } from '@ai-sdk/provider';
 import { createClaudeCode } from './claude-code-provider.js';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
 
@@ -7,6 +8,20 @@ describe('createClaudeCode', () => {
     const provider = createClaudeCode();
     expect(provider).toBeDefined();
     expect(typeof provider).toBe('function');
+  });
+
+  it('should expose ProviderV4 metadata', () => {
+    const provider = createClaudeCode();
+    expect(provider.specificationVersion).toBe('v4');
+  });
+
+  it('should leave optional ProviderV4 files and skills interfaces absent', () => {
+    const provider = createClaudeCode();
+
+    expect('files' in provider).toBe(false);
+    expect(provider.files).toBeUndefined();
+    expect('skills' in provider).toBe(false);
+    expect(provider.skills).toBeUndefined();
   });
 
   it('should create a provider with custom settings', () => {
@@ -81,6 +96,36 @@ describe('createClaudeCode', () => {
 
     expect(model).toBeInstanceOf(ClaudeCodeLanguageModel);
     expect(model.modelId).toBe('opus');
+  });
+
+  it('should throw NoSuchModelError for unsupported embedding models', () => {
+    const provider = createClaudeCode();
+    let thrown: unknown;
+
+    try {
+      provider.embeddingModel('test-embedding-model');
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(NoSuchModelError);
+    expect((thrown as NoSuchModelError).modelId).toBe('test-embedding-model');
+    expect((thrown as NoSuchModelError).modelType).toBe('embeddingModel');
+  });
+
+  it('should throw NoSuchModelError for unsupported image models', () => {
+    const provider = createClaudeCode();
+    let thrown: unknown;
+
+    try {
+      provider.imageModel('test-image-model');
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(NoSuchModelError);
+    expect((thrown as NoSuchModelError).modelId).toBe('test-image-model');
+    expect((thrown as NoSuchModelError).modelType).toBe('imageModel');
   });
 });
 

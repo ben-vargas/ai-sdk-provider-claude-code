@@ -3,7 +3,7 @@
 /**
  * Object Generation Examples
  *
- * Demonstrates core generateObject patterns with the Claude Code provider,
+ * Demonstrates AI SDK v7 Output.object() patterns with the Claude Code provider,
  * progressing from simple to complex.
  *
  * Topics covered:
@@ -21,7 +21,7 @@
  */
 
 import { createClaudeCode } from '../dist/index.js';
-import { generateObject } from 'ai';
+import { generateText, Output } from 'ai';
 import { z } from 'zod';
 
 const claudeCode = createClaudeCode();
@@ -34,13 +34,15 @@ console.log('=== Claude Code: Object Generation Examples ===\n');
 async function example1_simpleObject() {
   console.log('1. Simple Object with Primitives\n');
 
-  const { object } = await generateObject({
+  const { output: object } = await generateText({
     model: claudeCode('opus'),
-    schema: z.object({
-      name: z.string().describe('Full name of the person'),
-      age: z.number().describe('Age in years'),
-      email: z.string().describe('Email address (e.g. user@example.com)'),
-      isActive: z.boolean().describe('Whether the account is active'),
+    output: Output.object({
+      schema: z.object({
+        name: z.string().describe('Full name of the person'),
+        age: z.number().describe('Age in years'),
+        email: z.string().describe('Email address (e.g. user@example.com)'),
+        isActive: z.boolean().describe('Whether the account is active'),
+      }),
     }),
     prompt: 'Generate a profile for a software developer named Sarah.',
   });
@@ -56,16 +58,18 @@ async function example1_simpleObject() {
 async function example2_arraysAndOptional() {
   console.log('2. Arrays and Optional Fields\n');
 
-  const { object } = await generateObject({
+  const { output: object } = await generateText({
     model: claudeCode('opus'),
-    schema: z.object({
-      productName: z.string().describe('Name of the product'),
-      price: z.number().describe('Price in USD'),
-      description: z.string().describe('Product description'),
-      discount: z.number().optional().describe('Discount percentage if applicable'),
-      tags: z.array(z.string()).optional().describe('Product tags for categorization'),
-      features: z.array(z.string()).describe('Key product features'),
-      inStock: z.boolean().describe('Whether the product is in stock'),
+    output: Output.object({
+      schema: z.object({
+        productName: z.string().describe('Name of the product'),
+        price: z.number().describe('Price in USD'),
+        description: z.string().describe('Product description'),
+        discount: z.number().optional().describe('Discount percentage if applicable'),
+        tags: z.array(z.string()).optional().describe('Product tags for categorization'),
+        features: z.array(z.string()).describe('Key product features'),
+        inStock: z.boolean().describe('Whether the product is in stock'),
+      }),
     }),
     prompt: 'Generate a product listing for a wireless mechanical keyboard.',
   });
@@ -81,28 +85,30 @@ async function example2_arraysAndOptional() {
 async function example3_enumsAndNested() {
   console.log('3. Enums and Nested Objects\n');
 
-  const { object } = await generateObject({
+  const { output: object } = await generateText({
     model: claudeCode('opus'),
-    schema: z.object({
-      id: z.string().describe('Unique user ID'),
-      username: z.string(),
-      profile: z.object({
-        firstName: z.string(),
-        lastName: z.string(),
-        age: z.number().min(0).max(150),
-        email: z.string().describe('Email address (e.g. alex@example.com)'),
-        bio: z.string().describe('Short biography'),
-        interests: z.array(z.string()).describe('List of interests'),
-        location: z.object({
-          city: z.string(),
-          country: z.string(),
-          timezone: z.string(),
+    output: Output.object({
+      schema: z.object({
+        id: z.string().describe('Unique user ID'),
+        username: z.string(),
+        profile: z.object({
+          firstName: z.string(),
+          lastName: z.string(),
+          age: z.number().min(0).max(150),
+          email: z.string().describe('Email address (e.g. alex@example.com)'),
+          bio: z.string().describe('Short biography'),
+          interests: z.array(z.string()).describe('List of interests'),
+          location: z.object({
+            city: z.string(),
+            country: z.string(),
+            timezone: z.string(),
+          }),
         }),
-      }),
-      settings: z.object({
-        theme: z.enum(['light', 'dark', 'auto']),
-        notifications: z.boolean(),
-        language: z.string(),
+        settings: z.object({
+          theme: z.enum(['light', 'dark', 'auto']),
+          notifications: z.boolean(),
+          language: z.string(),
+        }),
       }),
     }),
     prompt:
@@ -120,22 +126,24 @@ async function example3_enumsAndNested() {
 async function example4_arraysOfObjects() {
   console.log('4. Arrays of Objects\n');
 
-  const { object } = await generateObject({
+  const { output: object } = await generateText({
     model: claudeCode('opus'),
-    schema: z.object({
-      name: z.string().describe('Name of the recipe'),
-      ingredients: z
-        .array(
-          z.object({
-            item: z.string(),
-            amount: z.string(),
-          })
-        )
-        .describe('List of ingredients with amounts'),
-      instructions: z.array(z.string()).describe('Step-by-step cooking instructions'),
-      prepTime: z.number().describe('Preparation time in minutes'),
-      cookTime: z.number().describe('Cooking time in minutes'),
-      servings: z.number().describe('Number of servings'),
+    output: Output.object({
+      schema: z.object({
+        name: z.string().describe('Name of the recipe'),
+        ingredients: z
+          .array(
+            z.object({
+              item: z.string(),
+              amount: z.string(),
+            })
+          )
+          .describe('List of ingredients with amounts'),
+        instructions: z.array(z.string()).describe('Step-by-step cooking instructions'),
+        prepTime: z.number().describe('Preparation time in minutes'),
+        cookTime: z.number().describe('Cooking time in minutes'),
+        servings: z.number().describe('Number of servings'),
+      }),
     }),
     prompt: 'Generate a detailed recipe for chocolate chip cookies.',
   });
@@ -151,34 +159,36 @@ async function example4_arraysOfObjects() {
 async function example5_deepNesting() {
   console.log('5. Deep Nesting (3+ Levels)\n');
 
-  const { object } = await generateObject({
+  const { output: object } = await generateText({
     model: claudeCode('opus'),
-    schema: z.object({
-      company: z.object({
-        name: z.string().describe('Company name'),
-        founded: z.number().describe('Year founded'),
-        headquarters: z.object({
-          city: z.string(),
-          country: z.string(),
-          timezone: z.string(),
+    output: Output.object({
+      schema: z.object({
+        company: z.object({
+          name: z.string().describe('Company name'),
+          founded: z.number().describe('Year founded'),
+          headquarters: z.object({
+            city: z.string(),
+            country: z.string(),
+            timezone: z.string(),
+          }),
+          departments: z
+            .array(
+              z.object({
+                name: z.string().describe('Department name'),
+                budget: z.number().describe('Annual budget in USD'),
+                headCount: z.number().describe('Number of employees'),
+                teams: z.array(
+                  z.object({
+                    name: z.string(),
+                    lead: z.string().describe('Team lead name'),
+                    members: z.number().describe('Team size'),
+                    projects: z.array(z.string()).describe('Active project names'),
+                  })
+                ),
+              })
+            )
+            .describe('Company departments'),
         }),
-        departments: z
-          .array(
-            z.object({
-              name: z.string().describe('Department name'),
-              budget: z.number().describe('Annual budget in USD'),
-              headCount: z.number().describe('Number of employees'),
-              teams: z.array(
-                z.object({
-                  name: z.string(),
-                  lead: z.string().describe('Team lead name'),
-                  members: z.number().describe('Team size'),
-                  projects: z.array(z.string()).describe('Active project names'),
-                })
-              ),
-            })
-          )
-          .describe('Company departments'),
       }),
     }),
     prompt:

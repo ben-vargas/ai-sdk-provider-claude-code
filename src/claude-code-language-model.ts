@@ -1,27 +1,43 @@
 import type {
-  LanguageModelV3,
-  LanguageModelV3Content,
-  LanguageModelV3FinishReason,
-  LanguageModelV3StreamPart,
-  LanguageModelV3ToolCall,
-  LanguageModelV3ToolResult,
-  LanguageModelV3Usage,
-  SharedV3Warning,
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4Content,
+  LanguageModelV4FinishReason,
+  LanguageModelV4GenerateResult,
+  LanguageModelV4StreamPart,
+  LanguageModelV4StreamResult,
+  LanguageModelV4ToolCall,
+  LanguageModelV4ToolResult,
+  LanguageModelV4Usage,
+  SharedV4Warning,
   JSONValue,
   JSONObject,
 } from '@ai-sdk/provider';
 import { NoSuchModelError, APICallError, LoadAPIKeyError } from '@ai-sdk/provider';
-import { generateId } from '@ai-sdk/provider-utils';
-import type { ClaudeCodeSettings, Logger, MessageInjector } from './types.js';
+import {
+  generateId,
+  isCustomReasoning,
+  mapReasoningToProviderEffort,
+} from '@ai-sdk/provider-utils';
+import type {
+  ClaudeCodeHookEvent,
+  ClaudeCodeMcpStatusEvent,
+  ClaudeCodeSettings,
+  ClaudeCodeTaskEvent,
+  Logger,
+  MessageInjector,
+} from './types.js';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
 import { createAPICallError, createAuthenticationError, createTimeoutError } from './errors.js';
 import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
 import { validateModelId, validatePrompt, validateSessionId, isBlankResume } from './validation.js';
 import { sanitizeJsonSchemaForOutputFormat } from './sanitize-json-schema.js';
 import { getLogger, createVerboseLogger } from './logger.js';
+import { createClaudeCodeQueryController } from './query-controller.js';
 
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
 import type {
+  Query,
   SDKMessage,
   SDKUserMessage,
   SDKPartialAssistantMessage,
@@ -31,7 +47,7 @@ import type {
  * Provider version reported to the Agent SDK via CLAUDE_AGENT_SDK_CLIENT_APP.
  * Keep in sync with package.json (kept as a constant to avoid a build step).
  */
-const PROVIDER_VERSION = '3.5.1';
+const PROVIDER_VERSION = '4.0.0';
 const DEFAULT_CLIENT_APP = `ai-sdk-provider-claude-code/${PROVIDER_VERSION}`;
 
 const CLAUDE_CODE_TRUNCATION_WARNING =
@@ -118,6 +134,21 @@ const MISSING_STRUCTURED_OUTPUT_ERROR_MESSAGE =
   'Structured output was requested (responseFormat with a JSON schema) but the Claude Code CLI returned no structured_output, and the prose response could not be parsed as JSON. ' +
   'This usually means the schema contains constructs the CLI cannot enforce (e.g. complex regex patterns with lookaheads/backreferences), causing it to silently fall back to prose. ' +
   "Simplify the generation schema and validate strictly client-side. See the 'Structured Outputs' section of the ai-sdk-provider-claude-code README for the list of known limitations.";
+
+const INTERNAL_STRUCTURED_OUTPUT_TOOL_NAME = 'StructuredOutput';
+
+function isInternalStructuredOutputTool(
+  toolName: string,
+  options: LanguageModelV4CallOptions
+): boolean {
+  return (
+    options.responseFormat?.type === 'json' && toolName === INTERNAL_STRUCTURED_OUTPUT_TOOL_NAME
+  );
+}
+
+function isNonTextToolUseContentBlockType(type: unknown): boolean {
+  return type === 'server_tool_use' || type === 'mcp_tool_use';
+}
 
 /**
  * Attempts to recover a JSON object/array from prose text returned when the
@@ -268,7 +299,7 @@ function getBaseProcessEnv(): Record<string, string> {
 }
 
 const STREAMING_FEATURE_WARNING =
-  "Claude Agent SDK features (hooks/MCP/images) require streaming input. Set `streamingInput: 'always'` or provide `canUseTool` (auto streams only when canUseTool is set).";
+  "Claude Agent SDK image input requires streaming input. Set `streamingInput: 'auto'` or `streamingInput: 'always'`; `streamingInput: 'off'` disables streaming image input.";
 
 const SDK_OPTIONS_BLOCKLIST = new Set(['model', 'abortController', 'prompt', 'outputFormat']);
 
@@ -396,11 +427,11 @@ function applySupersede(
     guard === 'truthy'
       ? Boolean(supersedes && supersedes.length > 0)
       : Array.isArray(supersedes) && supersedes.length > 0;
-  if (!triggered) {
+  if (!triggered || supersedes === undefined) {
     return false;
   }
-  logger.debug(`[claude-code] Assistant message supersedes ${supersedes!.length} prior message(s)`);
-  evict(new Set<string>(supersedes!));
+  logger.debug(`[claude-code] Assistant message supersedes ${supersedes.length} prior message(s)`);
+  evict(new Set<string>(supersedes));
   return true;
 }
 
@@ -424,20 +455,20 @@ function buildRetractionEvictor(
  *
  * - 'notification'           REPL-style text notifications (key/priority/timeout)
  * - 'status'                 spinner status ('requesting'/'compacting' and compact_result/compact_error)
- * - 'task_updated'           background-task state patches
  * - 'session_state_changed'  idle/running/requires_action transitions
  * - 'commands_changed'       mid-session slash-command list refresh
  * - 'memory_recall'          surfaced memory files/synthesis
  * - 'plugin_install'         headless plugin installation progress
+ * - 'informational'          generic host/UI text banners
  */
 const INFORMATIONAL_SYSTEM_SUBTYPES = new Set<string>([
   'notification',
   'status',
-  'task_updated',
   'session_state_changed',
   'commands_changed',
   'memory_recall',
   'plugin_install',
+  'informational',
 ]);
 
 /** Narrowed union of SDK system messages (init, api_retry, permission_denied, ...). */
@@ -453,12 +484,32 @@ type PermissionDenialRecord = {
   toolName: string;
   toolUseId?: string;
   reason?: string;
+  agentId?: string;
+  decisionReasonType?: string;
+  raw?: JSONValue;
+};
+
+type ResultPermissionDenialRecord = {
+  tool_name: string;
+  tool_use_id: string;
+  tool_input?: Record<string, unknown>;
+  agent_id?: string;
+  agentId?: string;
+  decision_reason_type?: string;
+  decisionReasonType?: string;
+  decision_reason?: string;
+  reason?: string;
+  message?: string;
+  [key: string]: unknown;
 };
 
 /** Mutable per-request counters surfaced in providerMetadata at finish. */
 type RequestMetadataTracking = {
   apiRetries: number;
   permissionDenials: PermissionDenialRecord[];
+  taskEvents: ClaudeCodeTaskEvent[];
+  hookEvents: ClaudeCodeHookEvent[];
+  mcpServers?: ClaudeCodeMcpStatusEvent['servers'];
   /**
    * SessionStore transcript-mirror append failures (`mirror_error`). Each is a
    * DROPPED transcript batch after retries — surfaced (warn-logged + here) so
@@ -488,26 +539,164 @@ type ClaudeToolResult = {
   isError: boolean;
 };
 
-// Provider extension for tool-error stream parts.
-type ToolErrorPart = {
-  type: 'tool-error';
-  toolCallId: string;
-  toolName: string;
-  error: string;
-  providerExecuted: true;
-  dynamic: true;
-  providerMetadata?: Record<string, JSONValue>;
+type ClaudeEffortLevel = Extract<NonNullable<Options['effort']>, string>;
+type ClaudeThinkingConfig = NonNullable<Options['thinking']>;
+type PortableReasoningLevel = Exclude<
+  LanguageModelV4CallOptions['reasoning'],
+  'none' | 'provider-default' | undefined
+>;
+
+type ClaudeReasoningProviderOptions = {
+  hasClaudeReasoningSettings: boolean;
+  thinking?: ClaudeThinkingConfig;
+  effort?: ClaudeEffortLevel;
+  maxThinkingTokens?: NonNullable<Options['maxThinkingTokens']>;
 };
 
-// Local extension of the AI SDK stream part union to include tool-error.
-type ExtendedStreamPart = LanguageModelV3StreamPart | ToolErrorPart;
+const CLAUDE_REASONING_EFFORT_MAP: Partial<Record<PortableReasoningLevel, ClaudeEffortLevel>> = {
+  minimal: 'low',
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+  xhigh: 'xhigh',
+};
 
-/**
- * `tool-result` part shape shared by doGenerate content and doStream parts.
- * The V3 type does not declare `providerExecuted` on tool results, but this
- * provider has always emitted it on the stream path; keep both paths aligned.
- */
-type ProviderToolResultPart = LanguageModelV3ToolResult & { providerExecuted: true };
+const CLAUDE_EFFORT_LEVELS = new Set<ClaudeEffortLevel>(['low', 'medium', 'high', 'xhigh', 'max']);
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function toJsonSafeValue(value: unknown): JSONValue | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? undefined : (JSON.parse(serialized) as JSONValue);
+  } catch {
+    return String(value) as JSONValue;
+  }
+}
+
+function deepFreezeJsonValue<T extends JSONValue>(value: T): T {
+  if (Array.isArray(value)) {
+    for (const nested of value) {
+      deepFreezeJsonValue(nested);
+    }
+    return Object.freeze(value) as unknown as T;
+  }
+
+  if (!isObjectRecord(value)) {
+    return value;
+  }
+
+  const objectValue = value as JSONObject;
+  for (const nested of Object.values(objectValue)) {
+    if (nested !== undefined) {
+      deepFreezeJsonValue(nested);
+    }
+  }
+  return Object.freeze(objectValue) as unknown as T;
+}
+
+function toJsonSafeClone<T>(value: T): T {
+  const clone = toJsonSafeValue(value);
+  if (clone === undefined) {
+    return undefined as T;
+  }
+  return clone as unknown as T;
+}
+
+function toImmutableJsonSafeClone<T>(value: T): T {
+  const clone = toJsonSafeValue(value);
+  if (clone === undefined) {
+    return undefined as T;
+  }
+  return deepFreezeJsonValue(clone) as unknown as T;
+}
+
+function hasValidThinkingDisplay(value: unknown): boolean {
+  return value === undefined || value === 'summarized' || value === 'omitted';
+}
+
+function isClaudeEffortLevel(value: unknown): value is ClaudeEffortLevel {
+  return typeof value === 'string' && CLAUDE_EFFORT_LEVELS.has(value as ClaudeEffortLevel);
+}
+
+function isClaudeThinkingConfig(value: unknown): value is ClaudeThinkingConfig {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  if (value.type === 'disabled') {
+    return true;
+  }
+
+  if (value.type === 'adaptive') {
+    return hasValidThinkingDisplay(value.display);
+  }
+
+  if (value.type === 'enabled') {
+    const budgetTokens = value.budgetTokens;
+    return (
+      (budgetTokens === undefined || typeof budgetTokens === 'number') &&
+      hasValidThinkingDisplay(value.display)
+    );
+  }
+
+  return false;
+}
+
+function addInvalidClaudeReasoningProviderOptionWarning(
+  warnings: SharedV4Warning[] | undefined,
+  key: 'thinking' | 'effort' | 'maxThinkingTokens'
+): void {
+  warnings?.push({
+    type: 'other',
+    message: `Invalid providerOptions['claude-code'].${key} value was ignored.`,
+  });
+}
+
+function extractClaudeReasoningProviderOptions(
+  providerOptions: LanguageModelV4CallOptions['providerOptions'],
+  warnings?: SharedV4Warning[]
+): ClaudeReasoningProviderOptions {
+  const options = providerOptions?.['claude-code'];
+  if (options === undefined) {
+    return { hasClaudeReasoningSettings: false };
+  }
+
+  const result: ClaudeReasoningProviderOptions = { hasClaudeReasoningSettings: false };
+
+  if (options.thinking !== undefined) {
+    if (isClaudeThinkingConfig(options.thinking)) {
+      result.thinking = options.thinking;
+      result.hasClaudeReasoningSettings = true;
+    } else {
+      addInvalidClaudeReasoningProviderOptionWarning(warnings, 'thinking');
+    }
+  }
+  if (options.effort !== undefined) {
+    if (isClaudeEffortLevel(options.effort)) {
+      result.effort = options.effort;
+      result.hasClaudeReasoningSettings = true;
+    } else {
+      addInvalidClaudeReasoningProviderOptionWarning(warnings, 'effort');
+    }
+  }
+  if (options.maxThinkingTokens !== undefined) {
+    if (typeof options.maxThinkingTokens === 'number') {
+      result.maxThinkingTokens = options.maxThinkingTokens;
+      result.hasClaudeReasoningSettings = true;
+    } else {
+      addInvalidClaudeReasoningProviderOptionWarning(warnings, 'maxThinkingTokens');
+    }
+  }
+
+  return result;
+}
 
 /**
  * Ordered content collected by doGenerate, tagged with the originating
@@ -518,15 +707,12 @@ type ProviderToolResultPart = LanguageModelV3ToolResult & { providerExecuted: tr
 type GenerateContentSegment =
   | { kind: 'text'; uuid?: string; text: string }
   | { kind: 'reasoning'; uuid?: string; text: string }
-  | { kind: 'tool-call'; uuid?: string; toolCallId: string; part: LanguageModelV3ToolCall }
-  | { kind: 'tool-result'; uuid?: string; toolCallId: string; part: ProviderToolResultPart }
-  // tool_error blocks carry a V3 `tool-result` part with `isError: true`:
-  // the V3 CONTENT union has no `tool-error` member and AI SDK core's
-  // asContent() silently drops unknown part types, whereas an isError
-  // tool-result round-trips into a proper tool-error content part visible
-  // in generateText steps content. (doStream keeps the provider-extension
-  // tool-error STREAM part, which AI SDK core handles natively.)
-  | { kind: 'tool-error'; uuid?: string; toolCallId: string; part: ProviderToolResultPart };
+  | { kind: 'tool-call'; uuid?: string; toolCallId: string; part: LanguageModelV4ToolCall }
+  | { kind: 'tool-result'; uuid?: string; toolCallId: string; part: LanguageModelV4ToolResult }
+  // V4 has no provider `tool-error` content/stream part. CLI tool_error blocks
+  // are emitted as provider tool-results with isError: true so AI SDK core can
+  // expose user-facing tool-error semantics while preserving provider metadata.
+  | { kind: 'tool-error'; uuid?: string; toolCallId: string; part: LanguageModelV4ToolResult };
 
 type ContentBlock = { type: string; [key: string]: unknown };
 
@@ -559,9 +745,9 @@ type ClaudeCodeUsage = {
 };
 
 /**
- * Creates a zero-initialized usage object for AI SDK v6 stable.
+ * Creates a zero-initialized usage object for AI SDK v7.
  */
-function createEmptyUsage(): LanguageModelV3Usage {
+function createEmptyUsage(): LanguageModelV4Usage {
   return {
     inputTokens: {
       total: 0,
@@ -579,9 +765,9 @@ function createEmptyUsage(): LanguageModelV3Usage {
 }
 
 /**
- * Converts Claude Code SDK usage to AI SDK v6 stable usage format.
+ * Converts Claude Code SDK usage to AI SDK v7 provider usage format.
  *
- * Maps Claude's flat token counts to the nested structure required by AI SDK v6:
+ * Maps Claude's flat token counts to the nested structure required by AI SDK v7:
  * - `cache_creation_input_tokens` → `inputTokens.cacheWrite`
  * - `cache_read_input_tokens` → `inputTokens.cacheRead`
  * - `input_tokens` → `inputTokens.noCache`
@@ -589,9 +775,9 @@ function createEmptyUsage(): LanguageModelV3Usage {
  * - `output_tokens` → `outputTokens.total`
  *
  * @param usage - Raw usage data from Claude Code SDK
- * @returns Formatted usage object for AI SDK v6
+ * @returns Formatted usage object for AI SDK v7
  */
-function convertClaudeCodeUsage(usage: ClaudeCodeUsage): LanguageModelV3Usage {
+function convertClaudeCodeUsage(usage: ClaudeCodeUsage): LanguageModelV4Usage {
   const inputTokens = usage.input_tokens ?? 0;
   const outputTokens = usage.output_tokens ?? 0;
   const cacheWrite = usage.cache_creation_input_tokens ?? 0;
@@ -622,7 +808,7 @@ function convertClaudeCodeUsage(usage: ClaudeCodeUsage): LanguageModelV3Usage {
  * 3. Input deltas streamed → emit `tool-input-delta` (may be skipped for large/non-prefix updates)
  * 4. Input finalized → `inputClosed` = true, emit `tool-input-end`
  * 5. Tool call formed → `callEmitted` = true, emit `tool-call`
- * 6. Tool results/errors arrive → emit `tool-result` or `tool-error` (may occur multiple times)
+ * 6. Tool results/errors arrive → emit `tool-result` (errors set `isError: true`; may occur multiple times)
  * 7. Stream ends → state cleaned up by `finalizeToolCalls()`
  *
  * @property name - Tool name from SDK (e.g., "Bash", "Read")
@@ -835,7 +1021,7 @@ function toAsyncIterablePrompt(
 export interface ClaudeCodeLanguageModelOptions {
   /**
    * The model identifier to use.
-   * Can be 'opus', 'sonnet', 'haiku', or a custom model string.
+   * Can be 'fable', 'opus', 'sonnet', 'haiku', or a custom model string.
    */
   id: ClaudeCodeModelId;
 
@@ -853,22 +1039,25 @@ export interface ClaudeCodeLanguageModelOptions {
 
 /**
  * Supported Claude model identifiers.
- * - 'opus': Claude Opus (most capable)
+ * - 'fable': Claude Fable (most capable)
+ * - 'opus': Claude Opus (highly capable)
  * - 'sonnet': Claude Sonnet (balanced performance)
  * - 'haiku': Claude Haiku (fastest, most cost-effective)
  * - Custom string: Any full model identifier (e.g., 'claude-opus-4-5', 'claude-sonnet-4-5-20250514')
  *
  * @example
  * ```typescript
+ * const fableModel = claudeCode('fable');
  * const opusModel = claudeCode('opus');
  * const sonnetModel = claudeCode('sonnet');
  * const haikuModel = claudeCode('haiku');
- * const customModel = claudeCode('claude-opus-4-5');
+ * const customModel = claudeCode('claude-fable-5');
  * ```
  */
-export type ClaudeCodeModelId = 'opus' | 'sonnet' | 'haiku' | (string & {});
+export type ClaudeCodeModelId = 'fable' | 'opus' | 'sonnet' | 'haiku' | (string & {});
 
 const modelMap: Record<string, string> = {
+  fable: 'fable',
   opus: 'opus',
   sonnet: 'sonnet',
   haiku: 'haiku',
@@ -945,7 +1134,7 @@ function truncateToolResultForStream(
 
 /**
  * Language model implementation for Claude Code SDK.
- * This class implements the AI SDK's LanguageModelV3 interface to provide
+ * This class implements the AI SDK's LanguageModelV4 interface to provide
  * integration with Claude models through the Claude Agent SDK.
  *
  * Features:
@@ -966,14 +1155,18 @@ function truncateToolResultForStream(
  * });
  *
  * const result = await model.doGenerate({
- *   prompt: [{ role: 'user', content: 'Hello!' }],
- *   mode: { type: 'regular' }
+ *   prompt: [
+ *     {
+ *       role: 'user',
+ *       content: [{ type: 'text', text: 'Hello!' }]
+ *     }
+ *   ]
  * });
  * ```
  */
 
-export class ClaudeCodeLanguageModel implements LanguageModelV3 {
-  readonly specificationVersion = 'v3' as const;
+export class ClaudeCodeLanguageModel implements LanguageModelV4 {
+  readonly specificationVersion = 'v4' as const;
   readonly defaultObjectGenerationMode = 'json' as const;
   readonly supportsImageUrls = false;
   readonly supportedUrls = {};
@@ -1062,6 +1255,98 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       }
     }
     return undefined;
+  }
+
+  private invokeObservabilityCallback<T>(
+    callbackName: string,
+    callback: ((value: T) => void | PromiseLike<void>) | undefined,
+    value: T
+  ): void {
+    if (!callback) {
+      return;
+    }
+
+    const logError = (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`[claude-code] ${callbackName} callback failed; ignoring error: ${message}`);
+      if (error instanceof Error && error.stack) {
+        this.logger.debug(`[claude-code] ${callbackName} callback stack: ${error.stack}`);
+      }
+    };
+
+    try {
+      const result = (callback as (value: T) => unknown)(value);
+      if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+        void Promise.resolve(result).catch(logError);
+      }
+    } catch (error: unknown) {
+      logError(error);
+    }
+  }
+
+  private invokeSdkMessageCallback(message: SDKMessage): void {
+    const onSdkMessage = this.settings.onSdkMessage;
+    if (onSdkMessage === undefined) {
+      return;
+    }
+
+    this.invokeObservabilityCallback(
+      'onSdkMessage',
+      onSdkMessage,
+      toImmutableJsonSafeClone(message)
+    );
+  }
+
+  private notifyQueryCreated(response: Query): void {
+    this.settings.onQueryCreated?.(response);
+    const onQueryControllerCreated = this.settings.onQueryControllerCreated;
+    if (onQueryControllerCreated !== undefined) {
+      this.invokeObservabilityCallback(
+        'onQueryControllerCreated',
+        onQueryControllerCreated,
+        createClaudeCodeQueryController(response)
+      );
+    }
+  }
+
+  private trackTaskEvent(event: ClaudeCodeTaskEvent, tracking: RequestMetadataTracking): void {
+    tracking.taskEvents.push(toJsonSafeClone(event));
+    const onTaskEvent = this.settings.onTaskEvent;
+    if (onTaskEvent !== undefined) {
+      this.invokeObservabilityCallback('onTaskEvent', onTaskEvent, toImmutableJsonSafeClone(event));
+    }
+  }
+
+  private trackHookEvent(event: ClaudeCodeHookEvent, tracking: RequestMetadataTracking): void {
+    tracking.hookEvents.push(toJsonSafeClone(event));
+    const onHookEvent = this.settings.onHookEvent;
+    if (onHookEvent !== undefined) {
+      this.invokeObservabilityCallback('onHookEvent', onHookEvent, toImmutableJsonSafeClone(event));
+    }
+  }
+
+  private trackMcpStatusFromInit(
+    message: Extract<SDKSystemMessageVariant, { subtype: 'init' }>,
+    tracking: RequestMetadataTracking
+  ): void {
+    const servers = message.mcp_servers as unknown as ClaudeCodeMcpStatusEvent['servers'];
+    tracking.mcpServers = toJsonSafeClone(servers);
+
+    const statusEvent: ClaudeCodeMcpStatusEvent = {
+      subtype: 'init',
+      sessionId: message.session_id,
+      uuid: message.uuid,
+      servers,
+      raw: message,
+    };
+    const onMcpStatusChange = this.settings.onMcpStatusChange;
+    if (onMcpStatusChange !== undefined) {
+      this.invokeObservabilityCallback(
+        'onMcpStatusChange',
+        onMcpStatusChange,
+        toImmutableJsonSafeClone(statusEvent)
+      );
+    }
   }
 
   /**
@@ -1284,14 +1569,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     toolName: string,
     input: string,
     parentToolCallId: string | null | undefined
-  ): LanguageModelV3ToolCall {
+  ): LanguageModelV4ToolCall {
     return {
       type: 'tool-call',
       toolCallId,
       toolName,
       input,
       providerExecuted: true,
-      dynamic: true, // V3 field: indicates tool is provider-defined (not in user's tools map)
+      dynamic: true, // V4 field: indicates tool is provider-defined (not in user's tools map)
       providerMetadata: {
         'claude-code': {
           // rawInput preserves the original serialized format before AI SDK normalization.
@@ -1315,7 +1600,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     result: unknown,
     isError: boolean,
     parentToolCallId: string | null | undefined
-  ): ProviderToolResultPart {
+  ): LanguageModelV4ToolResult {
     const normalizedResult = this.normalizeToolResult(result);
     const rawResult =
       typeof result === 'string'
@@ -1344,11 +1629,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       toolName,
       // `?? ''`: absent `content` (undefined) and string results that
       // normalize to JSON null (e.g. the string "null") must not violate the
-      // NonNullable<JSONValue> contract of LanguageModelV3ToolResult.result.
+      // NonNullable<JSONValue> contract of LanguageModelV4ToolResult.result.
       result: (truncatedResult ?? '') as NonNullable<JSONValue>,
       isError,
-      providerExecuted: true,
-      dynamic: true, // V3 field: indicates tool is provider-defined
+      dynamic: true, // V4 field: indicates tool is provider-defined
       providerMetadata: {
         'claude-code': {
           // rawResult preserves the original CLI output string before JSON parsing.
@@ -1377,48 +1661,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
   }
 
   /**
-   * Builds a provider-executed `tool-error` STREAM part from a user-message
-   * `tool_error` block (doStream only; AI SDK core handles tool-error stream
-   * parts natively).
+   * Builds a V4 provider `tool-result` part with `isError: true` from a
+   * user-message `tool_error` block. V4 has no provider-level `tool-error`
+   * content or stream part; AI SDK core derives user-facing tool-error
+   * semantics from this result while preserving providerMetadata.
    */
-  private buildToolErrorPart(
+  private buildErroredToolResultPart(
     toolCallId: string,
     toolName: string,
     error: unknown,
     parentToolCallId: string | null | undefined
-  ): ToolErrorPart {
-    const rawError = this.serializeToolError(error);
-
-    return {
-      type: 'tool-error',
-      toolCallId,
-      toolName,
-      error: rawError,
-      providerExecuted: true,
-      dynamic: true, // V3 field: indicates tool is provider-defined
-      providerMetadata: {
-        'claude-code': {
-          rawError,
-          parentToolCallId: parentToolCallId ?? null,
-        },
-      },
-    };
-  }
-
-  /**
-   * Builds a V3 `tool-result` CONTENT part with `isError: true` from a
-   * user-message `tool_error` block (doGenerate only). The V3 content union
-   * has no `tool-error` member and AI SDK core's asContent() silently drops
-   * unknown content part types, so an extension tool-error part would never
-   * reach `generateText` users — an isError tool-result, by contrast,
-   * round-trips into a proper tool-error part in steps content.
-   */
-  private buildToolErrorResultPart(
-    toolCallId: string,
-    toolName: string,
-    error: unknown,
-    parentToolCallId: string | null | undefined
-  ): ProviderToolResultPart {
+  ): LanguageModelV4ToolResult {
     const rawError = this.serializeToolError(error);
 
     return {
@@ -1427,8 +1680,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       toolName,
       result: rawError,
       isError: true,
-      providerExecuted: true,
-      dynamic: true, // V3 field: indicates tool is provider-defined
+      dynamic: true, // V4 field: indicates tool is provider-defined
       providerMetadata: {
         'claude-code': {
           rawError,
@@ -1460,13 +1712,64 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     return true;
   }
 
+  private resolvePortableReasoningOptions(
+    options: LanguageModelV4CallOptions,
+    sdkOptions: Partial<Options> | undefined,
+    claudeProviderOptions: ClaudeReasoningProviderOptions,
+    warnings?: SharedV4Warning[]
+  ): Partial<Pick<Options, 'thinking' | 'effort'>> {
+    const hasClaudeSpecificReasoning =
+      this.settings.thinking !== undefined ||
+      this.settings.effort !== undefined ||
+      this.settings.maxThinkingTokens !== undefined ||
+      sdkOptions?.thinking !== undefined ||
+      sdkOptions?.effort !== undefined ||
+      sdkOptions?.maxThinkingTokens !== undefined ||
+      claudeProviderOptions.hasClaudeReasoningSettings;
+
+    // Claude-specific settings and providerOptions intentionally take
+    // precedence over portable reasoning. Do not merge a top-level reasoning
+    // value into an already-explicit Claude thinking/effort configuration.
+    if (hasClaudeSpecificReasoning || !isCustomReasoning(options.reasoning)) {
+      return {};
+    }
+
+    if (options.reasoning === 'none') {
+      return { thinking: { type: 'disabled' } };
+    }
+
+    // Portable levels map only to Agent SDK effort. Thinking mode is
+    // model-sensitive, so let the SDK/CLI choose what the selected model supports.
+    const effort = mapReasoningToProviderEffort({
+      reasoning: options.reasoning,
+      effortMap: CLAUDE_REASONING_EFFORT_MAP,
+      warnings: warnings ?? [],
+    });
+
+    return effort === undefined ? {} : { effort };
+  }
+
+  private applyClaudeReasoningProviderOptions(
+    opts: Partial<Options> & Record<string, unknown>,
+    claudeProviderOptions: ClaudeReasoningProviderOptions
+  ): void {
+    if (claudeProviderOptions.thinking !== undefined) {
+      opts.thinking = claudeProviderOptions.thinking;
+    }
+    if (claudeProviderOptions.effort !== undefined) {
+      opts.effort = claudeProviderOptions.effort;
+    }
+    if (claudeProviderOptions.maxThinkingTokens !== undefined) {
+      opts.maxThinkingTokens = claudeProviderOptions.maxThinkingTokens;
+    }
+  }
+
   private generateAllWarnings(
-    options:
-      | Parameters<LanguageModelV3['doGenerate']>[0]
-      | Parameters<LanguageModelV3['doStream']>[0],
-    prompt: string
-  ): SharedV3Warning[] {
-    const warnings: SharedV3Warning[] = [];
+    options: LanguageModelV4CallOptions,
+    prompt: string,
+    sdkOptions?: Partial<Options>
+  ): SharedV4Warning[] {
+    const warnings: SharedV4Warning[] = [];
     const unsupportedParams: string[] = [];
 
     // Check for unsupported parameters
@@ -1555,16 +1858,26 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       });
     }
 
+    this.resolvePortableReasoningOptions(
+      options,
+      sdkOptions,
+      extractClaudeReasoningProviderOptions(options.providerOptions, warnings),
+      warnings
+    );
+
     return warnings;
   }
 
   private createQueryOptions(
     abortController: AbortController,
-    responseFormat?: Parameters<LanguageModelV3['doGenerate']>[0]['responseFormat'],
+    options: LanguageModelV4CallOptions,
     stderrCollector?: (data: string) => void,
     sdkOptions?: Partial<Options>,
     effectiveResume?: string
   ): Options {
+    const claudeReasoningProviderOptions = extractClaudeReasoningProviderOptions(
+      options.providerOptions
+    );
     const opts: Partial<Options> & Record<string, unknown> = {
       model: this.getModel(),
       abortController,
@@ -1593,7 +1906,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       tools: this.settings.tools,
       mcpServers: this.settings.mcpServers,
       canUseTool: this.settings.canUseTool,
+      onElicitation: this.settings.onElicitation,
+      agent: this.settings.agent,
     };
+    Object.assign(
+      opts,
+      this.resolvePortableReasoningOptions(options, sdkOptions, claudeReasoningProviderOptions)
+    );
     // Blocking user-dialog handling (SDK fails closed without these: the CLI
     // never emits a dialog kind that is not declared in supportedDialogKinds,
     // and the dialog-gated flow degrades to its no-dialog behavior).
@@ -1766,6 +2085,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       }
     }
 
+    this.applyClaudeReasoningProviderOptions(opts, claudeReasoningProviderOptions);
+
     // Resolve all session-id / resume cross-option rules on the FINAL merged
     // options: blank-resume restoration then --session-id exclusivity, in that
     // order. See applySessionResolution for the full rationale.
@@ -1813,9 +2134,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // loses nothing: generateObject/streamObject validate against the user's
     // original Zod schema client-side, so .email()/.datetime() enforcement is
     // preserved.
-    if (responseFormat?.type === 'json' && responseFormat.schema) {
+    if (options.responseFormat?.type === 'json' && options.responseFormat.schema) {
       const { schema: sanitizedSchema, strippedFormatPaths } = sanitizeJsonSchemaForOutputFormat(
-        responseFormat.schema as Record<string, unknown>
+        options.responseFormat.schema as Record<string, unknown>
       );
       if (strippedFormatPaths.length > 0) {
         this.logger.debug(
@@ -1944,7 +2265,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       const originalMessage =
         isErrorWithMessage(error) && error.message ? error.message : 'Model not found';
       return createAPICallError({
-        message: `${originalMessage}. The requested model was not found. Verify the model id passed to the provider (e.g. 'opus', 'sonnet', 'haiku', or a full model name) and that your account has access to it.`,
+        message: `${originalMessage}. The requested model was not found. Verify the model id passed to the provider (e.g. 'fable', 'opus', 'sonnet', 'haiku', or a full model name) and that your account has access to it.`,
         code: errorCode || undefined,
         exitCode,
         stderr,
@@ -2045,16 +2366,159 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         break;
       case 'permission_denied': {
         const reason = message.decision_reason ?? message.message;
+        const raw = toJsonSafeValue(message);
         tracking.permissionDenials.push({
           toolName: message.tool_name,
           toolUseId: message.tool_use_id,
+          ...(message.agent_id !== undefined && { agentId: message.agent_id }),
+          ...(message.decision_reason_type !== undefined && {
+            decisionReasonType: message.decision_reason_type,
+          }),
           ...(reason !== undefined && { reason }),
+          ...(raw !== undefined && { raw }),
         });
         this.logger.warn(
           `[claude-code] Permission denied - Tool: ${message.tool_name}${reason ? `, Reason: ${reason}` : ''}`
         );
         break;
       }
+      case 'task_started':
+        this.trackTaskEvent(
+          {
+            subtype: 'task_started',
+            taskId: message.task_id,
+            ...(message.tool_use_id !== undefined && { toolUseId: message.tool_use_id }),
+            description: message.description,
+            ...(message.subagent_type !== undefined && { subagentType: message.subagent_type }),
+            ...(message.task_type !== undefined && { taskType: message.task_type }),
+            ...(message.workflow_name !== undefined && { workflowName: message.workflow_name }),
+            ...(message.prompt !== undefined && { prompt: message.prompt }),
+            ...(message.skip_transcript !== undefined && {
+              skipTranscript: message.skip_transcript,
+            }),
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(`[claude-code] Task started - ID: ${message.task_id}`);
+        break;
+      case 'task_progress':
+        this.trackTaskEvent(
+          {
+            subtype: 'task_progress',
+            taskId: message.task_id,
+            ...(message.tool_use_id !== undefined && { toolUseId: message.tool_use_id }),
+            description: message.description,
+            ...(message.subagent_type !== undefined && { subagentType: message.subagent_type }),
+            usage: message.usage,
+            ...(message.last_tool_name !== undefined && { lastToolName: message.last_tool_name }),
+            ...(message.summary !== undefined && { summary: message.summary }),
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(`[claude-code] Task progress - ID: ${message.task_id}`);
+        break;
+      case 'task_updated':
+        this.trackTaskEvent(
+          {
+            subtype: 'task_updated',
+            taskId: message.task_id,
+            patch: message.patch,
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(`[claude-code] Task updated - ID: ${message.task_id}`);
+        break;
+      case 'task_notification':
+        this.trackTaskEvent(
+          {
+            subtype: 'task_notification',
+            taskId: message.task_id,
+            ...(message.tool_use_id !== undefined && { toolUseId: message.tool_use_id }),
+            status: message.status,
+            outputFile: message.output_file,
+            summary: message.summary,
+            ...(message.usage !== undefined && { usage: message.usage }),
+            ...(message.skip_transcript !== undefined && {
+              skipTranscript: message.skip_transcript,
+            }),
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(
+          `[claude-code] Task notification - ID: ${message.task_id}, Status: ${message.status}`
+        );
+        break;
+      case 'hook_started':
+        this.trackHookEvent(
+          {
+            subtype: 'hook_started',
+            hookId: message.hook_id,
+            hookName: message.hook_name,
+            hookEvent: message.hook_event,
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(
+          `[claude-code] Hook started - ID: ${message.hook_id}, Event: ${message.hook_event}`
+        );
+        break;
+      case 'hook_progress':
+        this.trackHookEvent(
+          {
+            subtype: 'hook_progress',
+            hookId: message.hook_id,
+            hookName: message.hook_name,
+            hookEvent: message.hook_event,
+            stdout: message.stdout,
+            stderr: message.stderr,
+            output: message.output,
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(
+          `[claude-code] Hook progress - ID: ${message.hook_id}, Event: ${message.hook_event}`
+        );
+        break;
+      case 'hook_response':
+        this.trackHookEvent(
+          {
+            subtype: 'hook_response',
+            hookId: message.hook_id,
+            hookName: message.hook_name,
+            hookEvent: message.hook_event,
+            output: message.output,
+            stdout: message.stdout,
+            stderr: message.stderr,
+            ...(message.exit_code !== undefined && { exitCode: message.exit_code }),
+            outcome: message.outcome,
+            uuid: message.uuid,
+            sessionId: message.session_id,
+            raw: message,
+          },
+          tracking
+        );
+        this.logger.debug(
+          `[claude-code] Hook response - ID: ${message.hook_id}, Outcome: ${message.outcome}`
+        );
+        break;
       case 'mirror_error': {
         // SessionStore.append() failed after retries and the transcript batch
         // was DROPPED. Not informational: the response still succeeds, so warn
@@ -2119,19 +2583,47 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
    * `tool_use_id`.
    */
   private mergeResultPermissionDenials(
-    message: { permission_denials?: Array<{ tool_name: string; tool_use_id: string }> },
+    message: { permission_denials?: ResultPermissionDenialRecord[] },
     tracking: RequestMetadataTracking
   ): void {
     for (const denial of message.permission_denials ?? []) {
       const alreadyTracked = tracking.permissionDenials.some(
         (d) => d.toolUseId !== undefined && d.toolUseId === denial.tool_use_id
       );
-      if (!alreadyTracked) {
-        tracking.permissionDenials.push({
-          toolName: denial.tool_name,
-          toolUseId: denial.tool_use_id,
-        });
+      if (alreadyTracked) {
+        continue;
       }
+
+      const agentId =
+        typeof denial.agent_id === 'string'
+          ? denial.agent_id
+          : typeof denial.agentId === 'string'
+            ? denial.agentId
+            : undefined;
+      const decisionReasonType =
+        typeof denial.decision_reason_type === 'string'
+          ? denial.decision_reason_type
+          : typeof denial.decisionReasonType === 'string'
+            ? denial.decisionReasonType
+            : undefined;
+      const reason =
+        typeof denial.decision_reason === 'string'
+          ? denial.decision_reason
+          : typeof denial.reason === 'string'
+            ? denial.reason
+            : typeof denial.message === 'string'
+              ? denial.message
+              : undefined;
+      const raw = toJsonSafeValue(denial);
+
+      tracking.permissionDenials.push({
+        toolName: denial.tool_name,
+        toolUseId: denial.tool_use_id,
+        ...(agentId !== undefined && { agentId }),
+        ...(decisionReasonType !== undefined && { decisionReasonType }),
+        ...(reason !== undefined && { reason }),
+        ...(raw !== undefined && { raw }),
+      });
     }
   }
 
@@ -2141,14 +2633,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
    * suggestion arrives AFTER the result message; the SDK emits at most one
    * per turn, so stop once it is delivered, and a timeout closes the
    * iterator (tearing down the subprocess) if the CLI lingers after the
-   * result without emitting one. Advances the response's own generator, so
-   * the caller's surrounding loop resumes to a finished iterator.
+   * result without emitting one. Drained messages still pass through the
+   * generic raw SDK callback before prompt-specific handling.
    */
   private async drainPromptSuggestion(
-    response: AsyncIterable<SDKMessage>,
-    onPromptSuggestion: (suggestion: string) => void
+    iterator: AsyncIterator<SDKMessage>,
+    onPromptSuggestion?: (suggestion: string) => void
   ): Promise<void> {
-    const iterator = response[Symbol.asyncIterator]();
     let drainTimer: ReturnType<typeof setTimeout> | undefined;
     const drainTimeout = new Promise<'timeout'>((resolve) => {
       drainTimer = setTimeout(
@@ -2172,8 +2663,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         }
         const trailingMessage = winner.value;
         this.logger.debug(`[claude-code] Post-result message type: ${trailingMessage.type}`);
+        this.invokeSdkMessageCallback(trailingMessage);
         if (trailingMessage.type === 'prompt_suggestion') {
-          onPromptSuggestion(trailingMessage.suggestion);
+          onPromptSuggestion?.(trailingMessage.suggestion);
           // At most one prompt_suggestion per turn (SDK contract).
           void iterator.return?.().catch(() => {});
           break;
@@ -2191,9 +2683,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     }
   }
 
-  async doGenerate(
-    options: Parameters<LanguageModelV3['doGenerate']>[0]
-  ): Promise<Awaited<ReturnType<LanguageModelV3['doGenerate']>>> {
+  async doGenerate(options: LanguageModelV4CallOptions): Promise<LanguageModelV4GenerateResult> {
     this.logger.debug(`[claude-code] Starting doGenerate request with model: ${this.modelId}`);
     this.logger.debug(`[claude-code] Response format: ${options.responseFormat?.type ?? 'none'}`);
 
@@ -2228,7 +2718,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // listener on a long-lived caller AbortSignal.
     const queryOptions = this.createQueryOptions(
       abortController,
-      options.responseFormat,
+      options,
       stderrCollector,
       sdkOptions,
       effectiveResume
@@ -2336,8 +2826,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     };
     let structuredOutput: unknown | undefined;
     let receivedResultMessage = false;
-    let usage: LanguageModelV3Usage = createEmptyUsage();
-    let finishReason: LanguageModelV3FinishReason = { unified: 'stop', raw: undefined };
+    let usage: LanguageModelV4Usage = createEmptyUsage();
+    let finishReason: LanguageModelV4FinishReason = { unified: 'stop', raw: undefined };
     let wasTruncated = false;
     let costUsd: number | undefined;
     let durationMs: number | undefined;
@@ -2353,8 +2843,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       permissionDenials: [],
       mirrorErrors: [],
       estimatedThinkingTokens: 0,
+      taskEvents: [],
+      hookEvents: [],
     };
-    const warnings: SharedV3Warning[] = this.generateAllWarnings(options, messagesPrompt);
+    const warnings: SharedV4Warning[] = this.generateAllWarnings(
+      options,
+      messagesPrompt,
+      sdkOptions
+    );
 
     // Add warnings from message conversion
     if (messageWarnings) {
@@ -2371,7 +2867,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     const effectivePermissionPromptToolName =
       sdkOptions?.permissionPromptToolName ?? this.settings.permissionPromptToolName;
     const wantsStreamInput =
-      modeSetting === 'always' || (modeSetting === 'auto' && !!effectiveCanUseTool);
+      modeSetting === 'always' ||
+      (modeSetting === 'auto' && (!!effectiveCanUseTool || hasImageParts));
 
     if (!wantsStreamInput && hasImageParts) {
       warnings.push({
@@ -2412,9 +2909,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         options: queryOptions,
       });
 
-      // Invoke onQueryCreated callback to expose Query object for advanced features
-      // like mid-stream message injection via query.streamInput()
-      this.settings.onQueryCreated?.(response);
+      // Expose the raw SDK Query and the safe controller wrapper for runtime controls.
+      this.notifyQueryCreated(response);
 
       let lastAssistantErrorKind: string | undefined;
       // for-await's implicit cleanup AWAITS iterator.return(), which never
@@ -2434,6 +2930,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       };
       for await (const message of detachableResponse) {
         this.logger.debug(`[claude-code] Received message type: ${message.type}`);
+        this.invokeSdkMessageCallback(message);
         if (message.type === 'assistant') {
           // SDK 0.3.x delivers API error kinds (e.g. 'overloaded',
           // 'model_not_found') as a structured field on assistant messages.
@@ -2479,6 +2976,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               } else if (block.type === 'tool_use') {
                 const [tool] = this.extractToolUses([block]);
                 if (!tool) continue;
+                if (isInternalStructuredOutputTool(tool.name, options)) continue;
                 // Prefer SDK message-level parent (works for parallel agents)
                 // Fall back to content-level parent, then timing-based inference
                 // Task tools never have a parent (they're top-level)
@@ -2611,7 +3109,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 ? null
                 : resolveToolParentId(sdkParentToolUseIdForResults, undefined, getFallbackParentId);
               knownTools.set(error.id, { name: toolName, parentToolCallId });
-              // Ensure a tool-call part precedes the tool-error (mirrors doStream)
+              // Ensure a tool-call part precedes the errored tool-result (mirrors doStream)
               contentSegments.push({
                 kind: 'tool-call',
                 toolCallId: error.id,
@@ -2628,7 +3126,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               kind: 'tool-error',
               ...(resultMessageUuid !== undefined && { uuid: resultMessageUuid }),
               toolCallId: error.id,
-              part: this.buildToolErrorResultPart(
+              part: this.buildErroredToolResultPart(
                 error.id,
                 toolName,
                 error.error,
@@ -2711,25 +3209,34 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               ? ((message as Record<string, unknown>).stop_reason as string | null | undefined)
               : undefined;
           finishReason = mapClaudeCodeFinishReason(message.subtype, stopReason);
+          if (structuredOutput !== undefined && finishReason.unified === 'tool-calls') {
+            // Claude Code implements native structured output via an internal
+            // StructuredOutput tool. AI SDK v7 only parses `Output.object()`
+            // when the final step stops, so expose successful structured output
+            // as a stopped generation while preserving the raw CLI stop reason.
+            finishReason = { unified: 'stop', raw: finishReason.raw };
+          }
           this.logger.debug(`[claude-code] Finish reason: ${finishReason.unified}`);
 
-          // The result message is terminal. Mirror doStream: when a
-          // prompt_suggestion callback is registered, drain for it with the
-          // shared bounded drain (10s timeout, stops at the first suggestion);
-          // otherwise stop iterating immediately so a lingering CLI cannot
-          // block generateText after the result is already available.
-          // Drain for the post-result prompt_suggestion only when suggestions
-          // can actually be emitted. The SDK enables them when promptSuggestions
-          // is absent OR true and disables them only when explicitly false, so
-          // skip the (up to 10s) drain solely in the explicit-false case.
+          // The result message is terminal. The CLI emits prompt_suggestion only when
+          // promptSuggestions is true; when it is unset/disabled, the CLI ends the
+          // stream promptly after result, so the shared bounded drain exits immediately.
+          // Keep the drain for onSdkMessage observability of any post-result messages;
+          // it costs nothing when suggestions are off. Otherwise stop iterating so a
+          // lingering CLI cannot block generateText after result is already available.
           const effectivePromptSuggestions =
             sdkOptions?.promptSuggestions ?? this.settings.promptSuggestions;
-          if (this.settings.onPromptSuggestion && effectivePromptSuggestions !== false) {
-            await this.drainPromptSuggestion(response, this.settings.onPromptSuggestion);
+          const shouldDrainPromptSuggestion =
+            effectivePromptSuggestions !== false &&
+            (this.settings.onPromptSuggestion !== undefined ||
+              this.settings.onSdkMessage !== undefined);
+          if (shouldDrainPromptSuggestion) {
+            await this.drainPromptSuggestion(sdkIterator, this.settings.onPromptSuggestion);
           }
           break;
         } else if (message.type === 'system' && message.subtype === 'init') {
           this.logMcpConnectionIssues(message.mcp_servers);
+          this.trackMcpStatusFromInit(message, metadataTracking);
           this.setSessionId(message.session_id);
           this.logger.info(`[claude-code] Session initialized: ${message.session_id}`);
         } else if (message.type === 'system') {
@@ -2816,7 +3323,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // while tool parts interleave with text/reasoning in arrival order.
     // When the SDK returned structured output (native JSON schema support),
     // it replaces the accumulated text as a single trailing text part.
-    const contentParts: LanguageModelV3Content[] = [];
+    const contentParts: LanguageModelV4Content[] = [];
     for (const segment of contentSegments) {
       if (segment.kind === 'reasoning') {
         contentParts.push({ type: 'reasoning', text: segment.text });
@@ -2829,10 +3336,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           contentParts.push({ type: 'text', text: segment.text });
         }
       } else {
-        // tool-call and tool-result parts are V3 content union members.
-        // CLI tool_error blocks were mapped to tool-result parts with
-        // isError: true (see buildToolErrorResultPart) so they survive AI
-        // SDK core's asContent(), which drops unknown content part types.
+        // V4 provider tool errors are represented as tool-result parts with
+        // isError: true (see buildErroredToolResultPart), not as separate tool-error
+        // stream/content members.
         contentParts.push(segment.part);
       }
     }
@@ -2872,6 +3378,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           ...(metadataTracking.permissionDenials.length > 0 && {
             permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
           }),
+          ...(metadataTracking.taskEvents.length > 0 && {
+            taskEvents: metadataTracking.taskEvents as unknown as JSONValue,
+          }),
+          ...(metadataTracking.hookEvents.length > 0 && {
+            hookEvents: metadataTracking.hookEvents as unknown as JSONValue,
+          }),
+          ...(metadataTracking.mcpServers !== undefined && {
+            mcpServers: metadataTracking.mcpServers as unknown as JSONValue,
+          }),
           ...(metadataTracking.mirrorErrors.length > 0 && {
             mirrorErrors: metadataTracking.mirrorErrors as unknown as JSONValue,
           }),
@@ -2885,9 +3400,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     };
   }
 
-  async doStream(
-    options: Parameters<LanguageModelV3['doStream']>[0]
-  ): Promise<Awaited<ReturnType<LanguageModelV3['doStream']>>> {
+  async doStream(options: LanguageModelV4CallOptions): Promise<LanguageModelV4StreamResult> {
     this.logger.debug(`[claude-code] Starting doStream request with model: ${this.modelId}`);
     this.logger.debug(`[claude-code] Response format: ${options.responseFormat?.type ?? 'none'}`);
 
@@ -2922,7 +3435,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // listener on a long-lived caller AbortSignal.
     const queryOptions = this.createQueryOptions(
       abortController,
-      options.responseFormat,
+      options,
       stderrCollector,
       sdkOptions,
       effectiveResume
@@ -2938,7 +3451,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       queryOptions.includePartialMessages = true;
     }
 
-    const warnings: SharedV3Warning[] = this.generateAllWarnings(options, messagesPrompt);
+    const warnings: SharedV4Warning[] = this.generateAllWarnings(
+      options,
+      messagesPrompt,
+      sdkOptions
+    );
 
     // Add warnings from message conversion
     if (messageWarnings) {
@@ -2955,7 +3472,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     const effectivePermissionPromptToolName =
       sdkOptions?.permissionPromptToolName ?? this.settings.permissionPromptToolName;
     const wantsStreamInput =
-      modeSetting === 'always' || (modeSetting === 'auto' && !!effectiveCanUseTool);
+      modeSetting === 'always' ||
+      (modeSetting === 'auto' && (!!effectiveCanUseTool || hasImageParts));
 
     if (!wantsStreamInput && hasImageParts) {
       warnings.push({
@@ -2964,7 +3482,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       });
     }
 
-    const stream = new ReadableStream<ExtendedStreamPart>({
+    const stream = new ReadableStream<LanguageModelV4StreamPart>({
       start: async (controller) => {
         let done = () => {};
         const outputStreamEnded = new Promise((resolve) => {
@@ -2989,7 +3507,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           return null;
         };
 
-        const streamWarnings: SharedV3Warning[] = [];
+        const streamWarnings: SharedV4Warning[] = [];
 
         const closeToolInput = (toolId: string, state: ToolStreamState) => {
           if (!state.inputClosed && state.inputStarted) {
@@ -3026,7 +3544,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           toolStates.clear();
         };
 
-        let usage: LanguageModelV3Usage = createEmptyUsage();
+        let usage: LanguageModelV4Usage = createEmptyUsage();
         let accumulatedText = '';
         // Per-message text segments mirroring `accumulatedText` so refusal-fallback
         // `supersedes` retractions keep non-retracted text (matches doGenerate).
@@ -3052,10 +3570,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           permissionDenials: [],
           mirrorErrors: [],
           estimatedThinkingTokens: 0,
+          taskEvents: [],
+          hookEvents: [],
         };
 
         // Content block streaming: Map block indices to tool IDs and accumulated JSON
         const toolBlocksByIndex = new Map<number, string>();
+        const structuredOutputBlockIndexes = new Set<number>();
+        const nonTextToolBlockIndexes = new Set<number>();
         const toolInputAccumulators = new Map<string, string>();
 
         // Track text content blocks by index for correlating text_delta with text parts
@@ -3157,12 +3679,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             options: queryOptions,
           });
 
-          // Invoke onQueryCreated callback to expose Query object for advanced features
-          // like mid-stream message injection via query.streamInput()
-          this.settings.onQueryCreated?.(response);
+          // Expose the raw SDK Query and the safe controller wrapper for runtime controls.
+          this.notifyQueryCreated(response);
 
-          for await (const message of response) {
+          const sdkIterator = response[Symbol.asyncIterator]();
+          const detachableResponse: AsyncIterable<SDKMessage> = {
+            [Symbol.asyncIterator]: () => ({
+              next: () => sdkIterator.next(),
+              return: () => {
+                void sdkIterator.return?.().catch(() => {});
+                return Promise.resolve({ done: true as const, value: undefined });
+              },
+            }),
+          };
+          for await (const message of detachableResponse) {
             this.logger.debug(`[claude-code] Stream received message type: ${message.type}`);
+            this.invokeSdkMessageCallback(message);
+            if (options.includeRawChunks) {
+              controller.enqueue({ type: 'raw', rawValue: message });
+            }
 
             // Handle streaming events (token-by-token delivery via includePartialMessages)
             if (message.type === 'stream_event') {
@@ -3204,8 +3739,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 streamedTextLength += deltaText.length;
                 emittedTextSinceLastAssistant += deltaText;
               }
-              // Handle input_json_delta events for structured output streaming
-              // The SDK uses a StructuredOutput tool internally, and JSON is streamed via input_json_delta
+              // Handle input_json_delta events for structured output and tool input streaming.
               if (
                 event.type === 'content_block_delta' &&
                 event.delta.type === 'input_json_delta' &&
@@ -3215,10 +3749,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 const jsonDelta = event.delta.partial_json;
                 hasReceivedStreamEvents = true;
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
+                const isStructuredOutputDelta =
+                  structuredOutputBlockIndexes.has(blockIndex) ||
+                  (!toolBlocksByIndex.has(blockIndex) && !nonTextToolBlockIndexes.has(blockIndex));
 
-                // In JSON mode, prioritize streaming to text-delta for streamObject() support
-                // The SDK's internal StructuredOutput tool uses input_json_delta to stream JSON responses
-                if (options.responseFormat?.type === 'json') {
+                // In JSON mode, only the SDK's internal StructuredOutput tool streams object
+                // JSON as response text. Ordinary tool_use blocks still use input_json_delta
+                // for their arguments and must keep the normal tool-input lifecycle.
+                if (options.responseFormat?.type === 'json' && isStructuredOutputDelta) {
                   // Emit text-start if this is the first JSON delta
                   if (!textPartId) {
                     textPartId = generateId();
@@ -3239,7 +3777,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   continue;
                 }
 
-                // In non-JSON mode, route to tool-input-delta if we have a tracked tool
+                // Route to tool-input-delta if we have a tracked tool block.
                 const toolId = toolBlocksByIndex.get(blockIndex);
                 if (toolId) {
                   // Accumulate and emit tool-input-delta
@@ -3253,7 +3791,22 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   });
                   continue;
                 }
-                // input_json_delta without tool context in non-JSON mode is ignored
+                // input_json_delta without tool context is ignored. In JSON mode this includes
+                // tracked non-text tool blocks such as server/MCP tool use.
+              }
+
+              // Handle non-text tool blocks that stream args via input_json_delta but should not
+              // surface as AI SDK tool-call lifecycle parts in this provider.
+              if (
+                event.type === 'content_block_start' &&
+                'content_block' in event &&
+                isNonTextToolUseContentBlockType(event.content_block?.type)
+              ) {
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
+                hasReceivedStreamEvents = true;
+                nonTextToolBlockIndexes.add(blockIndex);
+                structuredOutputBlockIndexes.delete(blockIndex);
+                continue;
               }
 
               // Handle content_block_start for tool_use - emit tool-input-start immediately
@@ -3278,6 +3831,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     : ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
 
                 hasReceivedStreamEvents = true;
+                // A reused index cannot still belong to a non-text tool block.
+                nonTextToolBlockIndexes.delete(blockIndex);
+
+                if (isInternalStructuredOutputTool(toolName, options)) {
+                  structuredOutputBlockIndexes.add(blockIndex);
+                  continue;
+                }
+                // A reused index cannot still belong to a structured-output block.
+                structuredOutputBlockIndexes.delete(blockIndex);
 
                 // Close any active text part before tool starts
                 if (textPartId) {
@@ -3342,7 +3904,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                         parentToolCallId: state.parentToolCallId ?? null,
                       },
                     },
-                  } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                  });
 
                   // Track Task tools as active so nested tools can reference them as parent
                   if (isSubagentToolName(toolName)) {
@@ -3482,6 +4044,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   continue;
                 }
 
+                if (structuredOutputBlockIndexes.delete(blockIndex)) {
+                  continue;
+                }
+
+                if (nonTextToolBlockIndexes.delete(blockIndex)) {
+                  continue;
+                }
+
                 // Check if this is a text block
                 const textId = textBlocksByIndex.get(blockIndex);
                 if (textId) {
@@ -3549,7 +4119,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 .parent_tool_use_id;
 
               const content = message.message.content;
-              const tools = this.extractToolUses(content);
+              const tools = this.extractToolUses(content).filter(
+                (tool) => !isInternalStructuredOutputTool(tool.name, options)
+              );
 
               // Close any active text part before tool calls start.
               // This ensures tool calls split text into separate parts.
@@ -3620,13 +4192,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     id: toolId,
                     toolName: tool.name,
                     providerExecuted: true,
-                    dynamic: true, // V3 field: indicates tool is provider-defined
+                    dynamic: true, // V4 field: indicates tool is provider-defined
                     providerMetadata: {
                       'claude-code': {
                         parentToolCallId: state.parentToolCallId ?? null,
                       },
                     },
-                  } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                  });
                   // Track Task tools as active so nested tools can reference them as parent
                   if (isSubagentToolName(tool.name)) {
                     activeTaskTools.set(toolId, { startTime: Date.now() });
@@ -3906,13 +4478,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       id: result.id,
                       toolName,
                       providerExecuted: true,
-                      dynamic: true, // V3 field: indicates tool is provider-defined
+                      dynamic: true, // V4 field: indicates tool is provider-defined
                       providerMetadata: {
                         'claude-code': {
                           parentToolCallId: state.parentToolCallId ?? null,
                         },
                       },
-                    } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+                    });
                     state.inputStarted = true;
                   }
                   if (!state.inputClosed) {
@@ -3969,15 +4541,38 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       );
                   state = {
                     name: toolName,
-                    inputStarted: true,
-                    inputClosed: true,
+                    inputStarted: false,
+                    inputClosed: false,
                     callEmitted: false,
                     parentToolCallId: errorResolvedParentId,
                   };
                   toolStates.set(error.id, state);
+                  // Synthesize input lifecycle to preserve ordering when no prior tool_use was seen
+                  if (!state.inputStarted) {
+                    controller.enqueue({
+                      type: 'tool-input-start',
+                      id: error.id,
+                      toolName,
+                      providerExecuted: true,
+                      dynamic: true, // V4 field: indicates tool is provider-defined
+                      providerMetadata: {
+                        'claude-code': {
+                          parentToolCallId: state.parentToolCallId ?? null,
+                        },
+                      },
+                    });
+                    state.inputStarted = true;
+                  }
+                  if (!state.inputClosed) {
+                    controller.enqueue({
+                      type: 'tool-input-end',
+                      id: error.id,
+                    });
+                    state.inputClosed = true;
+                  }
                 }
 
-                // Ensure tool-call is emitted before tool-error
+                // Ensure tool-call is emitted before the errored tool-result
                 emitToolCall(error.id, state);
 
                 // Remove Task tools from active set when they error
@@ -3986,7 +4581,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 }
 
                 controller.enqueue(
-                  this.buildToolErrorPart(error.id, toolName, error.error, state.parentToolCallId)
+                  this.buildErroredToolResultPart(
+                    error.id,
+                    toolName,
+                    error.error,
+                    state.parentToolCallId
+                  )
                 );
               }
             } else if (message.type === 'result') {
@@ -4039,12 +4639,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 'stop_reason' in message
                   ? ((message as Record<string, unknown>).stop_reason as string | null | undefined)
                   : undefined;
-              const finishReason: LanguageModelV3FinishReason = mapClaudeCodeFinishReason(
+              let finishReason: LanguageModelV4FinishReason = mapClaudeCodeFinishReason(
                 message.subtype,
                 stopReason
               );
-
-              this.logger.debug(`[claude-code] Stream finish reason: ${finishReason.unified}`);
 
               // Store session ID in the model instance
               this.setSessionId(message.session_id);
@@ -4052,6 +4650,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               // Use structured output from SDK if available (native JSON schema support)
               const structuredOutput =
                 'structured_output' in message ? message.structured_output : undefined;
+              if (structuredOutput !== undefined && finishReason.unified === 'tool-calls') {
+                // Claude Code implements native structured output via an internal
+                // StructuredOutput tool. AI SDK v7 only treats completed object
+                // generation as parseable when the final step stops, so normalize
+                // successful structured output while preserving the raw CLI reason.
+                finishReason = { unified: 'stop', raw: finishReason.raw };
+              }
+
+              this.logger.debug(`[claude-code] Stream finish reason: ${finishReason.unified}`);
 
               // Check if we've already streamed JSON via input_json_delta
               const alreadyStreamedJson =
@@ -4196,6 +4803,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     ...(metadataTracking.permissionDenials.length > 0 && {
                       permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
                     }),
+                    ...(metadataTracking.taskEvents.length > 0 && {
+                      taskEvents: metadataTracking.taskEvents as unknown as JSONValue,
+                    }),
+                    ...(metadataTracking.hookEvents.length > 0 && {
+                      hookEvents: metadataTracking.hookEvents as unknown as JSONValue,
+                    }),
+                    ...(metadataTracking.mcpServers !== undefined && {
+                      mcpServers: metadataTracking.mcpServers as unknown as JSONValue,
+                    }),
                     ...(metadataTracking.mirrorErrors.length > 0 && {
                       mirrorErrors: metadataTracking.mirrorErrors as unknown as JSONValue,
                     }),
@@ -4215,25 +4831,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
               // The prompt_suggestion message (promptSuggestions: true) arrives
               // AFTER the result message, so the AI SDK stream has already
-              // finished above. Drain the remaining SDK messages to deliver it
-              // via the callback; only done when a callback is registered so
-              // everyone else keeps the immediate return-on-result behavior.
-              // The drain is bounded: the SDK emits at most one prompt_suggestion
-              // per turn, so stop once it is delivered, and a timeout closes the
-              // iterator (tearing down the subprocess) if the CLI lingers after
-              // the result without emitting one.
-              // Drain for the post-result prompt_suggestion only when
-              // suggestions can be emitted (promptSuggestions absent or true;
-              // disabled only when explicitly false), skipping the up-to-10s
-              // drain in the explicit-false case.
+              // finished above. The CLI emits prompt_suggestion only when
+              // promptSuggestions is true; when it is unset/disabled, the CLI ends
+              // the stream promptly after result, so the bounded drain exits
+              // immediately. Keep the drain for onSdkMessage observability of any
+              // post-result messages; everyone else keeps the immediate
+              // return-on-result behavior.
               const effectivePromptSuggestions =
                 sdkOptions?.promptSuggestions ?? this.settings.promptSuggestions;
-              if (this.settings.onPromptSuggestion && effectivePromptSuggestions !== false) {
-                await this.drainPromptSuggestion(response, this.settings.onPromptSuggestion);
+              const shouldDrainPromptSuggestion =
+                effectivePromptSuggestions !== false &&
+                (this.settings.onPromptSuggestion !== undefined ||
+                  this.settings.onSdkMessage !== undefined);
+              if (shouldDrainPromptSuggestion) {
+                await this.drainPromptSuggestion(sdkIterator, this.settings.onPromptSuggestion);
               }
               return;
             } else if (message.type === 'system' && message.subtype === 'init') {
               this.logMcpConnectionIssues(message.mcp_servers);
+              this.trackMcpStatusFromInit(message, metadataTracking);
 
               // Store session ID for future use
               this.setSessionId(message.session_id);
@@ -4275,7 +4891,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             this.logger.warn(
               `[claude-code] Detected truncated stream response, returning ${accumulatedText.length} characters of buffered text`
             );
-            const truncationWarning: SharedV3Warning = {
+            const truncationWarning: SharedV4Warning = {
               type: 'other',
               message: CLAUDE_CODE_TRUNCATION_WARNING,
             };
@@ -4320,6 +4936,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   }),
                   ...(metadataTracking.permissionDenials.length > 0 && {
                     permissionDenials: metadataTracking.permissionDenials as unknown as JSONValue,
+                  }),
+                  ...(metadataTracking.taskEvents.length > 0 && {
+                    taskEvents: metadataTracking.taskEvents as unknown as JSONValue,
+                  }),
+                  ...(metadataTracking.hookEvents.length > 0 && {
+                    hookEvents: metadataTracking.hookEvents as unknown as JSONValue,
+                  }),
+                  ...(metadataTracking.mcpServers !== undefined && {
+                    mcpServers: metadataTracking.mcpServers as unknown as JSONValue,
                   }),
                   ...(metadataTracking.mirrorErrors.length > 0 && {
                     mirrorErrors: metadataTracking.mirrorErrors as unknown as JSONValue,
@@ -4370,28 +4995,34 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     });
 
     return {
-      stream: stream as unknown as ReadableStream<LanguageModelV3StreamPart>,
+      stream,
       request: {
         body: messagesPrompt,
       },
     };
   }
 
-  private serializeWarningsForMetadata(warnings: SharedV3Warning[]): JSONValue {
-    const result = warnings.map((w) => {
-      const base: Record<string, string> = { type: w.type };
-      if ('message' in w) {
-        const m = (w as { message?: unknown }).message;
-        if (m !== undefined) base.message = String(m);
+  private serializeWarningsForMetadata(warnings: SharedV4Warning[]): JSONValue {
+    const result = warnings.map((warning) => {
+      const base: Record<string, string> = { type: warning.type };
+
+      switch (warning.type) {
+        case 'unsupported':
+        case 'compatibility':
+          base.feature = warning.feature;
+          if (warning.details !== undefined) {
+            base.details = warning.details;
+          }
+          break;
+        case 'deprecated':
+          base.setting = warning.setting;
+          base.message = warning.message;
+          break;
+        case 'other':
+          base.message = warning.message;
+          break;
       }
-      if (w.type === 'unsupported' || w.type === 'compatibility') {
-        const feature = (w as { feature: unknown }).feature;
-        if (feature !== undefined) base.feature = String(feature);
-        if ('details' in w) {
-          const d = (w as { details?: unknown }).details;
-          if (d !== undefined) base.details = String(d);
-        }
-      }
+
       return base;
     });
     return result as unknown as JSONValue;

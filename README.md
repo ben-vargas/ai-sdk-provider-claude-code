@@ -3,33 +3,34 @@
   <a href="https://www.npmjs.com/package/ai-sdk-provider-claude-code"><img src="https://img.shields.io/npm/v/ai-sdk-provider-claude-code?color=00A79E" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/ai-sdk-provider-claude-code"><img src="https://img.shields.io/npm/unpacked-size/ai-sdk-provider-claude-code?color=00A79E" alt="install size" /></a>
   <a href="https://www.npmjs.com/package/ai-sdk-provider-claude-code"><img src="https://img.shields.io/npm/dy/ai-sdk-provider-claude-code.svg?color=00A79E" alt="npm downloads" /></a>
-  <a href="https://nodejs.org/en/about/releases/"><img src="https://img.shields.io/badge/node-%3E%3D18-00A79E" alt="Node.js ≥ 18" /></a>
+  <a href="https://nodejs.org/en/about/releases/"><img src="https://img.shields.io/badge/node-%3E%3D22-00A79E" alt="Node.js ≥ 22" /></a>
   <a href="https://www.npmjs.com/package/ai-sdk-provider-claude-code"><img src="https://img.shields.io/npm/l/ai-sdk-provider-claude-code?color=00A79E" alt="License: MIT" /></a>
 </p>
 
 # AI SDK Provider for Claude Agent SDK
 
-> **Latest Release**: Version 3.x supports AI SDK v6 stable with the Claude Agent SDK. For AI SDK v5 support, use the `ai-sdk-v5` tag.
+> **Latest Release**: Version 4.x supports AI SDK v7 stable with the Claude Agent SDK. Version 3.x moves to maintenance for AI SDK v6 under the `ai-sdk-v6` tag.
 
 **ai-sdk-provider-claude-code** lets you use Claude via the [Vercel AI SDK](https://sdk.vercel.ai/docs) through the official `@anthropic-ai/claude-agent-sdk` and the Claude Code CLI.
 
 ## Version Compatibility
 
-| Provider Version | AI SDK Version | Underlying SDK                       | NPM Tag              | Status | Branch                                                                                  |
-| ---------------- | -------------- | ------------------------------------ | -------------------- | ------ | --------------------------------------------------------------------------------------- |
-| 3.x.x            | v6             | `@anthropic-ai/claude-agent-sdk`     | `latest`             | Stable | `main`                                                                                  |
-| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk`     | `ai-sdk-v5`          | Stable | [`ai-sdk-v5`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v5) |
-| 1.x.x            | v5             | `@anthropic-ai/claude-code` (legacy) | `v1-claude-code-sdk` | Legacy | [`v1`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/v1)               |
-| 0.x.x            | v4             | `@anthropic-ai/claude-code` (legacy) | `ai-sdk-v4`          | Legacy | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
+| Provider Version | AI SDK Version | Underlying SDK                   | NPM Tag              | Status      | Branch      |
+| ---------------- | -------------- | -------------------------------- | -------------------- | ----------- | ----------- |
+| 4.x.x            | v7             | `@anthropic-ai/claude-agent-sdk` | `latest`             | Stable      | `main`      |
+| 3.x.x            | v6             | `@anthropic-ai/claude-agent-sdk` | `ai-sdk-v6`          | Maintenance | `ai-sdk-v6` |
+| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk` | `ai-sdk-v5`          | Legacy      | `ai-sdk-v5` |
+| 1.x.x            | v5             | `@anthropic-ai/claude-code`      | `v1-claude-code-sdk` | Legacy      | `v1`        |
+| 0.x.x            | v4             | `@anthropic-ai/claude-code`      | `ai-sdk-v4`          | Legacy      | `ai-sdk-v4` |
 
 Install commands for each line are listed under [Installation](#installation) below.
 
 ## Zod Compatibility
 
-**Starting from v3.2.0, this package requires Zod 4.**
+**The 4.x line requires Zod `^4.1.8`.** Version 3.x remains available for AI SDK v6 under the `ai-sdk-v6` tag.
 
 ```bash
-npm install ai-sdk-provider-claude-code ai zod@^4.0.0
+npm install ai-sdk-provider-claude-code ai zod@^4.1.8
 ```
 
 > **Note:** Zod 3 support was dropped in v3.2.0 due to the underlying `@anthropic-ai/claude-agent-sdk@0.2.x` requiring Zod 4. If you need Zod 3 support, use `ai-sdk-provider-claude-code@3.1.x`.
@@ -48,9 +49,11 @@ claude auth login
 ### 2. Add the provider
 
 ```bash
-# For AI SDK v6 (recommended)
-npm install ai-sdk-provider-claude-code ai@^6.0.0
-# or explicitly: npm install ai-sdk-provider-claude-code@latest
+# For AI SDK v7 (4.x; current latest tag)
+npm install ai-sdk-provider-claude-code ai
+
+# For AI SDK v6 maintenance (3.x)
+npm install ai-sdk-provider-claude-code@ai-sdk-v6 ai@^6.0.0
 
 # For AI SDK v5
 npm install ai-sdk-provider-claude-code@ai-sdk-v5 ai@^5.0.0
@@ -72,9 +75,26 @@ Please ensure you have appropriate permissions and comply with all applicable te
 
 ## Quick Start
 
-### AI SDK v6
+### AI SDK v7 (`latest`)
 
 ```typescript
+// npm install ai-sdk-provider-claude-code ai
+import { streamText } from 'ai';
+import { claudeCode } from 'ai-sdk-provider-claude-code';
+
+const result = streamText({
+  model: claudeCode('haiku'),
+  prompt: 'Hello, Claude!',
+});
+
+const text = await result.text;
+console.log(text);
+```
+
+### AI SDK v6 (maintenance)
+
+```typescript
+// npm install ai-sdk-provider-claude-code@ai-sdk-v6 ai@^6.0.0
 import { streamText } from 'ai';
 import { claudeCode } from 'ai-sdk-provider-claude-code';
 
@@ -105,6 +125,24 @@ console.log(text);
 
 ## Breaking Changes
 
+### Version 4.0.0 (AI SDK v7)
+
+This release ports the provider to AI SDK v7 / `LanguageModelV4`, adds first-class Claude Agent SDK callback, query-controller, MCP, and image support, and keeps the v7 support boundaries explicit:
+
+- Requires Node.js ≥ 22 and Zod `^4.1.8`
+- ESM-only package output; CommonJS `require()` is no longer available
+- Tool failures now use spec `tool-result` parts/events with `isError: true` instead of the provider-specific `tool-error` stream extension
+
+### Optional AI SDK v7 surfaces not implemented
+
+Version 4.0.0 intentionally keeps optional provider surfaces absent unless the Claude Agent SDK has a durable provider-reference mapping:
+
+- `ProviderV4.files()` is not implemented yet. The AI SDK interface uploads `{ type: 'data' }` or `{ type: 'text' }` bytes and returns a reusable provider reference, but Claude Agent SDK `0.3.205` exposes no direct upload/reuse API for that contract. This provider forwards inline **image** file parts in prompts; non-image inline files (for example PDFs) emit an unsupported-file call warning and are not forwarded. It does not upload files into durable provider references.
+- Canonical V4 tool-result file parts are replayed into conversation history as text markers like `[File <name>: <mediaType>]`; raw file bytes are not re-sent on replay. Richer tool-result file replay, such as re-sending actual image/file bytes for tool-result file parts, is deferred.
+- `ProviderV4.skills()` is not implemented yet. Claude Code skills are loaded from configured user/project/local skill directories with the existing `skills` setting below; there is no Agent SDK API that uploads a skill bundle and returns an AI SDK provider reference.
+- Workflow serialization is deferred. `@ai-sdk/provider-utils@5.0.5` exposes `WORKFLOW_SERIALIZE`, `WORKFLOW_DESERIALIZE`, and `serializeModelOptions()` for provider model classes in the AI SDK v7 stack, but this provider has not added a serialization contract for provider instances or settings. Callback/function settings such as `canUseTool`, hooks, `logger`, `spawnClaudeCodeProcess`, and `SessionStore` methods are not JSON-serializable and must be recreated by the application.
+- V4 `custom` and `reasoning-file` parts are not emitted as provider output yet. Claude Agent SDK `0.3.205` has no durable reasoning-file artifact output that maps to AI SDK `reasoning-file`; assistant-history `custom` and `reasoning-file` parts have no Claude Code replay representation and are skipped (unknown unsupported content variants still warn).
+
 ### Version 3.0.0 (AI SDK v6 Stable)
 
 This version upgrades to AI SDK v6 stable with updated provider types:
@@ -133,11 +171,12 @@ Key changes:
 
 ## Models
 
-- **`opus`** - Claude Opus (most capable)
+- **`fable`** - Claude Fable (most capable)
+- **`opus`** - Claude Opus (highly capable)
 - **`sonnet`** - Claude Sonnet (balanced performance)
 - **`haiku`** - Claude Haiku (fastest, most cost-effective)
 
-You can also use full model identifiers directly (e.g., `claude-sonnet-4-6`, `claude-opus-4-8`).
+You can also use full model identifiers directly (e.g., `claude-fable-5`, `claude-sonnet-4-6`, `claude-opus-4-8`).
 
 ## Documentation
 
@@ -193,7 +232,7 @@ claude auth login
 
 If you're upgrading from version 1.x:
 
-1. **Update the package**: `npm install ai-sdk-provider-claude-code@latest`
+1. **Update the package**: `npm install ai-sdk-provider-claude-code@ai-sdk-v5`
 2. **If you relied on default system prompt or CLAUDE.md**, add explicit configuration:
    ```ts
    const model = claudeCode('sonnet', {
@@ -212,37 +251,41 @@ If you're upgrading from version 1.x:
 
 ## Structured Outputs
 
-This provider supports **native structured outputs** via the Claude Agent SDK (v0.1.45+). When using `generateObject()` or `streamObject()`, the SDK returns schema-compliant JSON for **supported** JSON Schema features via constrained decoding.
+This provider supports **native structured outputs** via Claude Agent SDK constrained decoding. On the 4.x line (AI SDK v7), use `generateText()` with an `output` specification such as `Output.object({ schema })`, then destructure `output` from the result. For streaming structured output, use `streamText()` with the same `output` setting and read `partialOutputStream` as partial objects arrive.
 
 ```typescript
-import { generateObject } from 'ai';
+import { generateText, Output } from 'ai';
 import { claudeCode } from 'ai-sdk-provider-claude-code';
 import { z } from 'zod';
 
-const result = await generateObject({
+const UserProfileSchema = z.object({
+  name: z.string(),
+  age: z.number(),
+  email: z.string().describe('Email address (validate client-side)'),
+});
+
+const { output } = await generateText({
   model: claudeCode('sonnet'),
-  schema: z.object({
-    name: z.string(),
-    age: z.number(),
-    email: z.string().describe('Email address (validate client-side)'),
-  }),
+  output: Output.object({ schema: UserProfileSchema }),
   prompt: 'Generate a user profile for a software developer',
 });
 
-console.log(result.object); // Matches the schema above
+console.log(output); // Matches the schema above
 // { name: "Alex Chen", age: 28, email: "alex@example.com" }
 ```
 
 **Benefits:**
 
 - ✅ **Schema compliance (supported features)** - Constrained decoding ensures valid output
-- ✅ **No JSON parsing errors** - SDK handles all validation
+- ✅ **No JSON parsing errors** - AI SDK handles validation against your schema
 - ✅ **No prompt engineering** - Schema enforcement is native to the SDK
 - ✅ **Better performance** - No retry/extraction logic needed
 
-> **Note:** A schema is required for JSON output. Using `responseFormat: { type: 'json' }` without a schema is not supported by Claude Code (matching Anthropic's official provider behavior). An `unsupported-setting` warning will be emitted and the call will be treated as plain text.
+> **Note:** Schema-less JSON output (AI SDK v7 `Output.json()`) is not supported by Claude Code; use `Output.object()` / `Output.array()` / `Output.choice()` with a schema or choices. The provider emits a V4 `unsupported` warning with `feature: 'responseFormat'` and treats the call as plain text.
 >
-> **Current CLI limitation:** Some JSON Schema features can cause the Claude Code CLI to silently fall back to prose (no `structured_output`). The provider mitigates the most common case: `format` keywords (`date-time`, `email`, `uri`, `uuid`, ... — produced by Zod's `.datetime()`, `.email()`, `.url()`, `.uuid()`) are stripped client-side before the schema is sent, with the hint folded into the field's `description` (e.g. `(expected format: email)`). Server-side enforcement of `format` still does not exist in the CLI, but `generateObject`/`streamObject` validate against your original Zod schema client-side, so nothing is lost. Complex regex `pattern`s (lookaheads/backreferences) remain unmitigated — `pattern` is passed through untouched because the CLI genuinely enforces simple patterns. If the CLI still falls back to prose, the provider first tries to parse the prose as JSON (graceful recovery, with a warning) and otherwise fails fast with a descriptive error instead of letting an opaque `AI_NoObjectGeneratedError` surface downstream. See `examples/structured-output-repro.ts` and `examples/limitations.ts`.
+> **Current CLI limitation:** Some JSON Schema features can cause the Claude Code CLI to silently fall back to prose (no `structured_output`). The provider mitigates the most common case: `format` keywords (`date-time`, `email`, `uri`, `uuid`, ... — produced by Zod's `.datetime()`, `.email()`, `.url()`, `.uuid()`) are stripped client-side before the schema is sent, with the hint folded into the field's `description` (e.g., `(expected format: email)`). Server-side enforcement of `format` still does not exist in the CLI, but the AI SDK validates `output` against your original Zod schema client-side, so nothing is lost. Complex regex `pattern`s (lookaheads/backreferences) remain unmitigated — `pattern` is passed through untouched because the CLI genuinely rejects some patterns. Keep generation schemas simple and enforce stricter invariants after generation.
+>
+> If you are staying on the 3.x (AI SDK v6) line, its legacy structured-output examples may still use `generateObject()` / `streamObject()`; new 4.x code should use `generateText()` / `streamText()` with `Output`.
 
 ## Core Features
 
@@ -252,44 +295,56 @@ console.log(result.object); // Matches the schema above
 - 🎯 Native structured outputs with schema compliance for supported features
 - 🛑 AbortSignal support
 - 🔧 Tool management (MCP servers, permissions)
-- 🧩 Callbacks (hooks, canUseTool)
+- 🧩 Callbacks (`onSdkMessage`, task/hook/MCP status events, `canUseTool`, `onElicitation`)
+- 🎛️ Query controller access for safe live-session controls
+
+## AI SDK v7 app-level features
+
+DevTools and OpenTelemetry/OTel telemetry registration are app-level `ai` package features. This provider exposes standard AI SDK v7 metadata and stream parts for them, but adds no runtime dependencies for DevTools or OTel.
 
 ## Agent SDK Options (Advanced)
 
 This provider exposes Agent SDK options directly. Key options include:
 
-| Option                            | Description                                                                                                                                                                                                                                                      |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `betas`                           | Enable beta features (e.g., `['context-1m-2025-08-07']`)                                                                                                                                                                                                         |
-| `sandbox`                         | Configure sandbox behavior (`{ enabled: true }`). Cannot be combined with a `settings` file path (inline `settings` objects are fine)                                                                                                                            |
-| `plugins`                         | Load custom plugins from local paths                                                                                                                                                                                                                             |
-| `resumeSessionAt`                 | Resume session at a specific message UUID                                                                                                                                                                                                                        |
-| `enableFileCheckpointing`         | Enable file rewind support                                                                                                                                                                                                                                       |
-| `maxBudgetUsd`                    | Maximum budget in USD for the query                                                                                                                                                                                                                              |
-| `tools`                           | Tool configuration (array of names or preset)                                                                                                                                                                                                                    |
-| `allowDangerouslySkipPermissions` | Allow bypassing permissions                                                                                                                                                                                                                                      |
-| `persistSession`                  | When `false`, disables session persistence to disk (v3.2.0+)                                                                                                                                                                                                     |
-| `spawnClaudeCodeProcess`          | Custom process spawner for VMs/containers (v3.2.0+)                                                                                                                                                                                                              |
-| `permissionMode`                  | Permission mode: `'default'`, `'acceptEdits'`, `'bypassPermissions'`, `'plan'`, `'dontAsk'`, `'auto'` (`'auto'` and `'dontAsk'` added in SDK 0.3.x; `'delegate'` was removed in SDK 0.3.x and the CLI rejects it, so the provider rejects it at validation time) |
-| `sessionId`                       | Use a specific session ID for deterministic tracking and correlation (v3.4.0+). Must be a valid UUID; cannot be combined with `continue`/`resume` unless `forkSession` is also set                                                                               |
-| `debug`                           | Enable programmatic debug logging from the SDK (v3.4.0+)                                                                                                                                                                                                         |
-| `debugFile`                       | Path to a file for SDK debug log output (v3.4.0+)                                                                                                                                                                                                                |
-| `effort`                          | Effort level: `'low'`, `'medium'`, `'high'`, `'xhigh'`, or `'max'`                                                                                                                                                                                               |
-| `thinking`                        | Thinking config: `{ type: 'adaptive' }`, `{ type: 'enabled', budgetTokens?: number }`, or `{ type: 'disabled' }`                                                                                                                                                 |
-| `promptSuggestions`               | Enable prompt suggestions (`boolean`)                                                                                                                                                                                                                            |
-| `skills`                          | Enable skills for the session: `'all'` or an array of skill names (v3.5.0+)                                                                                                                                                                                      |
-| `settings`                        | Inline `Settings` object or path to a settings JSON file (v3.5.0+)                                                                                                                                                                                               |
-| `managedSettings`                 | Restrictive policy-tier settings enforced on the subprocess (v3.5.0+)                                                                                                                                                                                            |
-| `toolAliases`                     | Map built-in tool names to replacement tools, e.g. `{ Bash: 'mcp__workspace__bash' }` (v3.5.0+)                                                                                                                                                                  |
-| `toolConfig`                      | Per-tool configuration for built-in tools, e.g. `{ askUserQuestion: { previewFormat: 'html' } }` (v3.5.0+)                                                                                                                                                       |
-| `planModeInstructions`            | Custom workflow instructions for plan mode (v3.5.0+)                                                                                                                                                                                                             |
-| `title`                           | Custom title for a new session (v3.5.0+)                                                                                                                                                                                                                         |
-| `forwardSubagentText`             | Forward subagent text/thinking blocks for nested transcripts (v3.5.0+)                                                                                                                                                                                           |
-| `agentProgressSummaries`          | Periodic AI-generated progress summaries for running subagents (v3.5.0+)                                                                                                                                                                                         |
-| `includeHookEvents`               | Include hook lifecycle events in the output stream (v3.5.0+)                                                                                                                                                                                                     |
-| `fallbackModel`                   | Fallback model(s) if the primary is overloaded — accepts a comma-separated list to try in order. Must differ from the main model                                                                                                                                 |
-| `onUserDialog`                    | Callback rendering blocking CLI dialogs (`request_user_dialog`); see **User dialogs** below                                                                                                                                                                      |
-| `supportedDialogKinds`            | Dialog kinds your `onUserDialog` can render; required for dialogs to be emitted at all                                                                                                                                                                           |
+| Option                            | Description                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `betas`                           | Enable beta features (e.g., `['context-1m-2025-08-07']`)                                                                                                                                                                                                                                                                                                                |
+| `sandbox`                         | Configure sandbox behavior (`{ enabled: true }`). Cannot be combined with a `settings` file path (inline `settings` objects are fine)                                                                                                                                                                                                                                   |
+| `plugins`                         | Load custom plugins from local paths                                                                                                                                                                                                                                                                                                                                    |
+| `resumeSessionAt`                 | Resume session at a specific message UUID                                                                                                                                                                                                                                                                                                                               |
+| `enableFileCheckpointing`         | Enable file rewind support                                                                                                                                                                                                                                                                                                                                              |
+| `maxBudgetUsd`                    | Maximum budget in USD for the query                                                                                                                                                                                                                                                                                                                                     |
+| `tools`                           | Tool configuration (array of names or preset)                                                                                                                                                                                                                                                                                                                           |
+| `allowDangerouslySkipPermissions` | Allow bypassing permissions                                                                                                                                                                                                                                                                                                                                             |
+| `persistSession`                  | When `false`, disables session persistence to disk (v3.2.0+)                                                                                                                                                                                                                                                                                                            |
+| `spawnClaudeCodeProcess`          | Custom process spawner for VMs/containers (v3.2.0+)                                                                                                                                                                                                                                                                                                                     |
+| `permissionMode`                  | Permission mode: `'default'`, `'acceptEdits'`, `'bypassPermissions'`, `'plan'`, `'dontAsk'`, `'auto'` (`'auto'` and `'dontAsk'` added in SDK 0.3.x; `'delegate'` was removed in SDK 0.3.x and the CLI rejects it, so the provider rejects it at validation time)                                                                                                        |
+| `sessionId`                       | Use a specific session ID for deterministic tracking and correlation (v3.4.0+). Must be a valid UUID; cannot be combined with `continue`/`resume` unless `forkSession` is also set                                                                                                                                                                                      |
+| `debug`                           | Enable programmatic debug logging from the SDK (v3.4.0+)                                                                                                                                                                                                                                                                                                                |
+| `debugFile`                       | Path to a file for SDK debug log output (v3.4.0+)                                                                                                                                                                                                                                                                                                                       |
+| `effort`                          | Effort level: `'low'`, `'medium'`, `'high'`, `'xhigh'`, or `'max'`                                                                                                                                                                                                                                                                                                      |
+| `thinking`                        | Thinking config: `{ type: 'adaptive' }`, `{ type: 'enabled', budgetTokens?: number }`, or `{ type: 'disabled' }`                                                                                                                                                                                                                                                        |
+| `promptSuggestions`               | Enable prompt suggestions (`boolean`)                                                                                                                                                                                                                                                                                                                                   |
+| `skills`                          | Enable skills for the session: `'all'` or an array of skill names (v3.5.0+)                                                                                                                                                                                                                                                                                             |
+| `settings`                        | Inline `Settings` object or path to a settings JSON file (v3.5.0+)                                                                                                                                                                                                                                                                                                      |
+| `managedSettings`                 | Restrictive policy-tier settings enforced on the subprocess (v3.5.0+)                                                                                                                                                                                                                                                                                                   |
+| `toolAliases`                     | Map built-in tool names to replacement tools, e.g. `{ Bash: 'mcp__workspace__bash' }` (v3.5.0+)                                                                                                                                                                                                                                                                         |
+| `toolConfig`                      | Per-tool configuration for built-in tools, e.g. `{ askUserQuestion: { previewFormat: 'html' } }` (v3.5.0+)                                                                                                                                                                                                                                                              |
+| `planModeInstructions`            | Custom workflow instructions for plan mode (v3.5.0+)                                                                                                                                                                                                                                                                                                                    |
+| `title`                           | Custom title for a new session (v3.5.0+)                                                                                                                                                                                                                                                                                                                                |
+| `forwardSubagentText`             | Forward subagent text/thinking blocks for nested transcripts (v3.5.0+)                                                                                                                                                                                                                                                                                                  |
+| `agentProgressSummaries`          | Periodic AI-generated progress summaries for running subagents (v3.5.0+)                                                                                                                                                                                                                                                                                                |
+| `includeHookEvents`               | Include hook lifecycle events in the output stream (v3.5.0+)                                                                                                                                                                                                                                                                                                            |
+| `fallbackModel`                   | Fallback model(s) if the primary is overloaded — accepts a comma-separated list to try in order. Must differ from the main model                                                                                                                                                                                                                                        |
+| `onUserDialog`                    | Callback rendering blocking CLI dialogs (`request_user_dialog`); see **User dialogs** below                                                                                                                                                                                                                                                                             |
+| `supportedDialogKinds`            | Dialog kinds your `onUserDialog` can render; required for dialogs to be emitted at all                                                                                                                                                                                                                                                                                  |
+| `onSdkMessage`                    | Raw callback for every observed Agent SDK `SDKMessage`; useful for future SDK message types and custom telemetry                                                                                                                                                                                                                                                        |
+| `onTaskEvent`                     | Callback for task/subagent lifecycle events (`ClaudeCodeTaskEvent`); also accumulated in `providerMetadata['claude-code'].taskEvents` when present                                                                                                                                                                                                                      |
+| `onHookEvent`                     | Callback for hook lifecycle events (`ClaudeCodeHookEvent`); set `includeHookEvents: true` when you want the SDK to emit hook started/progress/response messages                                                                                                                                                                                                         |
+| `onMcpStatusChange`               | Callback for the initial MCP status snapshot observed from the SDK init message (`ClaudeCodeMcpStatusEvent`); the same request-time snapshot is surfaced in `providerMetadata['claude-code'].mcpServers` when available. For live status after runtime MCP changes, use `controller.mcpServerStatus()` while the query is live and SDK streaming input/output is active |
+| `onElicitation`                   | First-class Agent SDK `OnElicitation` callback for MCP elicitation requests (form fields, URL auth, or other server-requested input)                                                                                                                                                                                                                                    |
+| `agent`                           | Select a named Claude Code agent persona for the main thread. Use intentionally: a configured agent can carry its own prompt/tool/model policy, separate from the AI SDK call's prompt/model surface                                                                                                                                                                    |
+| `onQueryControllerCreated`        | Callback receiving a `ClaudeCodeQueryController` for safe live-query controls. Control-protocol methods require a live SDK `Query`, and most require SDK streaming input/output; `controller.rawQuery` remains available when you need the raw SDK `Query`                                                                                                              |
 
 **System prompt** (`systemPrompt`) accepts a string, a string array, or the Claude Code preset object (v3.5.0+ for the array form). In the array form, include the re-exported `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` marker as a standalone element to split the static (cross-session cacheable) prefix from the dynamic suffix. The preset object additionally accepts `excludeDynamicSections: true` to strip per-user dynamic sections (working directory, git status) so the prompt caches across users.
 
@@ -300,6 +355,8 @@ This provider exposes Agent SDK options directly. Key options include:
 - `criticalSystemReminder_EXPERIMENTAL` - Experimental critical reminder
 
 **Alpha options** (v3.5.0+, marked `@alpha` upstream and subject to change): `taskBudget` (`{ total: number }` API-side token budget), `sessionStore` (mirror session transcripts to a custom storage adapter; the provider rejects combining it with `persistSession: false` or `enableFileCheckpointing: true`, and `continue: true` without a `resume` ID requires the store to implement `listSessions()`), `sessionStoreFlush` (`'batched'` or `'eager'`), and `loadTimeoutMs` (resume-load timeout). The SDK's `InMemorySessionStore` reference implementation and the `SessionStore`/`SessionStoreFlush` types are re-exported.
+
+The package also re-exports SDK helper functions/types used by advanced hosts: `resolveSettings`, `filterEscalatingDefaultMode`, `SandboxCredentialsConfig`, and `SDKFilesPersistedEvent` in addition to the session, hook, MCP, permission, and warm-start exports documented below.
 
 ### User dialogs (`onUserDialog` / `supportedDialogKinds`)
 
@@ -323,9 +380,11 @@ const model = claudeCode('sonnet', {
 
 The `OnUserDialog`, `UserDialogRequest`, and `UserDialogResult` types are re-exported. Note that `UserDialogResult.result` is typed `unknown` — the CLI validates it against the dialog kind's own result schema at runtime, and a result that doesn't match (e.g. the wrong shape or an unknown string) is **silently** replaced by the dialog's default (for `'refusal_fallback_prompt'`, `'cancelled'`), so double-check the result values for each kind you handle.
 
-### Permission decisions (`canUseTool` extras)
+### Permission decisions (`canUseTool`, `permissionMode`, and AI SDK `toolApproval`)
 
-SDK 0.3.x enriched the `canUseTool` callback (no provider change needed — these arrive on the existing `options` argument):
+SDK 0.3.x enriched the Claude Agent SDK `canUseTool` callback (no provider change needed — these arrive on the existing `options` argument):
+
+AI SDK v7 `toolApproval` is **not** bridged to Claude Code's internal tool permission system. Use Claude Agent SDK `canUseTool` / `permissionMode` for Claude Code built-in and MCP tools; call-level `toolApproval` on `generateText`/`streamText` applies to app-level AI SDK tools handled by the `ai` package.
 
 - `title` — full permission prompt sentence (e.g. "Claude wants to read foo.txt"); prefer it over reconstructing from `toolName` + input
 - `displayName` — short noun phrase for the tool action (e.g. "Read file"), suitable for button labels
@@ -352,7 +411,39 @@ const model = claudeCode('sonnet', {
 > **Upstream CLI caveats (verified on CLI 2.1.172):**
 >
 > - A `PreToolUse` hook returning `permissionDecision: 'defer'` combined with a `canUseTool` callback fails the tool call **before** `canUseTool` is ever consulted. When `canUseTool` should handle the call, have the hook return no decision (or `'allow'`) instead of `'defer'`.
-> - The `PermissionDenied` hook only fires for CLI-internal auto-mode classifier denials (e.g. `permissionMode: 'auto'`). Denials issued by `canUseTool` do **not** trigger it — they surface via the result message's `permission_denials`, which the provider merges into `providerMetadata['claude-code'].permissionDenials`.
+> - The `PermissionDenied` hook only fires for CLI-internal auto-mode classifier denials (e.g. `permissionMode: 'auto'`). Denials issued by `canUseTool` do **not** trigger it — they surface via the result message's `permission_denials`, which the provider merges into `finalStep.providerMetadata['claude-code'].permissionDenials`.
+
+### Agent SDK event callbacks (`onSdkMessage`, task/hook/MCP status, elicitation)
+
+Use these callbacks when you need Agent SDK observability without parsing AI SDK stream parts yourself:
+
+```ts
+const model = claudeCode('sonnet', {
+  onSdkMessage: (message) => {
+    console.debug('raw SDK message:', message.type);
+  },
+  onTaskEvent: (event) => {
+    console.debug('task event:', event.subtype);
+  },
+  includeHookEvents: true,
+  onHookEvent: (event) => {
+    console.debug('hook event:', event.subtype);
+  },
+  onMcpStatusChange: (status) => {
+    console.debug('MCP init status snapshot:', status);
+  },
+  onElicitation: async (request) => {
+    return renderMcpElicitation(request);
+  },
+});
+```
+
+- `onSdkMessage` receives the raw `SDKMessage` objects the provider observes. Prefer this when you want to preserve new or rare SDK messages without waiting for provider-specific metadata.
+- `onTaskEvent` receives normalized task/subagent events and the same objects are collected into `providerMetadata['claude-code'].taskEvents` when any fire during the request.
+- `onHookEvent` receives normalized hook lifecycle events; because the underlying SDK only emits hook lifecycle messages when requested, pair it with `includeHookEvents: true`.
+- `onMcpStatusChange` receives the initial MCP server status snapshot observed during the request; final metadata includes that same request-time `mcpServers` snapshot when available. For live status after `reconnectMcpServer()`, `toggleMcpServer()`, or `setMcpServers()`, call `controller.mcpServerStatus()` while the query is live and SDK streaming input/output is active.
+- `onElicitation` is the first-class Agent SDK `OnElicitation` hook. It is for MCP-server-requested input; if you do not provide it, unhandled elicitation requests follow the SDK's default decline/cancel behavior.
+- `agent` selects a named Claude Code agent for the main thread. This is different from `agents` (which defines subagents). Use it only when you want the named agent's configured prompt/tools/model behavior to participate in the main request.
 
 See [`ClaudeCodeSettings`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/blob/main/src/types.ts) for the full list of supported options (e.g., `allowedTools`, `disallowedTools`, `hooks`, `canUseTool`, `env`, `settingSources`).
 
@@ -373,22 +464,17 @@ const model = claudeCode('sonnet', {
 });
 ```
 
-### Not exposed (and why)
+### SDK boundaries
 
-A few Agent SDK surfaces are deliberately not wrapped by this provider. A compile-time drift guard (`src/options-coverage.test.ts`) keeps this list exhaustive: every SDK `Options` field is either mapped, provider-managed, or consciously listed below.
+**Provider-managed fields** are set internally and ignored if passed via `sdkOptions`: `model`, `abortController`, `prompt`, and `outputFormat`.
 
-**`Options` fields without a `ClaudeCodeSettings` equivalent** (both still reachable via `sdkOptions`):
-
-- `agent` — selects a named agent persona for the _main_ thread, overriding the conversation's system prompt, tools, and model. That conflicts with the AI SDK contract, where the model id and system prompt come from the AI SDK call itself. (Defining subagents via `agents` is fully supported.)
-- `onElicitation` — an interactive host-UI callback for MCP elicitation requests (form fields, URL auth). Headless AI SDK usage has no dialog surface, and the SDK safely auto-declines unhandled requests.
-
-**Provider-managed fields** that are set internally and ignored if passed via `sdkOptions`: `model`, `abortController`, `prompt`, and `outputFormat`.
+`agent` and `onElicitation` are first-class `ClaudeCodeSettings` fields on the 4.x line. Older 3.x docs described them as `sdkOptions` escape hatches; use the direct settings names in new code.
 
 **Alternate SDK entry points** — the Agent SDK also ships `/browser` (WebSocket browser transport), `/bridge` (remote-control session transport), and `/assistant` (worker/daemon harness) entry points. These are alpha surfaces with their own versioning cadence and are aimed at embedding hosts rather than AI SDK consumers, so this provider does not re-export them. Import them directly from `@anthropic-ai/claude-agent-sdk/<entry>` if you need them, with the usual alpha-stability caveats.
 
 ## Claude Agent SDK 0.3.x Notes
 
-This provider depends on `@anthropic-ai/claude-agent-sdk@^0.3.170`. The 0.3.x line introduces a few changes worth knowing about:
+This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.205` (exact pin). The pin is exact rather than a caret because upstream releases have shipped broken `sdk.d.ts` declarations before (0.3.198–0.3.202 collapsed `SDKMessage` to `any`, fixed in 0.3.203); the weekly canary gates each pin move. The 0.3.x line introduces a few changes worth knowing about:
 
 ### New peer dependencies
 
@@ -450,7 +536,7 @@ for await (const chunk of result.textStream) {
 
 **Requirements:**
 
-- `streamingInput: 'always'` or `'auto'` with `canUseTool` set
+- `streamingInput: 'always'` or `'auto'` with `canUseTool` set; image parts also auto-enable SDK streaming input under `'auto'`
 - Messages injected via `inject(content)` are delivered to the agent mid-turn
 
 **Important:** Injection works between tool calls, not during continuous text generation. Use tasks that involve tool usage (file operations, bash commands, etc.) for effective mid-turn interruption.
@@ -480,14 +566,14 @@ injector.inject('STOP!', (delivered) => {
 
 See [examples/message-injection.ts](examples/message-injection.ts) for complete examples including conditional injection and supervisor approval patterns.
 
-## Image Inputs (Streaming Only)
+## Image Inputs
 
-- Enable streaming input (`streamingInput: 'always'` or provide `canUseTool`) before sending images.
-- Supported payloads: data URLs (`data:image/png;base64,...`), strings prefixed with `base64:<mediaType>,<data>`, or objects `{ data: '<base64>', mimeType: 'image/png' }`.
+- With `streamingInput: 'auto'` (the default), supported image prompts automatically enable the Agent SDK streaming-input path for that request; you no longer need to set `streamingInput: 'always'` just to send images.
+- Supported payloads include data URLs (`data:image/png;base64,...`), strings prefixed with `base64:<mediaType>,<data>`, or AI SDK v7 file parts such as `{ type: 'file', data: { type: 'data', data: '<base64>' }, mediaType: 'image/png' }` (use `mediaType`, not `mimeType`).
 - Remote HTTP(S) image URLs are ignored with the warning "Image URLs are not supported by this provider; supply base64/data URLs." (`supportsImageUrls` remains `false`).
-- When streaming input is disabled, image parts trigger the streaming prerequisite warning and are omitted from the request.
+- `streamingInput: 'off'` remains an explicit opt-out: image prompts skip the streaming-input path, image parts are omitted, and the provider emits a generic `type: 'other'` image streaming-input warning.
 - Use realistic image payloads—very small placeholders may result in the model asking for a different image.
-- `examples/images.ts` accepts a local image path and converts it to a data URL on the fly: `npx tsx examples/images.ts /absolute/path/to/image.png`.
+- `examples/images.ts` accepts a local image path, reads its bytes, and builds an AI SDK v7 file part: `npx tsx examples/images.ts /absolute/path/to/image.png`.
 
 ## Skills Support
 
@@ -536,7 +622,7 @@ See [examples/skills-management.ts](examples/skills-management.ts) for more exam
 
 ## Using AI SDK Tools
 
-The Claude Code CLI executes its own tools, so AI SDK tools passed to `generateText`/`streamText` via the `tools` option are ignored (with an `unsupported` warning). Automatic bridging is impossible by design: at the `LanguageModelV3` layer the provider only receives tool _declarations_ (name, description, JSON schema) — the `execute` functions live in the `ai` package layer and never reach any provider.
+The Claude Code CLI executes its own tools, so AI SDK tools passed to `generateText`/`streamText` via the `tools` option are ignored (with an `unsupported` warning). Automatic bridging is impossible by design: at the `LanguageModelV4` layer the provider only receives tool _declarations_ (name, description, JSON schema) — the `execute` functions live in the `ai` package layer and never reach any provider.
 
 Instead, bridge your tools explicitly with the `createAiSdkMcpServer` helper, which turns a map of AI SDK tools into an in-process MCP server that the CLI can call:
 
@@ -567,6 +653,7 @@ Notes:
 
 - Each tool's `execute` runs in your process; string results pass through as MCP text content, everything else is `JSON.stringify`'d, and thrown errors become `isError` tool results instead of crashing the CLI session. Results that cannot be serialized to JSON (e.g. circular objects) also become `isError` results with a serialization message.
 - Tool calls/results surface to the AI SDK as **provider-executed dynamic tool parts** (`tool-call`/`tool-result` with `mcp__<serverName>__<toolName>` names), not as executions of your local `tools` option.
+- AI SDK v7 `toolApproval` is call-level approval for app-level AI SDK tools. Once a tool is exposed to Claude Code as MCP, approve or deny it with Claude Agent SDK controls (`canUseTool`, `permissionMode`, `allowedTools`, `disallowedTools`).
 - Only **Zod object schemas** are supported (`z.object({...})`, the same schema you pass to the AI SDK `tool()` helper). Tools defined with the AI SDK's `jsonSchema()` helper are rejected at creation time because the Agent SDK's `tool()` requires a Zod shape.
 - **Validation scope:** the Agent SDK's `tool()` takes only the schema _shape_ and validates incoming args field-by-field (running field-level validation and transforms, and stripping unknown keys) before `execute` runs. Object-level constructs — `.refine()`/`.superRefine()` (cross-field invariants) and `.strict()`/`.passthrough()`/`.catchall()` (unknown-key modes) — are **not** enforced by the bridge: re-parsing on top of the SDK's output would re-run transforms and reject valid transform schemas (e.g. `z.string().transform(v => v.length)`). Perform cross-field and unknown-key checks inside `execute`.
 - Tools without an `execute` function (client-executed tools) are rejected at creation time.
@@ -576,7 +663,7 @@ See [examples/ai-sdk-tools.ts](examples/ai-sdk-tools.ts) for a runnable example 
 
 ## Session Management
 
-Every request runs as a Claude Code session, persisted under `~/.claude/projects/` by default and identified by `providerMetadata['claude-code'].sessionId`. Sessions can be resumed (`resume`), forked (`forkSession`), pinned to a deterministic ID (`sessionId`), titled (`title`), or kept ephemeral (`persistSession: false`). The provider also re-exports the SDK's session lifecycle helpers — `listSessions()`, `getSessionMessages()`, `forkSession()`, `getSessionInfo()`, `renameSession()`, `tagSession()`, `deleteSession()`, `listSubagents()`, `getSubagentMessages()`, `importSessionToStore()`, and `foldSessionSummary()` — for managing stored sessions outside of a query.
+Every request runs as a Claude Code session, persisted under `~/.claude/projects/` by default. In AI SDK v7, read the session ID from `finalStep.providerMetadata['claude-code'].sessionId` (`result.finalStep` for `generateText`, or `await stream.finalStep` for `streamText`). Sessions can be resumed (`resume`), forked (`forkSession`), pinned to a deterministic ID (`sessionId`), titled (`title`), or kept ephemeral (`persistSession: false`). The provider also re-exports the SDK's session lifecycle helpers — `listSessions()`, `getSessionMessages()`, `forkSession()`, `getSessionInfo()`, `renameSession()`, `tagSession()`, `deleteSession()`, `listSubagents()`, `getSubagentMessages()`, `importSessionToStore()`, and `foldSessionSummary()` — for managing stored sessions outside of a query.
 
 See [docs/sessions.md](docs/sessions.md) for the full guide (settings vs helpers, disk storage vs custom `SessionStore`, `title` vs `renameSession()`), and [examples/session-management.ts](examples/session-management.ts) for a runnable walkthrough (`npm run example:sessions`).
 
@@ -605,22 +692,25 @@ for await (const message of warm.query('Summarize the latest deploy log.')) {
 // await using warm = ...  // WarmQuery is AsyncDisposable
 ```
 
-All requests made through this provider report timing in `providerMetadata['claude-code']` (`ttftMs`, `ttftStreamMs`, `timeToRequestMs`), plus `warmSpareClaimed` when the SDK reports whether the query was served from a pre-warmed spare process (surfaced as `true` or `false` whenever reported) — use these to measure whether warm-start plumbing is worth it for your workload.
+All requests made through this provider report timing in `finalStep.providerMetadata['claude-code']` (`ttftMs`, `ttftStreamMs`, `timeToRequestMs`), plus `warmSpareClaimed` when the SDK reports whether the query was served from a pre-warmed spare process (surfaced as `true` or `false` whenever reported; use `await stream.finalStep` after `streamText`) — use these to measure whether warm-start plumbing is worth it for your workload.
 
 ## Limitations
 
-- Requires Node.js ≥ 18
-- Image inputs require streaming mode with base64/data URLs (remote fetch is not supported)
+- Requires Node.js ≥ 22
+- With `streamingInput: 'auto'`, image inputs auto-enable streaming input for supported base64/data/file-part payloads, but remote image URLs are still not fetched by this provider
+- `ProviderV4.files()` / FilesV4 upload is not implemented: inline file/image data is supported where Claude Code can represent it, but the provider does not create durable AI SDK provider-reference uploads
+- `ProviderV4.skills()` / SkillsV4 upload is not implemented: Claude Code skills still come from configured user/project/local skill directories via the `skills` / `settingSources` options
+- Workflow serialization remains deferred; callback/function settings such as `canUseTool`, hooks, `onSdkMessage`, `onElicitation`, `logger`, `spawnClaudeCodeProcess`, and `SessionStore` methods must be reconstructed by the application
 - Some AI SDK parameters are unsupported and ignored with an `unsupported` warning: `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, and `maxOutputTokens` (the CLI does not accept an output token cap)
-- AI SDK `tools` and `toolChoice` (other than `'auto'`) are not supported: the Claude Code CLI executes its own tools, so AI SDK tool definitions cannot be auto-bridged at the provider layer (both emit an `unsupported` warning). To expose custom tools to the CLI, bridge them with the `createAiSdkMcpServer` helper and pass the result via the `mcpServers` setting (plus `allowedTools`) — see **Using AI SDK Tools** above
+- AI SDK `tools`, `toolChoice` (other than `'auto'`), and call-level `toolApproval` do not approve Claude Code internal built-in/MCP tools. To expose custom tools to the CLI, bridge them with the `createAiSdkMcpServer` helper and pass the result via the `mcpServers` setting (plus `allowedTools`); approve or deny Claude Code tools with `canUseTool`, `permissionMode`, `allowedTools`, and `disallowedTools`
 - When replaying conversation history through the prompt, assistant tool calls are serialized as text lines — `[Tool call: Read({"file_path":"/x"})]` (inputs truncated at 1000 characters) — paired with `Tool Result (Read): ...` lines for tool messages
-- `canUseTool` requires streaming input at the SDK level (AsyncIterable prompt). This provider supports it via `streamingInput`: use `'auto'` (default when `canUseTool` is set) or `'always'`. See GUIDE for details.
+- `canUseTool` requires streaming input at the SDK level (AsyncIterable prompt), and image prompts use the same path. This provider supports it via `streamingInput`: use `'auto'` (streams when `canUseTool` is set or image parts are present), `'always'`, or `'off'` (`'off'` disables streaming image input, emits a generic `type: 'other'` image streaming-input warning, and omits image parts). See GUIDE for details.
 
 ## Tool Error Parity (Streaming)
 
-- In addition to `tool-call` and `tool-result`, this provider emits a distinct `tool-error` stream event when a tool execution fails.
-- For parity with other tool events, `tool-error` includes `providerExecuted: true` and `providerMetadata['claude-code']` (e.g., `rawError`). These fields are documented extensions; downstream consumers may safely ignore them if unused.
-- See Tool Streaming Support for full event list, ordering guarantees, and performance considerations.
+- AI SDK v7 represents failed tool executions with the standard `tool-result` stream event/part and `isError: true`.
+- The former provider-specific `tool-error` stream extension is not emitted on the 4.x line; inspect `providerMetadata['claude-code']` (e.g., `rawError`) on the `tool-result` when you need Claude Code details.
+- See **Content Block Streaming** below for the current streaming event overview; the Tool Streaming Support doc is historical v5-era reference material.
 
 ## Content Block Streaming
 
@@ -637,7 +727,7 @@ For subagent parent/child tracking, see **Subagent Hierarchy Tracking** in this 
 When Claude Code spawns subagents via the `Task` tool, this provider exposes parent-child relationships through `providerMetadata`:
 
 ```ts
-// Available on tool-input-start, tool-call, tool-result, and tool-error events
+// Available on tool-input-start, tool-call, and tool-result events
 providerMetadata['claude-code'].parentToolCallId: string | null;
 ```
 
@@ -649,35 +739,38 @@ This enables UIs to build hierarchical views of nested agent execution.
 
 ## Provider Metadata
 
-Each response exposes Claude Code metadata under `providerMetadata['claude-code']` (on the `doGenerate` result, and on the `finish` stream event for `doStream`):
+Each response exposes Claude Code metadata under the final step's `providerMetadata['claude-code']` (AI SDK v7: `result.finalStep.providerMetadata`, or `await stream.finalStep` for `streamText`; internally this comes from the provider `doGenerate` result or `finish` stream event):
 
-| Field                     | Type      | Description                                                                                                                                                                                                                                             |
-| ------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sessionId`               | `string`  | Session ID for multi-turn conversations                                                                                                                                                                                                                 |
-| `costUsd`                 | `number`  | Cost of the request in USD                                                                                                                                                                                                                              |
-| `durationMs`              | `number`  | Total request duration in milliseconds                                                                                                                                                                                                                  |
-| `modelUsage`              | `object`  | Per-model token usage breakdown                                                                                                                                                                                                                         |
-| `ttftMs`                  | `number`  | Time to first token in milliseconds (when reported by the SDK)                                                                                                                                                                                          |
-| `ttftStreamMs`            | `number`  | Time to first streamed token in milliseconds (when reported)                                                                                                                                                                                            |
-| `timeToRequestMs`         | `number`  | Time until the API request was issued in milliseconds (when reported)                                                                                                                                                                                   |
-| `warmSpareClaimed`        | `boolean` | Whether the query was served from a pre-warmed spare CLI process (when reported); see **Reducing time-to-first-token (warm start)**                                                                                                                     |
-| `terminalReason`          | `string`  | Why the turn loop terminated (SDK `TerminalReason`, e.g. `'completed'`, `'max_turns'`; re-exported type)                                                                                                                                                |
-| `apiRetries`              | `number`  | Number of API retry attempts observed during the request (only present when > 0)                                                                                                                                                                        |
-| `permissionDenials`       | `array`   | Denied tool calls: `{ toolName, toolUseId?, reason? }` (only present when non-empty). Stream-time auto-denials are warn-logged; PreToolUse-hook denials are merged from the result message                                                              |
-| `mirrorErrors`            | `array`   | SessionStore transcript-mirror append failures: `{ error, sessionId }` (only present when non-empty). Each is a transcript batch the SDK DROPPED after retries — also warn-logged — so `sessionStore` consumers can detect a silently-incomplete mirror |
-| `estimatedThinkingTokens` | `number`  | Accumulated live thinking-token estimate from the redacted-thinking phase (only present when > 0); approximate, not the authoritative billed output tokens                                                                                              |
-| `truncated`               | `true`    | Present when the response was recovered from a truncated SDK stream                                                                                                                                                                                     |
-| `thinkingTraces`          | `array`   | Thinking blocks extracted in non-streaming mode (`doGenerate` only)                                                                                                                                                                                     |
+| Field                     | Type      | Description                                                                                                                                                                                                                                                                                                     |
+| ------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sessionId`               | `string`  | Session ID for multi-turn conversations                                                                                                                                                                                                                                                                         |
+| `costUsd`                 | `number`  | Cost of the request in USD                                                                                                                                                                                                                                                                                      |
+| `durationMs`              | `number`  | Total request duration in milliseconds                                                                                                                                                                                                                                                                          |
+| `modelUsage`              | `object`  | Per-model token usage breakdown                                                                                                                                                                                                                                                                                 |
+| `ttftMs`                  | `number`  | Time to first token in milliseconds (when reported by the SDK)                                                                                                                                                                                                                                                  |
+| `ttftStreamMs`            | `number`  | Time to first streamed token in milliseconds (when reported)                                                                                                                                                                                                                                                    |
+| `timeToRequestMs`         | `number`  | Time until the API request was issued in milliseconds (when reported)                                                                                                                                                                                                                                           |
+| `warmSpareClaimed`        | `boolean` | Whether the query was served from a pre-warmed spare CLI process (when reported); see **Reducing time-to-first-token (warm start)**                                                                                                                                                                             |
+| `terminalReason`          | `string`  | Why the turn loop terminated (SDK `TerminalReason`, e.g. `'completed'`, `'max_turns'`; re-exported type)                                                                                                                                                                                                        |
+| `apiRetries`              | `number`  | Number of API retry attempts observed during the request (only present when > 0)                                                                                                                                                                                                                                |
+| `permissionDenials`       | `array`   | Denied tool calls: `{ toolName, toolUseId?, reason?, agentId?, decisionReasonType?, raw? }` when available. Stream-time auto-denials are warn-logged; PreToolUse-hook denials are merged from the result message                                                                                                |
+| `taskEvents`              | `array`   | `ClaudeCodeTaskEvent[]` task/subagent lifecycle events observed during the request (only present when non-empty)                                                                                                                                                                                                |
+| `hookEvents`              | `array`   | `ClaudeCodeHookEvent[]` hook lifecycle events observed during the request (only present when non-empty; requires SDK hook event emission, e.g. `includeHookEvents: true`)                                                                                                                                       |
+| `mcpServers`              | `array`   | Initial MCP server status snapshot observed from the SDK init message during the request, matching the data delivered to `onMcpStatusChange` when available. Use `controller.mcpServerStatus()` for live status after runtime MCP changes only while the query is live and SDK streaming input/output is active |
+| `mirrorErrors`            | `array`   | SessionStore transcript-mirror append failures: `{ error, sessionId }` (only present when non-empty). Each is a transcript batch the SDK DROPPED after retries — also warn-logged — so `sessionStore` consumers can detect a silently-incomplete mirror                                                         |
+| `estimatedThinkingTokens` | `number`  | Accumulated live thinking-token estimate from the redacted-thinking phase (only present when > 0); approximate, not the authoritative billed output tokens                                                                                                                                                      |
+| `truncated`               | `true`    | Present when the response was recovered from a truncated SDK stream                                                                                                                                                                                                                                             |
+| `thinkingTraces`          | `array`   | Thinking blocks extracted in non-streaming mode (`doGenerate` only)                                                                                                                                                                                                                                             |
 
 ```ts
-const { providerMetadata } = await generateText({ model, prompt: 'Hello' });
-const meta = providerMetadata?.['claude-code'];
+const { finalStep } = await generateText({ model, prompt: 'Hello' });
+const meta = finalStep.providerMetadata?.['claude-code'];
 console.log(meta?.costUsd, meta?.ttftMs, meta?.terminalReason);
 ```
 
 ### Prompt suggestions (`onPromptSuggestion`)
 
-When `promptSuggestions` is `true` or left unset (the SDK enables suggestions when the option is absent or true, disabling them only when explicitly `false`), the agent predicts the next user prompt after each turn. Delivery is subject to CLI heuristics (suppressed on the first turn, after API errors, in plan mode, or via `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`), so it may not fire on every turn. The SDK delivers it AFTER the `result` message — i.e. after the AI SDK response has already finished — so it cannot be part of `providerMetadata`. Register a callback instead. (In streaming mode the provider briefly drains post-result messages to deliver the suggestion; the drain stops after the first suggestion and is capped at 10 seconds so a lingering CLI process is never held open indefinitely.)
+Set `promptSuggestions: true` to receive predicted next prompts. When the option is unset or `false`, the CLI does not emit `prompt_suggestion` messages and `onPromptSuggestion` never fires. Delivery is still subject to CLI heuristics (suppressed on the first turn, after API errors, in plan mode, or via `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`), so it may not fire on every enabled turn. The SDK delivers the suggestion AFTER the `result` message — i.e. after the AI SDK response has already finished — so it cannot be part of `providerMetadata`. Register a callback instead. (In streaming mode the provider briefly drains post-result messages to deliver the suggestion; the drain stops after the first suggestion and is capped at 10 seconds so a lingering CLI process is never held open indefinitely.)
 
 ```ts
 const model = claudeCode('sonnet', {
@@ -688,25 +781,31 @@ const model = claudeCode('sonnet', {
 });
 ```
 
-### Context usage (`query.getContextUsage()`)
+### Query controller (`onQueryControllerCreated` / `createClaudeCodeQueryController`)
 
-The provider does not auto-fetch context usage (it would add a round-trip per request). `getContextUsage()` is a control-protocol round-trip to the CLI subprocess, so it **must be called while the query is still live** — by the time `generateText`/`streamText` resolves, the subprocess has exited and the call rejects with `ProcessTransport is not ready for writing`. Capture the `Query` object via the existing `onQueryCreated` callback and ask for it from a hook that fires during the turn (a `Stop` hook runs at the end of the turn while the process is still alive):
+`onQueryCreated` still exposes the raw Agent SDK `Query` for advanced consumers. The provider also offers a safer controller surface for the wrapped live-query operations listed below and exports the same wrapper as `createClaudeCodeQueryController(query)`. The controller's `rawQuery` property remains available when you intentionally need the underlying SDK object.
+
+`onQueryControllerCreated` only applies to the live SDK `Query` created for that request. Controller methods that send Agent SDK control requests require that query to still be running, and most control requests are supported by the SDK only when streaming input/output is active. In this provider, set `streamingInput: 'always'` for controller-control recipes (or use `'auto'` only when another feature already triggers streaming input, such as `canUseTool` or image parts).
+
+Use `onQueryControllerCreated` when you want to call wrapped controls—`interrupt()`, `setPermissionMode()`, `setMcpPermissionModeOverride()`, `setModel()`, `setMaxThinkingTokens()`, `applyFlagSettings()`, `mcpServerStatus()`, `reconnectMcpServer()`, `toggleMcpServer()`, `setMcpServers()`, `getContextUsage()`, `rewindFiles()`, `stopTask()`, `backgroundTasks()`, and optional `streamInput()`—without passing the entire raw query through your UI layer:
 
 ```ts
-import type { Query } from 'ai-sdk-provider-claude-code';
+import type { ClaudeCodeQueryController } from 'ai-sdk-provider-claude-code';
 
-let activeQuery: Query | undefined;
+let activeController: ClaudeCodeQueryController | undefined;
 let contextUsage: unknown;
+
 const model = claudeCode('sonnet', {
-  onQueryCreated: (query) => {
-    activeQuery = query;
+  streamingInput: 'always', // Required for Agent SDK control requests.
+  onQueryControllerCreated: (controller) => {
+    activeController = controller;
   },
   hooks: {
     Stop: [
       {
         hooks: [
           async () => {
-            contextUsage = await activeQuery?.getContextUsage();
+            contextUsage = await activeController?.getContextUsage();
             return { continue: true };
           },
         ],
@@ -718,6 +817,10 @@ const model = claudeCode('sonnet', {
 const result = await generateText({ model, prompt: 'Hello' });
 console.log(contextUsage); // tokens used / remaining in the session context window
 ```
+
+The controller does not extend the SDK query lifetime. Controller calls that talk to the CLI subprocess must happen before `generateText`/`streamText` resolves; after the subprocess exits, the underlying SDK call rejects with `ProcessTransport is not ready for writing`.
+
+For MCP, `onMcpStatusChange` and `providerMetadata['claude-code'].mcpServers` record the request's initial SDK init snapshot; after `reconnectMcpServer()`, `toggleMcpServer()`, or `setMcpServers()`, call `controller.mcpServerStatus()` only while the query is live and SDK streaming input/output is active.
 
 ## Contributing
 

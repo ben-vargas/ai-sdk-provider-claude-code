@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
+import type { LanguageModelV4FinishReason } from '@ai-sdk/provider';
 import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
 
 describe('mapClaudeCodeFinishReason', () => {
   it('should map success to stop with raw value', () => {
-    expect(mapClaudeCodeFinishReason('success')).toEqual({
+    const result: LanguageModelV4FinishReason = mapClaudeCodeFinishReason('success');
+
+    expect(result).toEqual({
       unified: 'stop',
       raw: 'success',
     });

@@ -1,14 +1,17 @@
 /**
- * Example: Context Usage (query.getContextUsage())
+ * Example: Context Usage (ClaudeCodeQueryController.getContextUsage())
  *
  * Demonstrates the documented recipe for reading the session's context
- * window usage: capture the Query object via `onQueryCreated`, then call
- * `query.getContextUsage()` from a `Stop` hook — i.e. while the CLI
+ * window usage: enable SDK streaming input/output, capture a
+ * ClaudeCodeQueryController via `onQueryControllerCreated`, then call
+ * `controller.getContextUsage()` from a `Stop` hook — i.e. while the CLI
  * subprocess is still alive.
  *
- * Why the hook? `getContextUsage()` is a control-protocol round-trip to the
- * CLI subprocess. By the time `generateText`/`streamText` resolves, that
- * subprocess has exited, so a "late" call rejects with
+ * Why the hook and `streamingInput: 'always'`? `getContextUsage()` is an
+ * Agent SDK control-protocol round-trip to the CLI subprocess. SDK control
+ * requests require a live Query, and most are only supported when streaming
+ * input/output is active. By the time `generateText`/`streamText` resolves,
+ * that subprocess has exited, so a "late" call rejects with
  * `ProcessTransport is not ready for writing`. A Stop hook fires at the end
  * of the turn while the process is still running — the last moment the data
  * is reachable. Step 3 below demonstrates the failure mode on purpose.
@@ -22,34 +25,37 @@
 
 import { generateText } from 'ai';
 import { claudeCode } from '../dist/index.js';
-import type { Query } from '../dist/index.js';
-
-type ContextUsage = Awaited<ReturnType<Query['getContextUsage']>>;
+import type {
+  ClaudeCodeQueryController,
+  SDKControlGetContextUsageResponse,
+} from '../dist/index.js';
 
 async function main() {
   console.log('📐 Context Usage Example\n');
 
   // ============================================
-  // 1. Capture the Query + fetch usage in a Stop hook
+  // 1. Capture the controller + fetch usage in a Stop hook
   // ============================================
-  // This is the README recipe verbatim: `onQueryCreated` hands us the live
-  // Query object, and the Stop hook runs at the end of the turn — while the
-  // CLI subprocess is still alive — which is when getContextUsage() works.
-  console.log('1️⃣  Setting up onQueryCreated + Stop hook...');
+  // The README recipe uses `streamingInput: 'always'` because Agent SDK
+  // control requests require SDK streaming input/output. The Stop hook runs
+  // at the end of the turn — while the CLI subprocess is still alive — which
+  // is when getContextUsage() works.
+  console.log('1️⃣  Setting up onQueryControllerCreated + Stop hook...');
 
-  let activeQuery: Query | undefined;
-  let contextUsage: ContextUsage | undefined;
+  let activeController: ClaudeCodeQueryController | undefined;
+  let contextUsage: SDKControlGetContextUsageResponse | undefined;
 
   const model = claudeCode('haiku', {
-    onQueryCreated: (query) => {
-      activeQuery = query;
+    streamingInput: 'always',
+    onQueryControllerCreated: (controller) => {
+      activeController = controller;
     },
     hooks: {
       Stop: [
         {
           hooks: [
             async () => {
-              contextUsage = await activeQuery?.getContextUsage();
+              contextUsage = await activeController?.getContextUsage();
               return { continue: true };
             },
           ],
@@ -95,9 +101,11 @@ async function main() {
   // ============================================
   // This is why the Stop-hook timing is mandatory. generateText has resolved,
   // so the CLI subprocess is gone and the control channel is closed.
-  console.log('\n3️⃣  Calling getContextUsage() after generateText resolved (expected to fail)...');
+  console.log(
+    '\n3️⃣  Calling controller.getContextUsage() after generateText resolved (expected to fail)...'
+  );
   try {
-    await activeQuery?.getContextUsage();
+    await activeController?.getContextUsage();
     console.log('⚠️  Unexpected: the late call succeeded (SDK behavior may have changed).');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

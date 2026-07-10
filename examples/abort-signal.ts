@@ -15,7 +15,7 @@ import { claudeCode } from '../dist/index.js';
  */
 
 // Suppress uncaught abort errors from child processes
-process.on('uncaughtException', (err: any) => {
+process.on('uncaughtException', (err: Error & { code?: string }) => {
   if (err.code === 'ABORT_ERR') {
     // Silently ignore abort errors - they're expected
     return;
@@ -23,6 +23,16 @@ process.on('uncaughtException', (err: any) => {
   // Re-throw other errors
   throw err;
 });
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof Error && (error.name === 'AbortError' || error.message.includes('aborted'))
+  );
+}
 
 async function main() {
   console.log('🚀 Testing request cancellation with AbortController\n');
@@ -47,11 +57,11 @@ async function main() {
 
     clearTimeout(timeout);
     console.log('   ✅ Completed:', text.slice(0, 100) + '...');
-  } catch (error: any) {
-    if (error.name === 'AbortError' || error.message?.includes('aborted')) {
+  } catch (error: unknown) {
+    if (isAbortError(error)) {
       console.log('   ✅ Request successfully cancelled');
     } else {
-      console.error('   ❌ Error:', error.message);
+      console.error('   ❌ Error:', getErrorMessage(error));
     }
   }
 
@@ -69,11 +79,11 @@ async function main() {
     });
 
     console.log('   ❌ This should not be reached');
-  } catch (error: any) {
-    if (error.name === 'AbortError' || error.message?.includes('aborted')) {
+  } catch (error: unknown) {
+    if (isAbortError(error)) {
       console.log('   ✅ Request cancelled before execution');
     } else {
-      console.error('   ❌ Error:', error.message);
+      console.error('   ❌ Error:', getErrorMessage(error));
     }
   }
 
@@ -100,11 +110,11 @@ async function main() {
         break;
       }
     }
-  } catch (error: any) {
-    if (error.name === 'AbortError' || error.message?.includes('aborted')) {
+  } catch (error: unknown) {
+    if (isAbortError(error)) {
       console.log('   ✅ Stream successfully cancelled');
     } else {
-      console.error('   ❌ Error:', error.message);
+      console.error('   ❌ Error:', getErrorMessage(error));
     }
   }
 

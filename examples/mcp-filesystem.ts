@@ -7,7 +7,7 @@
  * Requirements:
  *   - npm run build
  *   - claude auth login
- *   - Node.js >= 18
+ *   - Node.js >= 22
  *
  * Run:
  *   npx tsx examples/mcp-filesystem.ts
@@ -15,13 +15,11 @@
 
 import { streamText } from 'ai';
 import { createClaudeCode } from '../dist/index.js';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 async function main() {
   const verboseLogs = process.env.CLAUDE_EXAMPLE_VERBOSE === '1';
-  const examplesDir = dirname(fileURLToPath(import.meta.url));
   const requestedDir = process.argv[2];
   const targetDir = resolve(requestedDir ?? process.cwd());
 
@@ -87,16 +85,18 @@ Do not call list_directory on "/" and do not access any path outside ${pathInstr
 
   console.log('Streaming output (with MCP tool events):\n');
 
-  const stream = result.fullStream as AsyncIterable<any>;
+  const stream = result.stream;
   for await (const part of stream) {
     switch (part.type) {
       case 'tool-call':
         console.log(`TOOL CALL: ${part.toolName} (${part.toolCallId})`);
         break;
       case 'tool-result':
-        console.log(`TOOL RESULT: ${part.toolName} (${part.toolCallId})`);
+        console.log(
+          `${'isError' in part && part.isError === true ? 'TOOL ERROR' : 'TOOL RESULT'}: ${part.toolName} (${part.toolCallId})`
+        );
         {
-          const output = part.result ?? part.output;
+          const output = part.output;
           if (output !== undefined) {
             console.dir(output, { depth: 6 });
           } else {
@@ -104,15 +104,8 @@ Do not call list_directory on "/" and do not access any path outside ${pathInstr
           }
         }
         break;
-      case 'tool-error':
-        console.error(`TOOL ERROR: ${part.toolName} -> ${part.error}`);
-        break;
       case 'text-delta': {
-        // AI SDK v6 fullStream carries the chunk in `text` (older builds used `delta`).
-        const chunk = part.delta ?? part.text;
-        if (typeof chunk === 'string') {
-          process.stdout.write(chunk);
-        }
+        process.stdout.write(part.text);
         break;
       }
       case 'finish':

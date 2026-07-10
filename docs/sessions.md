@@ -1,6 +1,6 @@
 # Session Management
 
-Every `generateText`/`streamText` call through this provider runs as a Claude Code **session**. By default the CLI persists each session as a JSONL transcript under `~/.claude/projects/` (honoring `CLAUDE_CONFIG_DIR`), and the session ID is surfaced in `providerMetadata['claude-code'].sessionId` so you can resume, fork, inspect, retitle, tag, or delete it later.
+Every `generateText`/`streamText` call through this provider runs as a Claude Code **session**. By default the CLI persists each session as a JSONL transcript under `~/.claude/projects/` (honoring `CLAUDE_CONFIG_DIR`), and the session ID is surfaced on AI SDK v7's final step: `result.finalStep.providerMetadata['claude-code'].sessionId` for `generateText`, or `(await stream.finalStep).providerMetadata['claude-code'].sessionId` for `streamText`. Use that ID to resume, fork, inspect, retitle, tag, or delete the session later.
 
 This guide ties together the session-related **settings** (passed to `claudeCode(modelId, settings)`) and the session **helper functions** (re-exported from the Claude Agent SDK).
 
@@ -29,7 +29,7 @@ const result = await generateText({
   prompt: 'Remember this code word: papaya. Reply with OK.',
 });
 
-const sessionId = result.providerMetadata?.['claude-code']?.sessionId as string;
+const sessionId = result.finalStep.providerMetadata?.['claude-code']?.sessionId as string;
 ```
 
 ### Resuming a session
@@ -50,7 +50,7 @@ const branched = await generateText({
   prompt: 'Explore an alternative approach from here.',
 });
 // branched runs under a NEW session ID; the original transcript is untouched.
-const forkId = branched.providerMetadata?.['claude-code']?.sessionId as string;
+const forkId = branched.finalStep.providerMetadata?.['claude-code']?.sessionId as string;
 ```
 
 ## Session helper functions
@@ -91,7 +91,7 @@ await deleteSession(fork.sessionId);
 
 ### Two ways to fork
 
-- **`forkSession` setting** (`{ resume, forkSession: true }`) — fork **and run a query** in one step; the new ID arrives in `providerMetadata`.
+- **`forkSession` setting** (`{ resume, forkSession: true }`) — fork **and run a query** in one step; the new ID arrives in `finalStep.providerMetadata` (or `await stream.finalStep` for streaming).
 - **`forkSession()` helper** — fork the stored transcript **without** running a query (and optionally slice it with `upToMessageId`); resume it later with the `resume` setting.
 
 ## Disk storage vs custom `SessionStore`

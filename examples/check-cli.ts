@@ -24,15 +24,16 @@ async function checkSetup() {
     console.log('Response:', text);
     console.log('Tokens used:', usage.totalTokens);
     console.log('\n🎉 You can run all the examples and integration tests!');
-  } catch (error: any) {
-    console.error('❌ Failed to connect to Claude Code');
-    console.error('Error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
 
-    if (error.message?.includes('not found') || error.message?.includes('ENOENT')) {
+    console.error('❌ Failed to connect to Claude Code');
+    console.error('Error:', message);
+
+    if (message.includes('not found') || message.includes('ENOENT')) {
       console.log('\n💡 Make sure Claude Code is installed:');
       console.log('   https://docs.anthropic.com/en/docs/claude-code/overview');
-    } else if (error.message?.includes('authentication') || error.message?.includes('401')) {
-      console.log('\n🔐 Authentication required. Please run:');
+    } else if (message.includes('authentication') || message.includes('401')) {
       console.log('   claude auth login');
     } else {
       console.log('\n🔧 Troubleshooting tips:');

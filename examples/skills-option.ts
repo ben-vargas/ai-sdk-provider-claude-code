@@ -70,14 +70,14 @@ async function runWithSkills(tempDir: string, skills: string[]) {
   let skillToolResult: string | undefined;
   let text = '';
 
-  for await (const part of result.fullStream) {
+  for await (const part of result.stream) {
     if (part.type === 'tool-call' && part.toolName === 'Skill') {
       skillToolInput = JSON.stringify(part.input);
     } else if (part.type === 'tool-result' && part.toolName === 'Skill') {
-      skillToolResult = JSON.stringify(part.output);
-    } else if (part.type === 'tool-error' && part.toolName === 'Skill') {
-      // Allowlist rejections surface as tool errors
-      skillToolResult = `ERROR: ${JSON.stringify(part.error)}`;
+      skillToolResult =
+        'isError' in part && part.isError === true
+          ? `ERROR: ${JSON.stringify(part.output)}`
+          : JSON.stringify(part.output);
     } else if (part.type === 'text-delta') {
       text += part.text;
     }

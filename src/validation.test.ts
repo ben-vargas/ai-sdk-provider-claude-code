@@ -395,6 +395,55 @@ describe('validateSettings', () => {
     expect(result.warnings[0]).toContain('Both allowedTools and disallowedTools are specified');
   });
 
+  it('should warn when onPromptSuggestion is set and promptSuggestions is unset', () => {
+    const result = validateSettings({ onPromptSuggestion: () => {} });
+
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.includes('onPromptSuggestion is registered'))).toBe(true);
+  });
+
+  it('should warn when onPromptSuggestion is set and promptSuggestions is false', () => {
+    const result = validateSettings({
+      onPromptSuggestion: () => {},
+      promptSuggestions: false,
+    });
+
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.includes('onPromptSuggestion is registered'))).toBe(true);
+  });
+
+  it('should not warn when onPromptSuggestion is set and promptSuggestions is true', () => {
+    const result = validateSettings({
+      onPromptSuggestion: () => {},
+      promptSuggestions: true,
+    });
+
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.includes('onPromptSuggestion is registered'))).toBe(false);
+  });
+
+  it('should not warn when sdkOptions enables promptSuggestions', () => {
+    const result = validateSettings({
+      onPromptSuggestion: () => {},
+      promptSuggestions: false,
+      sdkOptions: { promptSuggestions: true },
+    });
+
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.includes('onPromptSuggestion is registered'))).toBe(false);
+  });
+
+  it('should not warn when onPromptSuggestion is absent', () => {
+    for (const promptSuggestions of [undefined, false, true]) {
+      const result = validateSettings({ promptSuggestions });
+
+      expect(result.valid).toBe(true);
+      expect(result.warnings.some((w) => w.includes('onPromptSuggestion is registered'))).toBe(
+        false
+      );
+    }
+  });
+
   it('should validate tool name formats', () => {
     const settings = {
       allowedTools: ['Read', 'Write', 'Bash(git log:*)', 'mcp__server__tool'],

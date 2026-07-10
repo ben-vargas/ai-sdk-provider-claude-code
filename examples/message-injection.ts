@@ -43,10 +43,15 @@ async function multipleToolCalls() {
       console.log(`${timestamp()} ${GREEN}SESSION STARTED${RESET}`);
 
       setTimeout(() => {
+        const activeInjector = injector;
         console.log(`${timestamp()} ${YELLOW}>>> INJECT QUEUED: "STOP!"${RESET}`);
-        injector!.inject(
+        if (activeInjector === null) {
+          console.log(`${timestamp()} ${RED}✗ INJECTOR NOT READY${RESET}`);
+          return;
+        }
+        activeInjector.inject(
           'STOP! Do not write more files. Say how many you created.',
-          (delivered) => {
+          (delivered: boolean) => {
             console.log(
               `${timestamp()} ${delivered ? GREEN + '✓ DELIVERED' : RED + '✗ NOT DELIVERED'}${RESET}`
             );
@@ -64,7 +69,7 @@ async function multipleToolCalls() {
   });
 
   let inText = false;
-  for await (const part of result.fullStream) {
+  for await (const part of result.stream) {
     if (part.type === 'text-delta') {
       if (!inText) {
         process.stdout.write(`${timestamp()} ${CYAN}TEXT:${RESET} `);
@@ -106,8 +111,10 @@ async function tooLateWithRecovery() {
   console.log(`${CYAN}═══════════════════════════════════════════════════════════${RESET}`);
   console.log(`${DIM}Task: Quick task. Inject after finish fails, then recover.${RESET}\n`);
 
-  let injector: MessageInjector | null = null;
-  let missedMessage: string | null = null;
+  const injectionState: { injector: MessageInjector | null; missedMessage: string | null } = {
+    injector: null,
+    missedMessage: null,
+  };
 
   const defaultSettings: ClaudeCodeSettings = {
     streamingInput: 'always',
@@ -115,7 +122,7 @@ async function tooLateWithRecovery() {
     allowDangerouslySkipPermissions: true,
     allowedTools: ['Read'],
     onStreamStart: (inj: MessageInjector) => {
-      injector = inj;
+      injectionState.injector = inj;
       console.log(`${timestamp()} ${GREEN}SESSION STARTED${RESET}`);
     },
   };
@@ -128,7 +135,7 @@ async function tooLateWithRecovery() {
   });
 
   let inText = false;
-  for await (const part of result.fullStream) {
+  for await (const part of result.stream) {
     if (part.type === 'text-delta') {
       if (!inText) {
         process.stdout.write(`${timestamp()} ${CYAN}TEXT:${RESET} `);
@@ -152,27 +159,35 @@ async function tooLateWithRecovery() {
       // Inject AFTER session ends - too late!
       const msg = 'What is the first line of /etc/hosts?';
       console.log(`${timestamp()} ${YELLOW}>>> INJECT QUEUED after finish (too late!)${RESET}`);
-      injector!.inject(msg, (delivered) => {
-        if (!delivered) {
-          console.log(
-            `${timestamp()} ${GREEN}✓ NOT DELIVERED detected - saving for recovery${RESET}`
-          );
-          missedMessage = msg;
-        }
-      });
+      const activeInjector = injectionState.injector;
+      if (activeInjector === null) {
+        console.log(
+          `${timestamp()} ${GREEN}✓ NOT DELIVERED detected - saving for recovery${RESET}`
+        );
+        injectionState.missedMessage = msg;
+      } else {
+        activeInjector.inject(msg, (delivered: boolean) => {
+          if (!delivered) {
+            console.log(
+              `${timestamp()} ${GREEN}✓ NOT DELIVERED detected - saving for recovery${RESET}`
+            );
+            injectionState.missedMessage = msg;
+          }
+        });
+      }
     }
   }
 
   // Recovery: send missed message as a new turn
-  if (missedMessage) {
+  if (injectionState.missedMessage) {
     console.log(
       `${timestamp()} ${YELLOW}>>> RECOVERING: sending missed message as new prompt${RESET}`
     );
     const recovery = streamText({
       model: provider('haiku'),
-      prompt: missedMessage,
+      prompt: injectionState.missedMessage,
     });
-    for await (const part of recovery.fullStream) {
+    for await (const part of recovery.stream) {
       if (part.type === 'text-delta') {
         if (!inText) {
           process.stdout.write(`${timestamp()} ${CYAN}TEXT:${RESET} `);

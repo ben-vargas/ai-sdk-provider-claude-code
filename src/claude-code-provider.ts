@@ -1,4 +1,4 @@
-import type { LanguageModelV3, ProviderV3 } from '@ai-sdk/provider';
+import type { LanguageModelV4, ProviderV4 } from '@ai-sdk/provider';
 import { NoSuchModelError } from '@ai-sdk/provider';
 import { ClaudeCodeLanguageModel, type ClaudeCodeModelId } from './claude-code-language-model.js';
 import type { ClaudeCodeSettings } from './types.js';
@@ -6,7 +6,7 @@ import { validateSettings } from './validation.js';
 import { getLogger } from './logger.js';
 
 /**
- * Claude Code provider interface that extends the AI SDK's ProviderV3.
+ * Claude Code provider interface that extends the AI SDK's ProviderV4.
  * Provides methods to create language models for interacting with Claude via the CLI.
  *
  * @example
@@ -21,35 +21,36 @@ import { getLogger } from './logger.js';
  * const languageModel = claudeCode.languageModel('opus', { maxTurns: 10 });
  * ```
  */
-export interface ClaudeCodeProvider extends ProviderV3 {
+export interface ClaudeCodeProvider extends ProviderV4 {
   /**
    * Creates a language model instance for the specified model ID.
    * This is a shorthand for calling `languageModel()`.
    *
-   * @param modelId - The Claude model to use ('opus' or 'sonnet')
+   * @param modelId - The Claude model to use (e.g. 'fable', 'opus', 'sonnet', 'haiku', or a full model id)
    * @param settings - Optional settings to configure the model
    * @returns A language model instance
    */
-  (modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV3;
+  (modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV4;
 
   /**
    * Creates a language model instance for text generation.
    *
-   * @param modelId - The Claude model to use ('opus' or 'sonnet')
+   * @param modelId - The Claude model to use (e.g. 'fable', 'opus', 'sonnet', 'haiku', or a full model id)
    * @param settings - Optional settings to configure the model
    * @returns A language model instance
    */
-  languageModel(modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV3;
+  languageModel(modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV4;
 
   /**
    * Alias for `languageModel()` to maintain compatibility with AI SDK patterns.
    *
-   * @param modelId - The Claude model to use ('opus' or 'sonnet')
+   * @param modelId - The Claude model to use (e.g. 'fable', 'opus', 'sonnet', 'haiku', or a full model id)
    * @param settings - Optional settings to configure the model
    * @returns A language model instance
    */
-  chat(modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV3;
+  chat(modelId: ClaudeCodeModelId, settings?: ClaudeCodeSettings): LanguageModelV4;
 
+  embeddingModel(modelId: string): never;
   imageModel(modelId: string): never;
 }
 
@@ -112,7 +113,7 @@ export function createClaudeCode(options: ClaudeCodeProviderSettings = {}): Clau
   const createModel = (
     modelId: ClaudeCodeModelId,
     settings: ClaudeCodeSettings = {}
-  ): LanguageModelV3 => {
+  ): LanguageModelV4 => {
     const mergedSettings = {
       ...options.defaultSettings,
       ...settings,
@@ -141,7 +142,7 @@ export function createClaudeCode(options: ClaudeCodeProviderSettings = {}): Clau
 
   provider.languageModel = createModel;
   provider.chat = createModel; // Alias for languageModel
-  provider.specificationVersion = 'v3' as const;
+  provider.specificationVersion = 'v4' as const;
 
   // Add embeddingModel method that throws NoSuchModelError
   provider.embeddingModel = (modelId: string) => {

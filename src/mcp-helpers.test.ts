@@ -106,6 +106,33 @@ describe('createAiSdkMcpServer', () => {
     expect(result).toEqual({ content: [{ type: 'text', text: 'Hello, Ada!' }] });
   });
 
+  it('should omit and warn once for AI SDK v7 call-context description functions', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const config = createAiSdkMcpServer('myTools', {
+        dynamicDescription: {
+          description: () => 'contextual description',
+          inputSchema: z.object({ query: z.string() }),
+          execute: () => 'ok',
+        },
+      });
+      createAiSdkMcpServer('otherTools', {
+        dynamicDescription: {
+          description: () => 'another contextual description',
+          inputSchema: z.object({ query: z.string() }),
+          execute: () => 'ok',
+        },
+      });
+
+      const [dynamicDescription] = getToolDefs(config);
+      expect(dynamicDescription?.description).toBe('');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('"dynamicDescription"'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('should JSON.stringify non-string results', async () => {
     const config = createAiSdkMcpServer('myTools', {
       add: {

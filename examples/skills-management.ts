@@ -17,7 +17,6 @@
  * you'll get a validation warning - skills won't load without settingSources!
  */
 
-import { streamText } from 'ai';
 import { createClaudeCode, claudeCode } from '../dist/index.js';
 
 async function demonstrateSkills() {
@@ -30,9 +29,8 @@ async function demonstrateSkills() {
   console.log('   - No settingSources configured');
   console.log('   - Skills are not available');
 
-  const defaultModel = claudeCode('sonnet');
-  // This model cannot use skills
-
+  claudeCode('sonnet');
+  // This model cannot use skills.
   console.log('   Model created without skills support\n');
 
   // ============================================
@@ -42,7 +40,7 @@ async function demonstrateSkills() {
   console.log('   - settingSources: ["user", "project"]');
   console.log('   - allowedTools includes "Skill"');
 
-  const skillsModel = claudeCode('sonnet', {
+  claudeCode('sonnet', {
     settingSources: ['user', 'project'],
     allowedTools: ['Skill', 'Read', 'Write', 'Bash'],
   });
@@ -62,7 +60,7 @@ async function demonstrateSkills() {
     },
   });
 
-  const modelFromProvider = skillsProvider('sonnet');
+  skillsProvider('sonnet');
 
   console.log('   Provider created with default skills support\n');
 
@@ -72,7 +70,7 @@ async function demonstrateSkills() {
   console.log('4️⃣  Project-only skills');
   console.log('   - Only load skills from project, not user settings');
 
-  const projectOnlyModel = claudeCode('sonnet', {
+  claudeCode('sonnet', {
     settingSources: ['project'],
     allowedTools: ['Skill', 'Read'],
   });
@@ -90,7 +88,7 @@ async function demonstrateSkills() {
   // "allowedTools includes 'Skill' but settingSources is not set" logs below.
   // (Model-level settings like claudeCode('sonnet', {...}) are validated too,
   // but their warnings only surface when the model is actually used.)
-  const misconfiguredProvider = createClaudeCode({
+  createClaudeCode({
     defaultSettings: {
       allowedTools: ['Skill', 'Read'], // Skill added, but...
       // settingSources not set! Skills won't actually load.
