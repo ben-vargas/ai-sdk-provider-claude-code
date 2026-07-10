@@ -1021,7 +1021,7 @@ function toAsyncIterablePrompt(
 export interface ClaudeCodeLanguageModelOptions {
   /**
    * The model identifier to use.
-   * Can be 'opus', 'sonnet', 'haiku', or a custom model string.
+   * Can be 'fable', 'opus', 'sonnet', 'haiku', or a custom model string.
    */
   id: ClaudeCodeModelId;
 
@@ -1039,22 +1039,25 @@ export interface ClaudeCodeLanguageModelOptions {
 
 /**
  * Supported Claude model identifiers.
- * - 'opus': Claude Opus (most capable)
+ * - 'fable': Claude Fable (most capable)
+ * - 'opus': Claude Opus (highly capable)
  * - 'sonnet': Claude Sonnet (balanced performance)
  * - 'haiku': Claude Haiku (fastest, most cost-effective)
  * - Custom string: Any full model identifier (e.g., 'claude-opus-4-5', 'claude-sonnet-4-5-20250514')
  *
  * @example
  * ```typescript
+ * const fableModel = claudeCode('fable');
  * const opusModel = claudeCode('opus');
  * const sonnetModel = claudeCode('sonnet');
  * const haikuModel = claudeCode('haiku');
- * const customModel = claudeCode('claude-opus-4-5');
+ * const customModel = claudeCode('claude-fable-5');
  * ```
  */
-export type ClaudeCodeModelId = 'opus' | 'sonnet' | 'haiku' | (string & {});
+export type ClaudeCodeModelId = 'fable' | 'opus' | 'sonnet' | 'haiku' | (string & {});
 
 const modelMap: Record<string, string> = {
+  fable: 'fable',
   opus: 'opus',
   sonnet: 'sonnet',
   haiku: 'haiku',
@@ -2262,7 +2265,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
       const originalMessage =
         isErrorWithMessage(error) && error.message ? error.message : 'Model not found';
       return createAPICallError({
-        message: `${originalMessage}. The requested model was not found. Verify the model id passed to the provider (e.g. 'opus', 'sonnet', 'haiku', or a full model name) and that your account has access to it.`,
+        message: `${originalMessage}. The requested model was not found. Verify the model id passed to the provider (e.g. 'fable', 'opus', 'sonnet', 'haiku', or a full model name) and that your account has access to it.`,
         code: errorCode || undefined,
         exitCode,
         stderr,

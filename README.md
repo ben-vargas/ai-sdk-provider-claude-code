@@ -127,15 +127,15 @@ console.log(text);
 
 ### Version 4.0.0 (AI SDK v7)
 
-This release ports the provider to AI SDK v7 / `LanguageModelV4`, adds the Phase 3 Claude Agent SDK callback/controller/MCP/image updates, and keeps the v7 support boundaries explicit:
+This release ports the provider to AI SDK v7 / `LanguageModelV4`, adds first-class Claude Agent SDK callback, query-controller, MCP, and image support, and keeps the v7 support boundaries explicit:
 
 - Requires Node.js ≥ 22 and Zod `^4.1.8`
 - ESM-only package output; CommonJS `require()` is no longer available
 - Tool failures now use spec `tool-result` parts/events with `isError: true` instead of the provider-specific `tool-error` stream extension
 
-### AI SDK v7 Phase 2 support notes
+### Optional AI SDK v7 surfaces not implemented
 
-Phase 2 intentionally keeps optional provider surfaces absent unless the Claude Agent SDK has a durable provider-reference mapping:
+Version 4.0.0 intentionally keeps optional provider surfaces absent unless the Claude Agent SDK has a durable provider-reference mapping:
 
 - `ProviderV4.files()` is not implemented yet. The AI SDK interface uploads `{ type: 'data' }` or `{ type: 'text' }` bytes and returns a reusable provider reference, but Claude Agent SDK `0.3.205` exposes no direct upload/reuse API for that contract. This provider forwards inline **image** file parts in prompts; non-image inline files (for example PDFs) emit an unsupported-file call warning and are not forwarded. It does not upload files into durable provider references.
 - Canonical V4 tool-result file parts are replayed into conversation history as text markers like `[File <name>: <mediaType>]`; raw file bytes are not re-sent on replay. Richer tool-result file replay, such as re-sending actual image/file bytes for tool-result file parts, is deferred.
@@ -171,11 +171,12 @@ Key changes:
 
 ## Models
 
-- **`opus`** - Claude Opus (most capable)
+- **`fable`** - Claude Fable (most capable)
+- **`opus`** - Claude Opus (highly capable)
 - **`sonnet`** - Claude Sonnet (balanced performance)
 - **`haiku`** - Claude Haiku (fastest, most cost-effective)
 
-You can also use full model identifiers directly (e.g., `claude-sonnet-4-6`, `claude-opus-4-8`).
+You can also use full model identifiers directly (e.g., `claude-fable-5`, `claude-sonnet-4-6`, `claude-opus-4-8`).
 
 ## Documentation
 
@@ -414,7 +415,7 @@ const model = claudeCode('sonnet', {
 
 ### Agent SDK event callbacks (`onSdkMessage`, task/hook/MCP status, elicitation)
 
-Use the Phase 3 callbacks when you need Agent SDK observability without parsing AI SDK stream parts yourself:
+Use these callbacks when you need Agent SDK observability without parsing AI SDK stream parts yourself:
 
 ```ts
 const model = claudeCode('sonnet', {
@@ -782,7 +783,7 @@ const model = claudeCode('sonnet', {
 
 ### Query controller (`onQueryControllerCreated` / `createClaudeCodeQueryController`)
 
-`onQueryCreated` still exposes the raw Agent SDK `Query` for advanced consumers. Phase 3 adds a safer controller surface for the wrapped live-query operations listed below and exports the same wrapper as `createClaudeCodeQueryController(query)`. The controller's `rawQuery` property remains available when you intentionally need the underlying SDK object.
+`onQueryCreated` still exposes the raw Agent SDK `Query` for advanced consumers. The provider also offers a safer controller surface for the wrapped live-query operations listed below and exports the same wrapper as `createClaudeCodeQueryController(query)`. The controller's `rawQuery` property remains available when you intentionally need the underlying SDK object.
 
 `onQueryControllerCreated` only applies to the live SDK `Query` created for that request. Controller methods that send Agent SDK control requests require that query to still be running, and most control requests are supported by the SDK only when streaming input/output is active. In this provider, set `streamingInput: 'always'` for controller-control recipes (or use `'auto'` only when another feature already triggers streaming input, such as `canUseTool` or image parts).
 

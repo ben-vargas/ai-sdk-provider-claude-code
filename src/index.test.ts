@@ -16,7 +16,7 @@ import type {
   PolicySettingsOrigin,
 } from './index.js';
 
-type Phase3SettingsOptions = Pick<
+type SdkCallbackSettingsOptions = Pick<
   ClaudeCodeSettings,
   | 'onSdkMessage'
   | 'onTaskEvent'
@@ -27,7 +27,7 @@ type Phase3SettingsOptions = Pick<
   | 'onQueryControllerCreated'
 >;
 
-type Phase3ExportedTypes = [
+type SdkCallbackExportedTypes = [
   ClaudeCodeTaskEvent,
   ClaudeCodeHookEvent,
   ClaudeCodeMcpStatusEvent,
@@ -38,10 +38,10 @@ type Phase3ExportedTypes = [
   ProvenanceEntry,
   ResolvedSettingSource,
   PolicySettingsOrigin,
-  Phase3SettingsOptions,
+  SdkCallbackSettingsOptions,
 ];
 
-const phase3ExportedTypesCompileCheck: Phase3ExportedTypes | null = null;
+const sdkCallbackExportedTypesCompileCheck: SdkCallbackExportedTypes | null = null;
 
 describe('index exports', () => {
   it('should export all expected functions and types', () => {
@@ -124,7 +124,7 @@ describe('index exports', () => {
     expect(indexExports.isTimeoutError).toBe(errorExports.isTimeoutError);
   });
 
-  it('should export Phase 3 public types', () => {
-    expect(phase3ExportedTypesCompileCheck).toBeNull();
+  it('should export Agent SDK callback and controller public types', () => {
+    expect(sdkCallbackExportedTypesCompileCheck).toBeNull();
   });
 });

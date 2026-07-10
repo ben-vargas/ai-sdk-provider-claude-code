@@ -586,7 +586,7 @@ const result4 = streamText({
 3. **Logging**: `logging-default.ts` → `logging-verbose.ts` → `logging-custom-logger.ts` → `logging-disabled.ts`
 4. **Object Generation**: `generate-object.ts` → `generate-object-constraints.ts` → `stream-object.ts`
 5. **Advanced**: `custom-config.ts` → `tool-management.ts` → `skills-management.ts` → `skills-option.ts` → `hooks-callbacks.ts` → `sdk-tools-callbacks.ts` → `ai-sdk-tools.ts` → `session-management.ts` → `long-running-tasks.ts`
-6. **SDK 0.3.x / Phase 3 features**: `warm-start.ts` → `context-usage.ts` → `prompt-suggestions.ts` (plus the callback/controller settings documented in the main README)
+6. **SDK 0.3.x features**: `warm-start.ts` → `context-usage.ts` → `prompt-suggestions.ts` (plus the callback/controller settings documented in the main README)
 7. **Testing/Troubleshooting**: Run `integration-test.ts`, then `structured-output-repro.ts` and `limitations.ts` if behavior seems off
 
 For more details, see the main [README](../README.md).

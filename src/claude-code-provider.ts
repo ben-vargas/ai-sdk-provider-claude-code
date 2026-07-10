@@ -26,7 +26,7 @@ export interface ClaudeCodeProvider extends ProviderV4 {
    * Creates a language model instance for the specified model ID.
    * This is a shorthand for calling `languageModel()`.
    *
-   * @param modelId - The Claude model to use ('opus' or 'sonnet')
+   * @param modelId - The Claude model to use (e.g. 'fable', 'opus', 'sonnet', 'haiku', or a full model id)
    * @param settings - Optional settings to configure the model
    * @returns A language model instance
    */
@@ -35,7 +35,7 @@ export interface ClaudeCodeProvider extends ProviderV4 {
   /**
    * Creates a language model instance for text generation.
    *
-   * @param modelId - The Claude model to use ('opus' or 'sonnet')
+   * @param modelId - The Claude model to use (e.g. 'fable', 'opus', 'sonnet', 'haiku', or a full model id)
    * @param settings - Optional settings to configure the model
    * @returns A language model instance
    */
@@ -44,7 +44,7 @@ export interface ClaudeCodeProvider extends ProviderV4 {
   /**
    * Alias for `languageModel()` to maintain compatibility with AI SDK patterns.
    *
-   * @param modelId - The Claude model to use ('opus' or 'sonnet')
+   * @param modelId - The Claude model to use (e.g. 'fable', 'opus', 'sonnet', 'haiku', or a full model id)
    * @param settings - Optional settings to configure the model
    * @returns A language model instance
    */
