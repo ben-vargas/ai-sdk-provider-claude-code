@@ -388,7 +388,7 @@ A few Agent SDK surfaces are deliberately not wrapped by this provider. A compil
 
 ## Claude Agent SDK 0.3.x Notes
 
-This provider depends on `@anthropic-ai/claude-agent-sdk@^0.3.170`. The 0.3.x line introduces a few changes worth knowing about:
+This provider depends on `@anthropic-ai/claude-agent-sdk@^0.3.205`. The 0.3.x line introduces a few changes worth knowing about:
 
 ### New peer dependencies
 
