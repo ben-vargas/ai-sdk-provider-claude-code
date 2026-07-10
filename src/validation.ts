@@ -344,7 +344,7 @@ export const claudeCodeSettingsSchema = z
         message: 'onStreamStart must be a function',
       })
       .optional(),
-    // Callback invoked with the predicted next user prompt (active unless promptSuggestions: false)
+    // Callback invoked with the predicted next user prompt (requires promptSuggestions: true)
     onPromptSuggestion: z
       .any()
       .refine((val) => val === undefined || typeof val === 'function', {
@@ -513,6 +513,15 @@ export function validateSettings(settings: unknown): {
     if (validSettings.maxThinkingTokens && validSettings.maxThinkingTokens > 50000) {
       warnings.push(
         `Very high maxThinkingTokens (${validSettings.maxThinkingTokens}) may increase response time`
+      );
+    }
+
+    if (
+      validSettings.onPromptSuggestion !== undefined &&
+      effective('promptSuggestions') !== true
+    ) {
+      warnings.push(
+        'onPromptSuggestion is registered but promptSuggestions is not enabled. The CLI only emits prompt_suggestion messages when promptSuggestions is true, so the callback will never fire. Set promptSuggestions: true.'
       );
     }
 

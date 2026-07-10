@@ -3218,13 +3218,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
           }
           this.logger.debug(`[claude-code] Finish reason: ${finishReason.unified}`);
 
-          // The result message is terminal. When either the prompt_suggestion callback
-          // or the raw SDK message callback is registered, drain for the post-result
-          // prompt_suggestion with the shared bounded drain (10s timeout, stops at the
-          // first suggestion). Otherwise stop iterating immediately so a lingering CLI
-          // cannot block generateText after the result is already available. The SDK
-          // enables prompt suggestions when promptSuggestions is absent OR true and
-          // disables them only when explicitly false.
+          // The result message is terminal. The CLI emits prompt_suggestion only when
+          // promptSuggestions is true; when it is unset/disabled, the CLI ends the
+          // stream promptly after result, so the shared bounded drain exits immediately.
+          // Keep the drain for onSdkMessage observability of any post-result messages;
+          // it costs nothing when suggestions are off. Otherwise stop iterating so a
+          // lingering CLI cannot block generateText after result is already available.
           const effectivePromptSuggestions =
             sdkOptions?.promptSuggestions ?? this.settings.promptSuggestions;
           const shouldDrainPromptSuggestion =
@@ -4832,14 +4831,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
 
               // The prompt_suggestion message (promptSuggestions: true) arrives
               // AFTER the result message, so the AI SDK stream has already
-              // finished above. Drain the remaining SDK messages only when the
-              // prompt_suggestion callback or raw SDK message callback is registered;
-              // everyone else keeps the immediate return-on-result behavior. The
-              // drain is bounded: the SDK emits at most one prompt_suggestion per turn,
-              // so stop once it is delivered, and a timeout closes the iterator
-              // (tearing down the subprocess) if the CLI lingers after the result
-              // without emitting one. The SDK enables suggestions when promptSuggestions
-              // is absent OR true and disables them only when explicitly false.
+              // finished above. The CLI emits prompt_suggestion only when
+              // promptSuggestions is true; when it is unset/disabled, the CLI ends
+              // the stream promptly after result, so the bounded drain exits
+              // immediately. Keep the drain for onSdkMessage observability of any
+              // post-result messages; everyone else keeps the immediate
+              // return-on-result behavior.
               const effectivePromptSuggestions =
                 sdkOptions?.promptSuggestions ?? this.settings.promptSuggestions;
               const shouldDrainPromptSuggestion =

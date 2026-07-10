@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Assistant history tool-result replay** - Replayed assistant history now round-trips tool results correctly under the v7 message/content model instead of losing the result context.
 - **Non-data image URL schemes rejected safely** - Image file parts whose URL uses a scheme other than `data:` (for example `file://` or `blob:`) now emit the image-URL warning instead of falling through to the base64 fallback, which previously encoded the URL string itself as image data.
 - **Non-image file parts warn instead of vanishing** - Inline file parts with a non-image media type (for example `application/pdf`) now emit an `Unsupported file part` call warning instead of being silently dropped from the prompt.
+- **Prompt-suggestion default documented correctly** - The CLI emits `prompt_suggestion` only when `promptSuggestions: true` (unset means disabled, verified against Agent SDK 0.3.205); README/JSDoc previously claimed unset meant enabled. `validateSettings` now warns when `onPromptSuggestion` is registered without `promptSuggestions` enabled.
 
 ## [3.5.1] - 2026-07-06
 

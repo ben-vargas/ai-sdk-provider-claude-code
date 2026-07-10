@@ -3,10 +3,10 @@
  *
  * Demonstrates the onPromptSuggestion callback. The Claude Agent SDK predicts
  * the user's likely next prompt and emits it as a `prompt_suggestion` message.
- * Suggestions are ENABLED when `promptSuggestions` is true OR left unset, and
- * DISABLED only when explicitly `false`. Delivery is also subject to CLI
- * heuristics (suppressed on the first turn, after errors, in plan mode), so it
- * does not fire on every turn even when enabled.
+ * Suggestions require `promptSuggestions: true`; unset or false means disabled,
+ * and the callback never fires. Delivery is also subject to CLI heuristics
+ * (suppressed on the first turn, after errors, in plan mode), so it does not
+ * fire on every enabled turn.
  *
  * Why a callback instead of finalStep.providerMetadata? The suggestion arrives AFTER the
  * `result` message — i.e. after the AI SDK response has already finished — so it
@@ -99,9 +99,8 @@ async function suggestionsDisabled(): Promise<void> {
 
   let fired = false;
   const model = claudeCode('haiku', {
-    // Explicitly disabled. (Leaving promptSuggestions UNSET would ENABLE them
-    // per the SDK — absent or true enables, only false disables — so the
-    // disabled case must set it to false.)
+    // Explicitly disabled. Leaving promptSuggestions unset disables them too;
+    // this example uses false for clarity/symmetry with suggestionsEnabled().
     promptSuggestions: false,
     onPromptSuggestion: () => {
       fired = true;
