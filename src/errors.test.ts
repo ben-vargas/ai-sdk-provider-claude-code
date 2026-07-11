@@ -6,8 +6,43 @@ import {
   isAuthenticationError,
   isTimeoutError,
   getErrorMetadata,
+  stderrTail,
 } from './errors.js';
 import { APICallError, LoadAPIKeyError } from '@ai-sdk/provider';
+
+describe('stderrTail', () => {
+  it('selects, orders, and trims the last five non-empty lines', () => {
+    expect(stderrTail(' first \n\nsecond\u2028 third \u2029fourth\nfifth\n sixth ')).toBe(
+      'second; third; fourth; fifth; sixth'
+    );
+  });
+
+  it('handles single-line input', () => {
+    expect(stderrTail('  one diagnostic  ')).toBe('one diagnostic');
+  });
+
+  it('strips ANSI escape sequences before remaining control characters', () => {
+    expect(stderrTail('\x1b[31mred\x1b[0m\x00')).toBe('red');
+    expect(stderrTail('\x1b]0;window title\x07visible')).toBe('visible');
+    expect(stderrTail('\x1b]0;window title\x1b\\visible')).toBe('visible');
+  });
+
+  it('splits CRLF, CR, and LF line endings', () => {
+    expect(stderrTail('one\r\ntwo\rthree\nfour')).toBe('one; two; three; four');
+  });
+
+  it('caps output at 600 code points without splitting surrogate pairs', () => {
+    const result = stderrTail(`${'a'.repeat(4)}😀${'b'.repeat(598)}`);
+
+    expect(result).toBe(`…😀${'b'.repeat(598)}`);
+    expect(Array.from(result)).toHaveLength(600);
+  });
+
+  it('returns an empty string for whitespace-only input', () => {
+    expect(stderrTail(' \t\r\n ')).toBe('');
+    expect(stderrTail('\x1b[31m\x1b[0m')).toBe('');
+  });
+});
 
 describe('Error Creation Functions', () => {
   describe('createAPICallError', () => {
@@ -20,7 +55,7 @@ describe('Error Creation Functions', () => {
       });
 
       expect(error).toBeInstanceOf(APICallError);
-      expect(error.message).toBe('Test error');
+      expect(error.message).toBe('Test error | stderr (tail): Command failed');
       expect(error.isRetryable).toBe(false);
       expect(error.data).toEqual({
         exitCode: 1,
@@ -47,6 +82,50 @@ describe('Error Creation Functions', () => {
       });
 
       expect(error.isRetryable).toBe(true);
+    });
+
+    it('appends a visible stderr tail when stderr has content', () => {
+      const error = createAPICallError({
+        message: 'CLI failed',
+        stderr: 'first line\nlast line',
+      });
+
+      expect(error.message).toBe('CLI failed | stderr (tail): first line; last line');
+    });
+
+    it.each([undefined, '', ' \t\r\n '])(
+      'does not append a dangling stderr marker for %j',
+      (stderr) => {
+        const error = createAPICallError({
+          message: 'CLI failed',
+          stderr,
+        });
+
+        expect(error.message).toBe('CLI failed');
+        expect(error.message).not.toContain(' | stderr (tail):');
+      }
+    );
+
+    it('does not append stderr twice when the marker is already present', () => {
+      const error = createAPICallError({
+        message: 'CLI failed | stderr (tail): existing detail',
+        stderr: 'new detail',
+      });
+
+      expect(error.message).toBe('CLI failed | stderr (tail): existing detail');
+    });
+
+    it('preserves stderr verbatim in data while capping only the visible tail', () => {
+      const stderr = `  original\n${'x'.repeat(700)}😀  `;
+      const error = createAPICallError({
+        message: 'CLI failed',
+        stderr,
+      });
+
+      expect((error.data as { stderr?: string }).stderr).toBe(stderr);
+      const visibleTail = error.message.split(' | stderr (tail): ')[1];
+      expect(visibleTail).toBeDefined();
+      expect(Array.from(visibleTail ?? '')).toHaveLength(600);
     });
   });
 
