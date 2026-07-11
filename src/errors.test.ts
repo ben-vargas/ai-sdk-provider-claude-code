@@ -137,6 +137,18 @@ describe('Error Creation Functions', () => {
 
       expect(error).toBeInstanceOf(LoadAPIKeyError);
       expect(error.message).toBe('Auth failed');
+      expect(getErrorMetadata(error)).toBeUndefined();
+    });
+
+    it('should expose stderr metadata for authentication errors', () => {
+      const error = createAuthenticationError({
+        message: 'Auth failed',
+        stderr: 'Not authenticated',
+      });
+
+      expect(error).toBeInstanceOf(LoadAPIKeyError);
+      expect(isAuthenticationError(error)).toBe(true);
+      expect(getErrorMetadata(error)?.stderr).toBe('Not authenticated');
     });
 
     it('should use default message when empty', () => {

@@ -1866,6 +1866,9 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(thrownError).toBeDefined();
       expect(thrownError).toBeInstanceOf(LoadAPIKeyError);
       expect(isAuthenticationError(thrownError)).toBe(true);
+      expect(getErrorMetadata(thrownError)?.stderr).toBe(
+        'Error: Not authenticated\nPlease run: claude login\n'
+      );
       expect((thrownError as Error).message).toContain('Please run: claude login');
     });
 
@@ -1886,6 +1889,7 @@ describe('ClaudeCodeLanguageModel', () => {
 
       expect(thrownError).toBeInstanceOf(LoadAPIKeyError);
       expect(isAuthenticationError(thrownError)).toBe(true);
+      expect(getErrorMetadata(thrownError)?.stderr).toBe('Error: Not authenticated');
       expect((thrownError as Error).message).toContain('stderr (tail): Error: Not authenticated');
     });
 
