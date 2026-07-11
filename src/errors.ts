@@ -1,5 +1,39 @@
 import { APICallError, LoadAPIKeyError } from '@ai-sdk/provider';
 
+export const STDERR_TAIL_MARKER = ' | stderr (tail):';
+const ANSI_ESCAPE_SEQUENCE =
+  // eslint-disable-next-line no-control-regex
+  /\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~])/g;
+
+/**
+ * Converts stderr into a short, single-line tail suitable for error messages.
+ */
+export function stderrTail(raw: string): string {
+  const withoutAnsi = raw.replace(ANSI_ESCAPE_SEQUENCE, '');
+  const withoutControlCharacters = Array.from(withoutAnsi)
+    .filter((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return (
+        character === '\r' ||
+        character === '\n' ||
+        codePoint === 0x2028 ||
+        codePoint === 0x2029 ||
+        (codePoint >= 0x20 && codePoint < 0x7f) ||
+        codePoint > 0x9f
+      );
+    })
+    .join('');
+  const tail = withoutControlCharacters
+    .split(/\r\n|\r|\n|\u2028|\u2029/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(-5)
+    .join('; ');
+  const codePoints = Array.from(tail);
+
+  return codePoints.length > 600 ? `…${codePoints.slice(-599).join('')}` : tail;
+}
+
 /**
  * Metadata associated with Claude Code SDK errors.
  * Provides additional context about command execution failures.
@@ -69,9 +103,14 @@ export function createAPICallError({
     stderr,
     promptExcerpt,
   };
+  const tail = typeof stderr === 'string' && stderr.length > 0 ? stderrTail(stderr) : '';
+  const enrichedMessage =
+    tail && !message.includes(STDERR_TAIL_MARKER)
+      ? `${message}${STDERR_TAIL_MARKER} ${tail}`
+      : message;
 
   return new APICallError({
-    message,
+    message: enrichedMessage,
     isRetryable,
     url: 'claude-code-cli://command',
     requestBodyValues: promptExcerpt ? { prompt: promptExcerpt } : undefined,
@@ -93,11 +132,21 @@ export function createAPICallError({
  * });
  * ```
  */
-export function createAuthenticationError({ message }: { message: string }): LoadAPIKeyError {
-  return new LoadAPIKeyError({
+export function createAuthenticationError({
+  message,
+  stderr,
+}: {
+  message: string;
+  stderr?: string;
+}): LoadAPIKeyError {
+  const error = new LoadAPIKeyError({
     message:
       message || 'Authentication failed. Please ensure Claude Code SDK is properly authenticated.',
   });
+  if (stderr) {
+    (error as LoadAPIKeyError & { data?: ClaudeCodeErrorMetadata }).data = { stderr };
+  }
+  return error;
 }
 
 /**
@@ -119,16 +168,19 @@ export function createAuthenticationError({ message }: { message: string }): Loa
  */
 export function createTimeoutError({
   message,
+  stderr,
   promptExcerpt,
   timeoutMs,
 }: {
   message: string;
+  stderr?: string;
   promptExcerpt?: string;
   timeoutMs?: number;
 }): APICallError {
   // Store timeoutMs in metadata for potential use by error handlers
   const metadata: ClaudeCodeErrorMetadata = {
     code: 'TIMEOUT',
+    stderr,
     promptExcerpt,
   };
 
@@ -211,6 +263,9 @@ export function isTimeoutError(error: unknown): boolean {
 export function getErrorMetadata(error: unknown): ClaudeCodeErrorMetadata | undefined {
   if (error instanceof APICallError && error.data) {
     return error.data as ClaudeCodeErrorMetadata;
+  }
+  if (error instanceof LoadAPIKeyError && (error as LoadAPIKeyError & { data?: unknown }).data) {
+    return (error as LoadAPIKeyError & { data?: ClaudeCodeErrorMetadata }).data;
   }
   return undefined;
 }
