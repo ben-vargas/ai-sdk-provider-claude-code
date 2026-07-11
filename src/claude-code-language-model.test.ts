@@ -2851,6 +2851,9 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(thrownError).toBeInstanceOf(LoadAPIKeyError);
       expect(isAuthenticationError(thrownError)).toBe(true);
       expect((thrownError as Error).message).toContain('Please run: claude login');
+      expect(getErrorMetadata(thrownError)?.stderr).toBe(
+        'Error: Not authenticated\nPlease run: claude login\n'
+      );
     });
 
     it('classifies a bare SDK exit error as auth from not authenticated stderr', async () => {
@@ -2871,6 +2874,7 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(thrownError).toBeInstanceOf(LoadAPIKeyError);
       expect(isAuthenticationError(thrownError)).toBe(true);
       expect((thrownError as Error).message).toContain('stderr (tail): Error: Not authenticated');
+      expect(getErrorMetadata(thrownError)?.stderr).toBe('Error: Not authenticated\n');
     });
 
     it('does not classify incidental auth wording on stderr as an auth error', async () => {

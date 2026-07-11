@@ -132,11 +132,21 @@ export function createAPICallError({
  * });
  * ```
  */
-export function createAuthenticationError({ message }: { message: string }): LoadAPIKeyError {
-  return new LoadAPIKeyError({
+export function createAuthenticationError({
+  message,
+  stderr,
+}: {
+  message: string;
+  stderr?: string;
+}): LoadAPIKeyError {
+  const error = new LoadAPIKeyError({
     message:
       message || 'Authentication failed. Please ensure Claude Code SDK is properly authenticated.',
   });
+  if (stderr) {
+    (error as LoadAPIKeyError & { data?: ClaudeCodeErrorMetadata }).data = { stderr };
+  }
+  return error;
 }
 
 /**
@@ -253,6 +263,9 @@ export function isTimeoutError(error: unknown): boolean {
 export function getErrorMetadata(error: unknown): ClaudeCodeErrorMetadata | undefined {
   if (error instanceof APICallError && error.data) {
     return error.data as ClaudeCodeErrorMetadata;
+  }
+  if (error instanceof LoadAPIKeyError && (error as LoadAPIKeyError & { data?: unknown }).data) {
+    return (error as LoadAPIKeyError & { data?: ClaudeCodeErrorMetadata }).data;
   }
   return undefined;
 }

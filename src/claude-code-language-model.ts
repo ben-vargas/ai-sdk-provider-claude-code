@@ -2269,6 +2269,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
             ? error.message
             : 'Authentication failed. Please ensure Claude Code SDK is properly authenticated.'
         ),
+        stderr,
       });
     }
 
