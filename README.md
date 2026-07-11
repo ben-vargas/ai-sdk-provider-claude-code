@@ -616,6 +616,22 @@ All requests made through this provider report timing in `providerMetadata['clau
 - When replaying conversation history through the prompt, assistant tool calls are serialized as text lines — `[Tool call: Read({"file_path":"/x"})]` (inputs truncated at 1000 characters) — paired with `Tool Result (Read): ...` lines for tool messages
 - `canUseTool` requires streaming input at the SDK level (AsyncIterable prompt). This provider supports it via `streamingInput`: use `'auto'` (default when `canUseTool` is set) or `'always'`. See GUIDE for details.
 
+## Error Diagnostics
+
+Mapped provider errors append a trimmed stderr tail directly to the message as `... | stderr (tail): <last lines>`, making failures visible in logs without inspecting metadata. The full captured stderr (capped at 4000 characters) remains available through `getErrorMetadata`:
+
+```typescript
+import { generateText } from 'ai';
+import { claudeCode, getErrorMetadata } from 'ai-sdk-provider-claude-code';
+try {
+  await generateText({ model: claudeCode('haiku'), prompt: 'Hello, Claude!' });
+} catch (error) {
+  console.error(getErrorMetadata(error)?.stderr);
+}
+```
+
+Authentication and timeout failures are also classified when the only evidence is in stderr, using high-precision matching to avoid false positives from unrelated stderr output.
+
 ## Tool Error Parity (Streaming)
 
 - In addition to `tool-call` and `tool-result`, this provider emits a distinct `tool-error` stream event when a tool execution fails.

@@ -14,7 +14,13 @@ import { NoSuchModelError, APICallError, LoadAPIKeyError } from '@ai-sdk/provide
 import { generateId } from '@ai-sdk/provider-utils';
 import type { ClaudeCodeSettings, Logger, MessageInjector } from './types.js';
 import { convertToClaudeCodeMessages } from './convert-to-claude-code-messages.js';
-import { createAPICallError, createAuthenticationError, createTimeoutError } from './errors.js';
+import {
+  createAPICallError,
+  createAuthenticationError,
+  createTimeoutError,
+  STDERR_TAIL_MARKER,
+  stderrTail,
+} from './errors.js';
 import { mapClaudeCodeFinishReason } from './map-claude-code-finish-reason.js';
 import { validateModelId, validatePrompt, validateSessionId, isBlankResume } from './validation.js';
 import { sanitizeJsonSchemaForOutputFormat } from './sanitize-json-schema.js';
@@ -31,13 +37,21 @@ import type {
  * Provider version reported to the Agent SDK via CLAUDE_AGENT_SDK_CLIENT_APP.
  * Keep in sync with package.json (kept as a constant to avoid a build step).
  */
-const PROVIDER_VERSION = '3.5.2';
+const PROVIDER_VERSION = '3.5.3';
 const DEFAULT_CLIENT_APP = `ai-sdk-provider-claude-code/${PROVIDER_VERSION}`;
 
 const CLAUDE_CODE_TRUNCATION_WARNING =
   'Claude Code SDK output ended unexpectedly; returning truncated response from buffered text. Await upstream fix to avoid data loss.';
 
 const MIN_TRUNCATION_LENGTH = 512;
+
+function capStderr(raw: string): string {
+  if (raw.length <= 4000) {
+    return raw;
+  }
+
+  return Array.from(raw).slice(-4000).join('');
+}
 
 /**
  * Detects if an error represents a truncated SDK JSON stream.
@@ -1836,17 +1850,38 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     messagesPrompt: string,
     collectedStderr?: string
   ): APICallError | LoadAPIKeyError {
-    // Handle AbortError from the SDK
-    if (isAbortError(error)) {
-      // Return the abort reason if available, otherwise the error itself
-      throw error;
-    }
-
     // Already-classified provider errors (e.g. the missing-structured-output
     // failure thrown from result handling) pass through unchanged instead of
     // being re-wrapped with their metadata dropped.
     if (error instanceof APICallError || error instanceof LoadAPIKeyError) {
       return error;
+    }
+
+    const rawSdkStderr =
+      typeof error === 'object' &&
+      error !== null &&
+      'stderr' in error &&
+      typeof error.stderr === 'string'
+        ? error.stderr
+        : undefined;
+    const cappedSdkStderr = rawSdkStderr !== undefined ? capStderr(rawSdkStderr) : undefined;
+    const selectedStderr =
+      cappedSdkStderr !== undefined && stderrTail(cappedSdkStderr)
+        ? cappedSdkStderr
+        : collectedStderr
+          ? capStderr(collectedStderr)
+          : undefined;
+    const stderr = selectedStderr || undefined;
+    const tail = stderr ? stderrTail(stderr) : '';
+    const appendStderrTail = (message: string): string =>
+      tail && !message.includes(STDERR_TAIL_MARKER)
+        ? `${message}${STDERR_TAIL_MARKER} ${tail}`
+        : message;
+
+    // Handle AbortError from the SDK
+    if (isAbortError(error)) {
+      // Return the abort reason if available, otherwise the error itself
+      throw error;
     }
 
     // Type guard for error with properties
@@ -1873,9 +1908,24 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       'invalid api key',
       'oauth_org_not_allowed', // SDK 0.3.x assistant error kind: OAuth org not permitted
     ];
+    // Keep stderr matching high-precision so incidental third-party/tool noise
+    // cannot misclassify an unrelated CLI process failure as an auth failure.
+    const stderrAuthPatterns = [
+      'not logged in',
+      'not authenticated',
+      'auth failed',
+      'please login',
+      'please run /login',
+      'claude login',
+      'claude auth login',
+      'invalid api key',
+      'oauth token revoked',
+      'oauth_org_not_allowed',
+    ];
 
     const errorMessage =
       isErrorWithMessage(error) && error.message ? error.message.toLowerCase() : '';
+    const stderrMessage = stderr?.toLowerCase() ?? '';
 
     // Structured kind (SDKAssistantMessageError) propagated from result handling;
     // preferred over substring matching since SDK error text need not contain it.
@@ -1888,33 +1938,38 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       errorKind === 'authentication_failed' ||
       errorKind === 'oauth_org_not_allowed' ||
       authErrorPatterns.some((pattern) => errorMessage.includes(pattern)) ||
+      stderrAuthPatterns.some((pattern) => stderrMessage.includes(pattern)) ||
       exitCode === 401;
 
     if (isAuthError) {
       return createAuthenticationError({
-        message:
+        message: appendStderrTail(
           isErrorWithMessage(error) && error.message
             ? error.message
-            : 'Authentication failed. Please ensure Claude Code SDK is properly authenticated.',
+            : 'Authentication failed. Please ensure Claude Code SDK is properly authenticated.'
+        ),
+        stderr,
       });
     }
 
     // Check for timeout errors
     const errorCode = isErrorWithCode(error) && typeof error.code === 'string' ? error.code : '';
 
-    if (errorCode === 'ETIMEDOUT' || errorMessage.includes('timeout')) {
+    if (
+      errorCode === 'ETIMEDOUT' ||
+      errorMessage.includes('timeout') ||
+      /request timed out|etimedout/i.test(stderr ?? '')
+    ) {
       return createTimeoutError({
-        message: isErrorWithMessage(error) && error.message ? error.message : 'Request timed out',
+        message: appendStderrTail(
+          isErrorWithMessage(error) && error.message ? error.message : 'Request timed out'
+        ),
+        stderr,
         promptExcerpt: messagesPrompt.substring(0, 200),
         // Don't specify timeoutMs since we don't know the actual timeout value
         // It's controlled by the consumer via AbortSignal
       });
     }
-
-    // Use error.stderr if available from SDK, otherwise use collected stderr
-    const stderrFromError =
-      isErrorWithCode(error) && typeof error.stderr === 'string' ? error.stderr : undefined;
-    const stderr = stderrFromError || collectedStderr || undefined;
 
     // SDK 0.3.x assistant error kinds: API overload / rate limit — transient, safe to retry.
     if (
@@ -2219,6 +2274,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     let collectedStderr = '';
     const stderrCollector = (data: string) => {
       collectedStderr += data;
+      collectedStderr = capStderr(collectedStderr);
     };
 
     const sdkOptions = this.getSanitizedSdkOptions();
@@ -2913,6 +2969,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     let collectedStderr = '';
     const stderrCollector = (data: string) => {
       collectedStderr += data;
+      collectedStderr = capStderr(collectedStderr);
     };
 
     const sdkOptions = this.getSanitizedSdkOptions();
