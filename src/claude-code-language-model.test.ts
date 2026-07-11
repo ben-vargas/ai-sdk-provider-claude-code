@@ -11,6 +11,7 @@ import type {
 } from './types.js';
 import {
   APICallError,
+  LoadAPIKeyError,
   type LanguageModelV4CallOptions,
   type LanguageModelV4StreamPart,
 } from '@ai-sdk/provider';
@@ -2029,8 +2030,8 @@ describe('ClaudeCodeLanguageModel', () => {
 
       vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
         if (options?.stderr) {
-          options.stderr('Error: Not authenticated\n');
-          options.stderr('Please run: claude login\n');
+          options.stderr('Diagnostic chunk one\n');
+          options.stderr('Diagnostic chunk two\n');
         }
         const error = new Error('Failed with exit code: 1');
         (error as any).exitCode = 1;
@@ -2046,10 +2047,10 @@ describe('ClaudeCodeLanguageModel', () => {
         thrownError = error;
       }
 
-      expect(sdkStderr).toHaveBeenCalledWith('Error: Not authenticated\n');
-      expect(sdkStderr).toHaveBeenCalledWith('Please run: claude login\n');
+      expect(sdkStderr).toHaveBeenCalledWith('Diagnostic chunk one\n');
+      expect(sdkStderr).toHaveBeenCalledWith('Diagnostic chunk two\n');
       const metadata = getErrorMetadata(thrownError);
-      expect(metadata?.stderr).toBe('Error: Not authenticated\nPlease run: claude login\n');
+      expect(metadata?.stderr).toBe('Diagnostic chunk one\nDiagnostic chunk two\n');
       expect(metadata?.exitCode).toBe(1);
     });
     it('should generate text from SDK response', async () => {
@@ -2810,7 +2811,7 @@ describe('ClaudeCodeLanguageModel', () => {
       await expect(promise).rejects.toThrow(abortReason);
     });
 
-    it('should capture stderr from callback when SDK throws error', async () => {
+    it('should classify a bare SDK exit error as auth from captured stderr', async () => {
       const stderrMessages: string[] = [];
       const stderrCallback = vi.fn((data: string) => {
         stderrMessages.push(data);
@@ -2829,10 +2830,8 @@ describe('ClaudeCodeLanguageModel', () => {
           options.stderr('Please run: claude login\n');
         }
 
-        // Throw an error with exitCode (like auth failure)
-        const error = new Error('Failed with exit code: 1');
-        (error as any).exitCode = 1;
-        throw error;
+        // The pinned SDK throws a bare process-exit error without stderr or exitCode.
+        throw new Error('Claude Code process exited with code 1');
       });
 
       let thrownError: unknown;
@@ -2848,12 +2847,155 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(stderrCallback).toHaveBeenCalledWith('Error: Not authenticated\n');
       expect(stderrCallback).toHaveBeenCalledWith('Please run: claude login\n');
 
-      // Verify the error contains the stderr data
       expect(thrownError).toBeDefined();
-      const metadata = getErrorMetadata(thrownError);
-      expect(metadata).toBeDefined();
-      expect(metadata?.stderr).toBe('Error: Not authenticated\nPlease run: claude login\n');
-      expect(metadata?.exitCode).toBe(1);
+      expect(thrownError).toBeInstanceOf(LoadAPIKeyError);
+      expect(isAuthenticationError(thrownError)).toBe(true);
+      expect((thrownError as Error).message).toContain('Please run: claude login');
+    });
+
+    it('does not classify incidental auth wording on stderr as an auth error', async () => {
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        options?.stderr?.(
+          'fetch failed: 401 Unauthorized from https://internal.example\n' +
+            '[debug] authentication middleware initialized\n'
+        );
+        throw new Error('Claude Code process exited with code 1');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect(thrownError).not.toBeInstanceOf(LoadAPIKeyError);
+      expect(isAuthenticationError(thrownError)).toBe(false);
+      expect((thrownError as Error).message).toContain(
+        'stderr (tail): fetch failed: 401 Unauthorized from https://internal.example'
+      );
+      expect((thrownError as Error).message).toContain(
+        '[debug] authentication middleware initialized'
+      );
+    });
+
+    it('surfaces and caps captured stderr for a bare SDK process-exit error', async () => {
+      const collectedStderr = `discarded-prefix-${'x'.repeat(4100)}\nkept diagnostic`;
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        options?.stderr?.(collectedStderr);
+        throw new Error('Claude Code process exited with code 1');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as Error).message).toContain('stderr (tail):');
+      expect((thrownError as Error).message).toContain('kept diagnostic');
+      const stderr = getErrorMetadata(thrownError)?.stderr;
+      expect(stderr).toBeDefined();
+      expect(Array.from(stderr ?? '')).toHaveLength(4000);
+      expect(stderr?.endsWith('kept diagnostic')).toBe(true);
+      expect(stderr).not.toContain('discarded-prefix');
+    });
+
+    it('classifies a bare SDK process-exit error as timeout from narrow stderr text', async () => {
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        options?.stderr?.('Request timed out while contacting the API\n');
+        throw new Error('Claude Code process exited with code 1');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(true);
+      expect(getErrorMetadata(thrownError)?.code).toBe('TIMEOUT');
+      expect((thrownError as Error).message).toContain(
+        'stderr (tail): Request timed out while contacting the API'
+      );
+    });
+
+    it('does not classify incidental timeout wording on stderr as a timeout', async () => {
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        options?.stderr?.('Loaded timeout configuration from disk\n');
+        throw new Error('Claude Code process exited with code 1');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(false);
+      expect(getErrorMetadata(thrownError)?.code).toBeUndefined();
+      expect((thrownError as Error).message).toContain('Loaded timeout configuration from disk');
+    });
+
+    it('prefers meaningful SDK error stderr and caps it before mapping', async () => {
+      const sdkStderr = `discarded-sdk-prefix-${'s'.repeat(4100)}\nSDK diagnostic`;
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        options?.stderr?.('collected diagnostic\n');
+        const error = new Error('Claude Code process exited with code 1');
+        (error as Error & { stderr: string }).stderr = sdkStderr;
+        throw error;
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (error) {
+        thrownError = error;
+      }
+
+      const stderr = getErrorMetadata(thrownError)?.stderr;
+      expect(Array.from(stderr ?? '')).toHaveLength(4000);
+      expect(stderr?.endsWith('SDK diagnostic')).toBe(true);
+      expect(stderr).not.toContain('collected diagnostic');
+      expect(stderr).not.toContain('discarded-sdk-prefix');
+    });
+
+    it('falls back to collected stderr when SDK error stderr has no real content', async () => {
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        options?.stderr?.('collected diagnostic\n');
+        const error = new Error('Claude Code process exited with code 1');
+        (error as Error & { stderr: string }).stderr = ' \t\x1b[31m\x1b[0m ';
+        throw error;
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(getErrorMetadata(thrownError)?.stderr).toBe('collected diagnostic\n');
+      expect((thrownError as Error).message).toContain('collected diagnostic');
     });
 
     it('should detect /login pattern as authentication error', async () => {
@@ -3175,7 +3317,9 @@ describe('ClaudeCodeLanguageModel', () => {
 
       // Verify error was thrown
       expect(thrownError).toBeDefined();
-      expect((thrownError as Error).message).toBe('Some error occurred');
+      expect((thrownError as Error).message).toBe(
+        'Some error occurred | stderr (tail): Warning: some diagnostic info'
+      );
 
       // Verify error metadata includes collected stderr
       const metadata = getErrorMetadata(thrownError);
@@ -4748,6 +4892,40 @@ describe('ClaudeCodeLanguageModel', () => {
       expect((chunks[1] as any).error.message).toContain('Invalid API key');
       // The error should be converted to an auth error (contains /login pattern)
       expect(isAuthenticationError((chunks[1] as any).error)).toBe(true);
+    });
+
+    it('caps the streaming stderr collector before emitting an error', async () => {
+      const collectedStderr = `discarded-stream-prefix-${'y'.repeat(4100)}\nstream diagnostic`;
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield* [];
+            options?.stderr?.(collectedStderr);
+            throw new Error('Claude Code process exited with code 1');
+          },
+        } as any;
+      });
+
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+      });
+      const chunks: ExtendedStreamPart[] = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      const errorChunk = chunks.find((chunk) => chunk.type === 'error') as
+        | { type: 'error'; error: unknown }
+        | undefined;
+      expect(errorChunk?.error).toBeInstanceOf(APICallError);
+      const stderr = getErrorMetadata(errorChunk?.error)?.stderr;
+      expect(Array.from(stderr ?? '')).toHaveLength(4000);
+      expect(stderr?.endsWith('stream diagnostic')).toBe(true);
+      expect(stderr).not.toContain('discarded-stream-prefix');
+      expect((errorChunk?.error as Error).message).toContain('stream diagnostic');
     });
 
     it('should use stop_reason from result message for stream finish reason', async () => {
