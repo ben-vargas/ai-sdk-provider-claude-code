@@ -158,16 +158,19 @@ export function createAuthenticationError({ message }: { message: string }): Loa
  */
 export function createTimeoutError({
   message,
+  stderr,
   promptExcerpt,
   timeoutMs,
 }: {
   message: string;
+  stderr?: string;
   promptExcerpt?: string;
   timeoutMs?: number;
 }): APICallError {
   // Store timeoutMs in metadata for potential use by error handlers
   const metadata: ClaudeCodeErrorMetadata = {
     code: 'TIMEOUT',
+    stderr,
     promptExcerpt,
   };
 

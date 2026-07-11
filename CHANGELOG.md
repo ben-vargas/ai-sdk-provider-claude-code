@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Visible and bounded subprocess diagnostics** ([#136](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/136)) - Error messages now carry a trimmed stderr tail, authentication and timeout classification also inspect captured stderr using separate high-precision login/API-key and timeout phrases to avoid incidental matches, and retained stderr stored in mapped error metadata is capped at 4000 characters.
+- **Visible and bounded subprocess diagnostics** ([#136](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/136)) - Error messages now carry a trimmed stderr tail, authentication and timeout classification also inspect captured stderr using separate high-precision login/API-key and timeout phrases to avoid incidental matches, and retained stderr stored in mapped error metadata, including timeout errors, is capped at 4000 characters.
 
 ## [3.5.2] - 2026-07-10
 

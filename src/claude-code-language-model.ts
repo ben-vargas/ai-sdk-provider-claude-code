@@ -1857,16 +1857,21 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       return error;
     }
 
-    const stderrFromError =
+    const rawSdkStderr =
       typeof error === 'object' &&
       error !== null &&
       'stderr' in error &&
-      typeof error.stderr === 'string' &&
-      stderrTail(error.stderr)
+      typeof error.stderr === 'string'
         ? error.stderr
         : undefined;
-    const selectedStderr = stderrFromError ?? collectedStderr;
-    const stderr = selectedStderr ? capStderr(selectedStderr) : undefined;
+    const cappedSdkStderr = rawSdkStderr !== undefined ? capStderr(rawSdkStderr) : undefined;
+    const selectedStderr =
+      cappedSdkStderr !== undefined && stderrTail(cappedSdkStderr)
+        ? cappedSdkStderr
+        : collectedStderr
+          ? capStderr(collectedStderr)
+          : undefined;
+    const stderr = selectedStderr || undefined;
     const tail = stderr ? stderrTail(stderr) : '';
     const appendStderrTail = (message: string): string =>
       tail && !message.includes(STDERR_TAIL_MARKER)
@@ -1958,6 +1963,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         message: appendStderrTail(
           isErrorWithMessage(error) && error.message ? error.message : 'Request timed out'
         ),
+        stderr,
         promptExcerpt: messagesPrompt.substring(0, 200),
         // Don't specify timeoutMs since we don't know the actual timeout value
         // It's controlled by the consumer via AbortSignal
