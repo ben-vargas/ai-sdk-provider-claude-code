@@ -2946,9 +2946,40 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(thrownError).toBeInstanceOf(APICallError);
       expect((thrownError as APICallError).isRetryable).toBe(true);
       expect(getErrorMetadata(thrownError)?.code).toBe('TIMEOUT');
+      expect(getErrorMetadata(thrownError)?.stderr).toBe(
+        'Request timed out while contacting the API\n'
+      );
       expect((thrownError as Error).message).toContain(
         'stderr (tail): Request timed out while contacting the API'
       );
+    });
+
+    it('classifies timeout from the capped SDK error stderr tail before mapping', async () => {
+      const sdkStderr = `discarded-sdk-prefix-${'s'.repeat(4100)}\nRequest timed out from SDK stderr`;
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        options?.stderr?.('collected diagnostic\n');
+        const error = new Error('Claude Code process exited with code 1');
+        (error as Error & { stderr: string }).stderr = sdkStderr;
+        throw error;
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(getErrorMetadata(thrownError)?.code).toBe('TIMEOUT');
+      expect((thrownError as APICallError).isRetryable).toBe(true);
+      const stderr = getErrorMetadata(thrownError)?.stderr;
+      expect(Array.from(stderr ?? '').length).toBeLessThanOrEqual(4000);
+      expect(stderr?.endsWith('Request timed out from SDK stderr')).toBe(true);
+      expect(stderr).not.toContain('discarded-sdk-prefix');
+      expect((thrownError as Error).message).toContain('stderr (tail):');
+      expect((thrownError as Error).message).toContain('Request timed out from SDK stderr');
     });
 
     it('does not classify incidental timeout wording on stderr as a timeout', async () => {
