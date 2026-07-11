@@ -1869,6 +1869,26 @@ describe('ClaudeCodeLanguageModel', () => {
       expect((thrownError as Error).message).toContain('Please run: claude login');
     });
 
+    it('classifies a bare SDK exit error as auth from not authenticated stderr', async () => {
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        options?.stderr?.('Error: Not authenticated');
+        throw new Error('Claude Code process exited with code 1');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError).toBeInstanceOf(LoadAPIKeyError);
+      expect(isAuthenticationError(thrownError)).toBe(true);
+      expect((thrownError as Error).message).toContain('stderr (tail): Error: Not authenticated');
+    });
+
     it('does not classify incidental auth wording on stderr as an auth error', async () => {
       vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
         options?.stderr?.(

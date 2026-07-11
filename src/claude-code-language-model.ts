@@ -1907,6 +1907,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // cannot misclassify an unrelated CLI process failure as an auth failure.
     const stderrAuthPatterns = [
       'not logged in',
+      'not authenticated',
       'auth failed',
       'please login',
       'please run /login',
