@@ -26,12 +26,14 @@ interface FileConversionResult {
 
 const IMAGE_URL_WARNING = 'Image URLs are not supported by this provider; supply base64/data URLs.';
 const IMAGE_CONVERSION_WARNING = 'Unable to convert image content; supply base64/data URLs.';
+const VIDEO_URL_WARNING = 'Video URLs are not supported by this provider; supply base64/data URLs.';
+const VIDEO_CONVERSION_WARNING = 'Unable to convert video content; supply base64/data URLs.';
 const FILE_REFERENCE_WARNING =
   'Provider file references are not supported by this provider; supply inline file data.';
 
 function createUnsupportedFilePartWarning(mediaType: string | undefined): string {
   const mediaTypeLabel = mediaType && mediaType.trim() ? mediaType : 'unknown';
-  return `Unsupported file part (${mediaTypeLabel}) was ignored; this provider forwards only image file parts inline.`;
+  return `Unsupported file part (${mediaTypeLabel}) was ignored; this provider forwards only image and video file parts inline.`;
 }
 
 /**
@@ -200,6 +202,108 @@ function parseStringImage(
   return { warning: IMAGE_CONVERSION_WARNING };
 }
 
+function isVideoMimeType(mediaType?: string): boolean {
+  if (!mediaType) {
+    return false;
+  }
+  const normalized = normalizeMediaType(mediaType);
+  return normalized === 'video' || normalized === 'video/*' || normalized.startsWith('video/');
+}
+
+function isConcreteVideoMimeType(mediaType: string): boolean {
+  const normalized = normalizeMediaType(mediaType);
+  return normalized.startsWith('video/') && !normalized.endsWith('/*');
+}
+
+function resolveVideoMediaType(mediaType: string, data?: Uint8Array | string): string | undefined {
+  const normalizedMediaType = normalizeMediaType(mediaType);
+
+  if (isConcreteVideoMimeType(normalizedMediaType)) {
+    return normalizedMediaType;
+  }
+
+  if ((normalizedMediaType === 'video' || normalizedMediaType === 'video/*') && data) {
+    try {
+      const detectedMediaType = detectMediaType({ data, topLevelType: 'video' });
+      if (detectedMediaType && isConcreteVideoMimeType(detectedMediaType)) {
+        return detectedMediaType;
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}
+
+function createVideoContent(mediaType: string, data: string): SDKUserContentPart | undefined {
+  const normalizedType = normalizeMediaType(mediaType);
+  const trimmedData = data.trim().replace(/\s+/g, '');
+
+  if (!isConcreteVideoMimeType(normalizedType) || !trimmedData) {
+    return undefined;
+  }
+
+  return {
+    type: 'video',
+    source: {
+      type: 'base64',
+      media_type: normalizedType,
+      data: trimmedData,
+    },
+  } as unknown as SDKUserContentPart;
+}
+
+function resolveStringVideoMediaType(
+  mediaType: string,
+  data: string,
+  fallbackMimeType?: string
+): string | undefined {
+  return (
+    resolveVideoMediaType(mediaType, data) ??
+    (fallbackMimeType ? resolveVideoMediaType(fallbackMimeType, data) : undefined)
+  );
+}
+
+function parseStringVideo(
+  value: string,
+  fallbackMimeType?: string
+): { content?: SDKUserContentPart; warning?: string } {
+  const trimmed = value.trim();
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return { warning: VIDEO_URL_WARNING };
+  }
+
+  const dataUrlMatch = trimmed.match(/^data:([^;]+);base64,(.+)$/i);
+  if (dataUrlMatch) {
+    const [, mediaType, data] = dataUrlMatch;
+    const resolvedMediaType = resolveStringVideoMediaType(mediaType, data, fallbackMimeType);
+    const content = resolvedMediaType ? createVideoContent(resolvedMediaType, data) : undefined;
+    return content ? { content } : { warning: VIDEO_CONVERSION_WARNING };
+  }
+
+  const base64Match = trimmed.match(/^base64:([^,]+),(.+)$/i);
+  if (base64Match) {
+    const [, explicitMimeType, data] = base64Match;
+    const resolvedMediaType = resolveStringVideoMediaType(explicitMimeType, data, fallbackMimeType);
+    const content = resolvedMediaType ? createVideoContent(resolvedMediaType, data) : undefined;
+    return content ? { content } : { warning: VIDEO_CONVERSION_WARNING };
+  }
+
+  if (fallbackMimeType) {
+    const resolvedMediaType = resolveVideoMediaType(fallbackMimeType, trimmed);
+    if (resolvedMediaType) {
+      const content = createVideoContent(resolvedMediaType, trimmed);
+      if (content) {
+        return { content };
+      }
+    }
+  }
+
+  return { warning: VIDEO_CONVERSION_WARNING };
+}
+
 function convertBinaryToBase64(data: Uint8Array | ArrayBuffer): string | undefined {
   if (typeof Buffer !== 'undefined') {
     const buffer =
@@ -229,39 +333,75 @@ function parseFilePart(part: FileLikePart): FileConversionResult {
 
   switch (fileData.type) {
     case 'data': {
-      if (!mediaType || !isImageMimeType(mediaType)) {
+      if (!mediaType) {
         return { warning: createUnsupportedFilePartWarning(mediaType) };
       }
 
-      if (typeof fileData.data === 'string') {
-        return parseStringImage(fileData.data, mediaType);
+      if (isImageMimeType(mediaType)) {
+        if (typeof fileData.data === 'string') {
+          return parseStringImage(fileData.data, mediaType);
+        }
+
+        const resolvedMediaType = resolveImageMediaType(mediaType, fileData.data);
+        if (!resolvedMediaType) {
+          return { warning: IMAGE_CONVERSION_WARNING };
+        }
+
+        const base64 = convertBinaryToBase64(fileData.data);
+        if (!base64) {
+          return { warning: IMAGE_CONVERSION_WARNING };
+        }
+        const content = createImageContent(resolvedMediaType, base64);
+        return content ? { content } : { warning: IMAGE_CONVERSION_WARNING };
       }
 
-      const resolvedMediaType = resolveImageMediaType(mediaType, fileData.data);
-      if (!resolvedMediaType) {
-        return { warning: IMAGE_CONVERSION_WARNING };
+      if (isVideoMimeType(mediaType)) {
+        if (typeof fileData.data === 'string') {
+          return parseStringVideo(fileData.data, mediaType);
+        }
+
+        const resolvedMediaType = resolveVideoMediaType(mediaType, fileData.data);
+        if (!resolvedMediaType) {
+          return { warning: VIDEO_CONVERSION_WARNING };
+        }
+
+        const base64 = convertBinaryToBase64(fileData.data);
+        if (!base64) {
+          return { warning: VIDEO_CONVERSION_WARNING };
+        }
+        const content = createVideoContent(resolvedMediaType, base64);
+        return content ? { content } : { warning: VIDEO_CONVERSION_WARNING };
       }
 
-      const base64 = convertBinaryToBase64(fileData.data);
-      if (!base64) {
-        return { warning: IMAGE_CONVERSION_WARNING };
-      }
-      const content = createImageContent(resolvedMediaType, base64);
-      return content ? { content } : { warning: IMAGE_CONVERSION_WARNING };
+      return { warning: createUnsupportedFilePartWarning(mediaType) };
     }
 
     case 'url': {
-      if (!mediaType || !isImageMimeType(mediaType)) {
+      if (!mediaType) {
         return { warning: createUnsupportedFilePartWarning(mediaType) };
       }
-      const url = fileData.url.toString();
-      // Only data: URLs carry inline bytes; other schemes (http, file, blob, ...)
-      // must not reach parseStringImage's fallback, which would wrap the URL
-      // string itself as base64 image data.
-      if (!/^data:/i.test(url.trim())) {
-        return { warning: IMAGE_URL_WARNING };
+
+      if (isImageMimeType(mediaType)) {
+        const url = fileData.url.toString();
+        // Only data: URLs carry inline bytes; other schemes (http, file, blob, ...)
+        // must not reach parseStringImage's fallback, which would wrap the URL
+        // string itself as base64 image data.
+        if (!/^data:/i.test(url.trim())) {
+          return { warning: IMAGE_URL_WARNING };
+        }
+        return parseStringImage(url, mediaType);
       }
-      return parseStringImage(url, mediaType);
+
+      if (isVideoMimeType(mediaType)) {
+        const url = fileData.url.toString();
+        // Only data: URLs carry inline bytes; remote video URLs are not fetched.
+        if (!/^data:/i.test(url.trim())) {
+          return { warning: VIDEO_URL_WARNING };
+        }
+        return parseStringVideo(url, mediaType);
+      }
+
+      return { warning: createUnsupportedFilePartWarning(mediaType) };
     }
 
     case 'text':
@@ -376,7 +516,7 @@ function serializeToolResultOutput(
  * ```
  *
  * @remarks
- * - Image parts are collected for streaming input; unsupported variants produce warnings
+ * - Image and video parts are collected for streaming input; unsupported variants produce warnings
  * - Tool calls are serialized one per line as `[Tool call: name({...input})]`
  *   (inputs truncated at 1000 characters), pairing with `Tool Result (name): ...` lines
  * - JSON schema enforcement is handled natively by the SDK's outputFormat option (v0.1.45+)

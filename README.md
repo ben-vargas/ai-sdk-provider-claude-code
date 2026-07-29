@@ -137,7 +137,7 @@ This release ports the provider to AI SDK v7 / `LanguageModelV4`, adds first-cla
 
 Version 4.0.0 intentionally keeps optional provider surfaces absent unless the Claude Agent SDK has a durable provider-reference mapping:
 
-- `ProviderV4.files()` is not implemented yet. The AI SDK interface uploads `{ type: 'data' }` or `{ type: 'text' }` bytes and returns a reusable provider reference, but Claude Agent SDK `0.3.205` exposes no direct upload/reuse API for that contract. This provider forwards inline **image** file parts in prompts; non-image inline files (for example PDFs) emit an unsupported-file call warning and are not forwarded. It does not upload files into durable provider references.
+- `ProviderV4.files()` is not implemented yet. The AI SDK interface uploads `{ type: 'data' }` or `{ type: 'text' }` bytes and returns a reusable provider reference, but Claude Agent SDK `0.3.205` exposes no direct upload/reuse API for that contract. This provider forwards inline **image** and **video** file parts in prompts; other inline files (for example PDFs) emit an unsupported-file call warning and are not forwarded. It does not upload files into durable provider references.
 - Canonical V4 tool-result file parts are replayed into conversation history as text markers like `[File <name>: <mediaType>]`; raw file bytes are not re-sent on replay. Richer tool-result file replay, such as re-sending actual image/file bytes for tool-result file parts, is deferred.
 - `ProviderV4.skills()` is not implemented yet. Claude Code skills are loaded from configured user/project/local skill directories with the existing `skills` setting below; there is no Agent SDK API that uploads a skill bundle and returns an AI SDK provider reference.
 - Workflow serialization is deferred. `@ai-sdk/provider-utils@5.0.5` exposes `WORKFLOW_SERIALIZE`, `WORKFLOW_DESERIALIZE`, and `serializeModelOptions()` for provider model classes in the AI SDK v7 stack, but this provider has not added a serialization contract for provider instances or settings. Callback/function settings such as `canUseTool`, hooks, `logger`, `spawnClaudeCodeProcess`, and `SessionStore` methods are not JSON-serializable and must be recreated by the application.
@@ -574,6 +574,13 @@ See [examples/message-injection.ts](examples/message-injection.ts) for complete 
 - `streamingInput: 'off'` remains an explicit opt-out: image prompts skip the streaming-input path, image parts are omitted, and the provider emits a generic `type: 'other'` image streaming-input warning.
 - Use realistic image payloads—very small placeholders may result in the model asking for a different image.
 - `examples/images.ts` accepts a local image path, reads its bytes, and builds an AI SDK v7 file part: `npx tsx examples/images.ts /absolute/path/to/image.png`.
+
+## Video Inputs
+
+- Video file parts are forwarded inline as base64 `video` content blocks, mirroring the image path. They are sent through the Agent SDK streaming-input path, so `streamingInput: 'auto'` (the default) enables streaming input when video parts are present just as it does for images.
+- Supported payloads include data URLs (`data:video/mp4;base64,...`), strings prefixed with `base64:<mediaType>,<data>`, or AI SDK v7 file parts such as `{ type: 'file', data: { type: 'data', data: '<base64>' }, mediaType: 'video/mp4' }` (use `mediaType`, not `mimeType`).
+- Wildcard media types (`video/*` or `video`) are resolved to a concrete type from the bytes when possible; undetectable payloads warn and are skipped.
+- Remote HTTP(S) video URLs are ignored with the warning "Video URLs are not supported by this provider; supply base64/data URLs." Inline base64/data URLs are required.
 
 ## Skills Support
 

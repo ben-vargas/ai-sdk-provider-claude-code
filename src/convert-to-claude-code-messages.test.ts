@@ -145,7 +145,7 @@ describe('convertToClaudeCodeMessages', () => {
 
     expect(result.messagesPrompt).toBe('Human: Check this file:');
     expect(result.warnings).toContain(
-      'Unsupported file part (application/pdf) was ignored; this provider forwards only image file parts inline.'
+      'Unsupported file part (application/pdf) was ignored; this provider forwards only image and video file parts inline.'
     );
   });
 
