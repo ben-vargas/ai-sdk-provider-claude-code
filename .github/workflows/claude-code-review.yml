@@ -9,7 +9,12 @@ on:
 jobs:
   review-with-tracking:
     runs-on: ubuntu-latest
-    if: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+    # The secrets context is not allowed in a job-level `if` — gating on
+    # secrets.CLAUDE_CODE_OAUTH_TOKEN made the whole workflow file invalid, so
+    # GitHub reported a 0-second "workflow file issue" failure on every push.
+    # Gate on fork PRs instead: forks are exactly the case where the secret is
+    # unavailable, so skip them cleanly rather than fail in the action.
+    if: ${{ !github.event.pull_request.head.repo.fork }}
     permissions:
       contents: read
       pull-requests: write
