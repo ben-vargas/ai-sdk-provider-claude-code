@@ -32,6 +32,7 @@ describe('claudeCodeSettingsSchema', () => {
       maxBudgetUsd: 2.5,
       plugins: [{ type: 'local', path: './plugins/my-plugin' }],
       resumeSessionAt: 'message-uuid',
+      resumeDropsTurn: 'dropped-turn-uuid',
       sandbox: { enabled: true },
       tools: ['Read', 'Write'],
       verbose: true,

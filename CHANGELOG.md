@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0] - 2026-08-10
+
+### Added
+
+- **`resumeDropsTurn` setting** ([#142](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/142)) - Maps the Agent SDK's new `resumeDropsTurn` option: when resuming a session, drop the turn containing the given chain-entry UUID from the restored context (companion to `resumeSessionAt` for forking at a specific point).
+
+### Changed
+
+- **Claude Agent SDK pinned at `0.3.226`** - Bumps the exact `@anthropic-ai/claude-agent-sdk` pin from `0.3.205`, resolving the weekly canary's Options drift guard failure ([#142](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/142)). `resumeDropsTurn` was the only new `Options` key; typecheck and the unit suite pass against the new pin.
+
 ## [4.0.1] - 2026-07-10
 
 ### Fixed

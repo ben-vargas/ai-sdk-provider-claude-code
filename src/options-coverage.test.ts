@@ -53,6 +53,7 @@ type MappedKey =
   | 'maxBudgetUsd'
   | 'plugins'
   | 'resumeSessionAt'
+  | 'resumeDropsTurn'
   | 'sandbox'
   | 'tools'
   | 'mcpServers'
