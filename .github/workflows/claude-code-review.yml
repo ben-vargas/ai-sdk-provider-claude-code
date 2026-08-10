@@ -12,9 +12,12 @@ jobs:
     # The secrets context is not allowed in a job-level `if` — gating on
     # secrets.CLAUDE_CODE_OAUTH_TOKEN made the whole workflow file invalid, so
     # GitHub reported a 0-second "workflow file issue" failure on every push.
-    # Gate on fork PRs instead: forks are exactly the case where the secret is
-    # unavailable, so skip them cleanly rather than fail in the action.
-    if: ${{ !github.event.pull_request.head.repo.fork }}
+    # Gate on the cases where secrets are actually withheld instead, so they
+    # skip cleanly rather than fail in the action: fork PRs, and runs
+    # triggered by Dependabot (its branches are same-repo so the fork check
+    # misses them; the actor check still lets the review run when a human
+    # triggers the workflow on a Dependabot PR, e.g. via the labeled event).
+    if: ${{ !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}
     permissions:
       contents: read
       pull-requests: write
