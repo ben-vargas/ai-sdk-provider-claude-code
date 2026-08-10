@@ -20,7 +20,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   upstream-sdk-drift:
@@ -32,14 +31,24 @@ jobs:
       matrix:
         node-version: [22.x, 24.x]
 
+    # Consumed by the file-drift-issue job below. For matrix jobs the last
+    # leg to write a non-empty value wins; both legs test the same resolved
+    # @latest, and drift/failed-step are only written on a real drift failure,
+    # so a leg that passed (or failed on infra) cannot clobber a drift signal.
+    outputs:
+      sdk-version: ${{ steps.outcome.outputs.sdk-version }}
+      pinned-range: ${{ steps.outcome.outputs.pinned-range }}
+      drift: ${{ steps.outcome.outputs.drift }}
+      failed-step: ${{ steps.outcome.outputs.failed-step }}
+
     steps:
       - uses: actions/checkout@v6
         with:
-          # The job has issues:write. Do NOT persist the token into git config —
-          # a lifecycle script in the unpinned @latest SDK (or a transitive dep)
-          # installed below could otherwise read it and abuse the write scope.
-          # The issue-filing step uses the Actions-provided GITHUB_TOKEN, not the
-          # git-persisted credential, so it still works.
+          # Defense in depth: do not persist the token into git config, so a
+          # lifecycle script in the unpinned @latest SDK (or a transitive dep)
+          # installed below cannot read a credential from disk. (This job also
+          # deliberately holds no write scopes — issue filing lives in the
+          # separate file-drift-issue job.)
           persist-credentials: false
 
       - name: Use Node.js ${{ matrix.node-version }}
@@ -53,7 +62,7 @@ jobs:
 
       - name: Install @anthropic-ai/claude-agent-sdk@latest (not saved)
         # --ignore-scripts: do not run lifecycle scripts from the unpinned
-        # @latest package or its transitive deps in a job that holds issues:write.
+        # @latest package or its transitive deps.
         run: npm install --no-save --ignore-scripts @anthropic-ai/claude-agent-sdk@latest
 
       - name: Print resolved SDK version
@@ -72,34 +81,56 @@ jobs:
         id: tests
         run: npm run test
 
-      # On failure, file (or update) a tracking issue so drift is logged
-      # actionably instead of vanishing into a notification email.
-      # Gated on the typecheck/test steps so infra failures (npm ci or the
-      # @latest install flaking) are not misreported as upstream SDK drift —
-      # in that case node_modules would still hold the PINNED version.
-      - name: File or update SDK drift issue
-        if: failure() && (steps.typecheck.outcome == 'failure' || steps.tests.outcome == 'failure')
-        uses: actions/github-script@v8
+      # Record whether this leg saw real SDK drift (vs an infra failure such
+      # as npm ci or the @latest install flaking, which must not be
+      # misreported — in that case node_modules would still hold the PINNED
+      # version and neither guarded step has a 'failure' outcome).
+      - name: Record drift outcome
+        id: outcome
+        if: always()
+        run: |
+          {
+            echo "sdk-version=$(node -e "console.log(require('./node_modules/@anthropic-ai/claude-agent-sdk/package.json').version)" 2>/dev/null || echo unknown)"
+            echo "pinned-range=$(node -e "console.log(require('./package.json').dependencies['@anthropic-ai/claude-agent-sdk'])" 2>/dev/null || echo unknown)"
+          } >> "$GITHUB_OUTPUT"
+          if [ "${{ steps.typecheck.outcome }}" = "failure" ]; then
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            echo "failed-step=typecheck" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.tests.outcome }}" = "failure" ]; then
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            echo "failed-step=unit tests" >> "$GITHUB_OUTPUT"
+          fi
+
+  # On drift, file (or update) a single tracking issue for the whole run so
+  # drift is logged actionably instead of vanishing into a notification email.
+  # This runs ONCE, after both matrix legs finish — filing from inside the
+  # matrix raced: legs failing simultaneously each looked for the tracking
+  # issue before either had created it, and filed duplicates (#141/#142).
+  file-drift-issue:
+    name: File or update SDK drift issue
+    needs: upstream-sdk-drift
+    if: always() && needs.upstream-sdk-drift.outputs.drift == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+
+    steps:
+      - uses: actions/github-script@v8
+        env:
+          SDK_VERSION: ${{ needs.upstream-sdk-drift.outputs.sdk-version }}
+          PINNED_RANGE: ${{ needs.upstream-sdk-drift.outputs.pinned-range }}
+          FAILED_STEP: ${{ needs.upstream-sdk-drift.outputs.failed-step }}
         with:
           script: |
-            const fs = require('fs');
-            let sdkVersion = 'unknown';
-            try {
-              sdkVersion = JSON.parse(
-                fs.readFileSync('node_modules/@anthropic-ai/claude-agent-sdk/package.json', 'utf8')
-              ).version;
-            } catch {}
             const title = 'SDK canary failing against @anthropic-ai/claude-agent-sdk@latest';
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const failedStep =
-              '${{ steps.typecheck.outcome }}' === 'failure' ? 'typecheck' : 'unit tests';
             const body = [
-              `The weekly canary failed against \`@anthropic-ai/claude-agent-sdk@${sdkVersion}\`.`,
+              `The weekly canary failed against \`@anthropic-ai/claude-agent-sdk@${process.env.SDK_VERSION}\`.`,
               '',
               `- Run: ${runUrl}`,
-              `- Failed step: ${failedStep}`,
-              `- Node: ${{ matrix.node-version }}`,
-              `- Pinned range: \`${JSON.parse(fs.readFileSync('package.json', 'utf8')).dependencies['@anthropic-ai/claude-agent-sdk']}\``,
+              `- Failed step: ${process.env.FAILED_STEP}`,
+              `- Pinned range: \`${process.env.PINNED_RANGE}\``,
               '',
               'A failure here means **upstream SDK drift** — typecheck (including guards in',
               '`src/options-coverage.test.ts`) or unit tests broke against `@latest`, not a',
