@@ -13,6 +13,7 @@ For a runnable end-to-end walkthrough, see [examples/session-management.ts](../e
 | `sessionId`       | `string`  | Use a specific session ID for a **new** session (deterministic tracking/correlation). Must be a UUID.                                                             |
 | `resume`          | `string`  | Resume an existing session by ID. The conversation context is restored from the persisted transcript.                                                             |
 | `resumeSessionAt` | `string`  | When resuming, restore the session only up to a specific message UUID (later messages are discarded from context).                                                |
+| `resumeDropsTurn` | `string`  | When resuming, drop the turn containing this chain-entry UUID from the restored context. Use with `resume`; fork at the kept turn's last chain-entry UUID.         |
 | `forkSession`     | `boolean` | When resuming, fork to a **new** session ID instead of continuing under the original ID (combine with `sessionId` to choose the fork's ID).                       |
 | `continue`        | `boolean` | Continue the most recent conversation for the working directory, without needing its ID.                                                                          |
 | `persistSession`  | `boolean` | When `false`, the session is not written to `~/.claude/projects/` and cannot be resumed or inspected later. Useful for ephemeral workflows. Default `true`.       |

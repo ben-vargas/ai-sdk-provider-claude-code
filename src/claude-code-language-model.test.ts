@@ -710,6 +710,7 @@ describe('ClaudeCodeLanguageModel', () => {
           maxBudgetUsd: 2,
           plugins: [{ type: 'local', path: './plugins/example' }],
           resumeSessionAt: 'message-uuid',
+          resumeDropsTurn: 'dropped-turn-uuid',
           sandbox: { enabled: true },
           tools: ['Read'],
           sdkOptions: {
@@ -742,6 +743,7 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.maxBudgetUsd).toBe(2);
       expect(call?.options?.plugins).toEqual([{ type: 'local', path: './plugins/example' }]);
       expect(call?.options?.resumeSessionAt).toBe('message-uuid');
+      expect(call?.options?.resumeDropsTurn).toBe('dropped-turn-uuid');
       expect(call?.options?.sandbox).toEqual({ enabled: true });
       expect(call?.options?.tools).toEqual(['Read']);
       expect(call?.options?.allowDangerouslySkipPermissions).toBe(true);

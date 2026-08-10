@@ -130,6 +130,7 @@ export const claudeCodeSettingsSchema = z
       )
       .optional(),
     resumeSessionAt: z.string().optional(),
+    resumeDropsTurn: z.string().optional(),
     sandbox: z
       .any()
       .refine((val) => val === undefined || typeof val === 'object', {

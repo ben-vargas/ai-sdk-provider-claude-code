@@ -53,7 +53,7 @@ import type {
  * Provider version reported to the Agent SDK via CLAUDE_AGENT_SDK_CLIENT_APP.
  * Keep in sync with package.json (kept as a constant to avoid a build step).
  */
-const PROVIDER_VERSION = '4.0.1';
+const PROVIDER_VERSION = '4.1.0';
 const DEFAULT_CLIENT_APP = `ai-sdk-provider-claude-code/${PROVIDER_VERSION}`;
 
 const CLAUDE_CODE_TRUNCATION_WARNING =
@@ -1916,6 +1916,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
       maxBudgetUsd: this.settings.maxBudgetUsd,
       plugins: this.settings.plugins,
       resumeSessionAt: this.settings.resumeSessionAt,
+      resumeDropsTurn: this.settings.resumeDropsTurn,
       sandbox: this.settings.sandbox,
       tools: this.settings.tools,
       mcpServers: this.settings.mcpServers,

@@ -397,6 +397,12 @@ export interface ClaudeCodeSettings {
   resumeSessionAt?: string;
 
   /**
+   * When resuming, drop the turn containing this chain-entry UUID (use with
+   * `resume`; see the SDK docs for choosing the fork point).
+   */
+  resumeDropsTurn?: string;
+
+  /**
    * Configure sandbox behavior programmatically.
    *
    * Cannot be combined with a `settings` FILE PATH (the SDK throws at query
