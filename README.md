@@ -137,11 +137,11 @@ This release ports the provider to AI SDK v7 / `LanguageModelV4`, adds first-cla
 
 Version 4.0.0 intentionally keeps optional provider surfaces absent unless the Claude Agent SDK has a durable provider-reference mapping:
 
-- `ProviderV4.files()` is not implemented yet. The AI SDK interface uploads `{ type: 'data' }` or `{ type: 'text' }` bytes and returns a reusable provider reference, but Claude Agent SDK `0.3.205` exposes no direct upload/reuse API for that contract. This provider forwards inline **image** file parts in prompts; non-image inline files (for example PDFs) emit an unsupported-file call warning and are not forwarded. It does not upload files into durable provider references.
+- `ProviderV4.files()` is not implemented yet. The AI SDK interface uploads `{ type: 'data' }` or `{ type: 'text' }` bytes and returns a reusable provider reference, but Claude Agent SDK `0.3.232` exposes no direct upload/reuse API for that contract. This provider forwards inline **image** file parts in prompts; non-image inline files (for example PDFs) emit an unsupported-file call warning and are not forwarded. It does not upload files into durable provider references.
 - Canonical V4 tool-result file parts are replayed into conversation history as text markers like `[File <name>: <mediaType>]`; raw file bytes are not re-sent on replay. Richer tool-result file replay, such as re-sending actual image/file bytes for tool-result file parts, is deferred.
 - `ProviderV4.skills()` is not implemented yet. Claude Code skills are loaded from configured user/project/local skill directories with the existing `skills` setting below; there is no Agent SDK API that uploads a skill bundle and returns an AI SDK provider reference.
-- Workflow serialization is deferred. `@ai-sdk/provider-utils@5.0.5` exposes `WORKFLOW_SERIALIZE`, `WORKFLOW_DESERIALIZE`, and `serializeModelOptions()` for provider model classes in the AI SDK v7 stack, but this provider has not added a serialization contract for provider instances or settings. Callback/function settings such as `canUseTool`, hooks, `logger`, `spawnClaudeCodeProcess`, and `SessionStore` methods are not JSON-serializable and must be recreated by the application.
-- V4 `custom` and `reasoning-file` parts are not emitted as provider output yet. Claude Agent SDK `0.3.205` has no durable reasoning-file artifact output that maps to AI SDK `reasoning-file`; assistant-history `custom` and `reasoning-file` parts have no Claude Code replay representation and are skipped (unknown unsupported content variants still warn).
+- Workflow serialization is deferred. `@ai-sdk/provider-utils@5.0.27` exposes `WORKFLOW_SERIALIZE`, `WORKFLOW_DESERIALIZE`, and `serializeModelOptions()` for provider model classes in the AI SDK v7 stack, but this provider has not added a serialization contract for provider instances or settings. Callback/function settings such as `canUseTool`, hooks, `logger`, `spawnClaudeCodeProcess`, and `SessionStore` methods are not JSON-serializable and must be recreated by the application.
+- V4 `custom` and `reasoning-file` parts are not emitted as provider output yet. Claude Agent SDK `0.3.232` has no durable reasoning-file artifact output that maps to AI SDK `reasoning-file`; assistant-history `custom` and `reasoning-file` parts have no Claude Code replay representation and are skipped (unknown unsupported content variants still warn).
 
 ### Version 3.0.0 (AI SDK v6 Stable)
 
@@ -475,7 +475,7 @@ const model = claudeCode('sonnet', {
 
 ## Claude Agent SDK 0.3.x Notes
 
-This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.205` (exact pin). The pin is exact rather than a caret because upstream releases have shipped broken `sdk.d.ts` declarations before (0.3.198–0.3.202 collapsed `SDKMessage` to `any`, fixed in 0.3.203); the weekly canary gates each pin move. The 0.3.x line introduces a few changes worth knowing about:
+This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.232` (exact pin). The pin is exact rather than a caret because upstream releases have shipped broken `sdk.d.ts` declarations before (0.3.198–0.3.202 collapsed `SDKMessage` to `any`, fixed in 0.3.203); the weekly canary gates each pin move. The 0.3.x line introduces a few changes worth knowing about:
 
 ### New peer dependencies
 
