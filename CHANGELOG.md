@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.1] - 2026-08-14
+
+### Changed
+
+- **Claude Agent SDK pinned at `0.3.232`** - Bumps the exact `@anthropic-ai/claude-agent-sdk` pin from `0.3.226` to current npm `latest`. `keyof Options` is unchanged (64 keys; last new key remains `resumeDropsTurn`). No video content block. Do not use `0.3.233` / dist-tag `next`.
+- **AI SDK dependency pins refreshed** - `@ai-sdk/provider` `^4.0.2` → `^4.0.7`, `@ai-sdk/provider-utils` `^5.0.5` → `^5.0.27`, and `ai` (devDependency) `^7.0.16` → `^7.0.66`. Hygiene/CLI-parity only; no LanguageModelV4 or ProviderV4 contract change and no video input.
+
 ## [4.1.0] - 2026-08-10
 
 ### Added
