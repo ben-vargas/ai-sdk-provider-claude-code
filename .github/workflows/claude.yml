@@ -61,7 +61,7 @@ jobs:
           # No --model: defer to the Claude Code default for the account
           # (currently Opus 5), so model retirements never break this job.
           claude_args: |
-            --max-turns 25
+            --max-turns 40
 
           # Optional: Advanced settings configuration
           # settings: |
