@@ -352,6 +352,30 @@ describe('Error Detection Functions', () => {
       expect(isAccountStateError({ data: { errorKind: 'billing_error' } })).toBe(false);
     });
 
+    it.each(['account_on_hold', 'billing_error'])(
+      'should veto isAuthenticationError for kind %s even with exit code 401',
+      (errorKind) => {
+        const error = createAPICallError({
+          message: 'Request failed with status 401',
+          errorKind,
+          exitCode: 401,
+        });
+
+        expect(isAccountStateError(error)).toBe(true);
+        expect(isAuthenticationError(error)).toBe(false);
+      }
+    );
+
+    it('should leave plain exit-code-401 errors classified as authentication', () => {
+      const error = createAPICallError({
+        message: 'Unauthorized',
+        exitCode: 401,
+      });
+
+      expect(isAuthenticationError(error)).toBe(true);
+      expect(isAccountStateError(error)).toBe(false);
+    });
+
     it('should not cross-classify with authentication or timeout checks', () => {
       const accountStateError = createAPICallError({
         message: 'Account on hold',

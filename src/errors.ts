@@ -226,6 +226,12 @@ export function createTimeoutError({
  * Checks if an error is an authentication error.
  * Returns true for LoadAPIKeyError instances or APICallError with exit code 401.
  *
+ * Account-state errors (structured kind 'account_on_hold' or 'billing_error')
+ * always return false, even when the metadata carries exit code 401: the exit
+ * code is preserved as a diagnostic, but the structured account-state kind
+ * vetoes authentication classification — re-authenticating cannot resolve
+ * those errors. Use {@link isAccountStateError} to detect them.
+ *
  * @param error - The error to check
  * @returns True if the error is an authentication error
  *
@@ -242,6 +248,7 @@ export function createTimeoutError({
  */
 export function isAuthenticationError(error: unknown): boolean {
   if (error instanceof LoadAPIKeyError) return true;
+  if (isAccountStateError(error)) return false;
   if (error instanceof APICallError && (error.data as ClaudeCodeErrorMetadata)?.exitCode === 401)
     return true;
   return false;
