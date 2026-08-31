@@ -14,6 +14,12 @@ import type {
   ProvenanceEntry,
   ResolvedSettingSource,
   PolicySettingsOrigin,
+  HookInput,
+  PreModelSwitchHookInput,
+  PostModelSwitchHookInput,
+  DirectoryAddedHookInput,
+  PreModelSwitchHookSpecificOutput,
+  PostModelSwitchHookSpecificOutput,
 } from './index.js';
 
 type SdkCallbackSettingsOptions = Pick<
@@ -42,6 +48,20 @@ type SdkCallbackExportedTypes = [
 ];
 
 const sdkCallbackExportedTypesCompileCheck: SdkCallbackExportedTypes | null = null;
+
+// Compile-time check that the hook types added through SDK 0.3.251 are
+// re-exported from the package entry point and stay members of the HookInput
+// union (runtime HOOK_EVENTS assertions cannot see type-only exports).
+type MemberOfHookInput<T extends HookInput> = T;
+type HookSurfaceExportedTypes = [
+  MemberOfHookInput<PreModelSwitchHookInput>,
+  MemberOfHookInput<PostModelSwitchHookInput>,
+  MemberOfHookInput<DirectoryAddedHookInput>,
+  PreModelSwitchHookSpecificOutput,
+  PostModelSwitchHookSpecificOutput,
+];
+
+const hookSurfaceExportedTypesCompileCheck: HookSurfaceExportedTypes | null = null;
 
 describe('index exports', () => {
   it('should export all expected functions and types', () => {
@@ -84,6 +104,9 @@ describe('index exports', () => {
     expect(indexExports.HOOK_EVENTS).toBeDefined();
     expect(Array.isArray(indexExports.HOOK_EVENTS)).toBe(true);
     expect(indexExports.HOOK_EVENTS).toContain('PreToolUse');
+    expect(indexExports.HOOK_EVENTS).toContain('PreModelSwitch');
+    expect(indexExports.HOOK_EVENTS).toContain('PostModelSwitch');
+    expect(indexExports.HOOK_EVENTS).toContain('DirectoryAdded');
     expect(indexExports.AbortError).toBeDefined();
     expect(typeof indexExports.AbortError).toBe('function');
 
@@ -126,5 +149,9 @@ describe('index exports', () => {
 
   it('should export Agent SDK callback and controller public types', () => {
     expect(sdkCallbackExportedTypesCompileCheck).toBeNull();
+  });
+
+  it('should export the SDK 0.3.251 hook surface types', () => {
+    expect(hookSurfaceExportedTypesCompileCheck).toBeNull();
   });
 });

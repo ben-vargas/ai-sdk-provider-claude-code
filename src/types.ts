@@ -501,6 +501,23 @@ export interface ClaudeCodeSettings {
   includeHookEvents?: boolean;
 
   /**
+   * Declare that the host application renders a per-task stop control wired
+   * to `stopTask` (via the raw `Query` or `ClaudeCodeQueryController`), so an
+   * interrupt on a live open-input query spares running background tasks and
+   * only aborts the current turn.
+   *
+   * This is a capability assertion, not a feature toggle: set `true` only when
+   * the host actually exposes per-task stop controls to the user. It does not
+   * enable streaming input, and it is only meaningful while an open-input
+   * query is live (`streamingInput: 'auto' | 'always'`); the provider closes
+   * streaming input when the terminal result arrives, and one-shot
+   * (closed-input) runs kill held-back background tasks on interrupt
+   * regardless of this declaration. When unset, the SDK fails closed: an
+   * interrupt kills background tasks.
+   */
+  perTaskStopAffordance?: boolean;
+
+  /**
    * Callback invoked for every raw Agent SDK message emitted by the query.
    * Use this as a forward-compatible escape hatch when the provider does not
    * yet expose a dedicated callback or metadata field for a new SDK subtype.

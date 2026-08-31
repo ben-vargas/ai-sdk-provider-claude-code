@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] - 2026-08-31
+
+### Added
+
+- **`perTaskStopAffordance` setting** ([#153](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/153)) - Maps the Agent SDK's new `perTaskStopAffordance` option: a capability assertion that the host app renders per-task stop controls wired to `stopTask()`, so an interrupt on a live open-input query spares running background tasks and only aborts the current turn. Unset means the SDK's fail-closed default (interrupt kills background tasks); one-shot (closed-input) requests kill held-back tasks on interrupt regardless.
+- **Completed hook type re-exports** - Re-exports `PreModelSwitchHookInput`, `PostModelSwitchHookInput`, `PreModelSwitchHookSpecificOutput`, and `PostModelSwitchHookSpecificOutput` (new in SDK 0.3.251) plus the previously missing `DirectoryAddedHookInput`, restoring the "every member of the SDK `HookInput` union" guarantee, with a compile-time entry-point check.
+
+### Changed
+
+- **Claude Agent SDK pinned at `0.3.251`** - Bumps the exact `@anthropic-ai/claude-agent-sdk` pin from `0.3.232`, resolving the weekly canary's Options drift guard failure ([#153](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/153)). `perTaskStopAffordance` was the only new `Options` key (64 → 65); typecheck and the unit suite pass against the new pin.
+
+### Inherited upstream behavior changes
+
+- Because this bump replaces the bundled Agent SDK runtime, 0.3.232 → 0.3.251 behavior changes are inherited. Notably, an `AgentDefinition` that omits `model` now uses a configured default subagent model before falling back to the parent model. New hook events `PreModelSwitch`/`PostModelSwitch` and the `account_on_hold` assistant error kind (currently mapped to a generic non-retryable error, like `billing_error`) also arrive with this runtime.
+
 ## [4.1.1] - 2026-08-14
 
 ### Changed

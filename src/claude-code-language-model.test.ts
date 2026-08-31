@@ -825,6 +825,72 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.includeHookEvents).toBe(true);
     });
 
+    it.each([true, false])(
+      'should forward perTaskStopAffordance: %s (explicit false preserved)',
+      async (value) => {
+        const model = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: { perTaskStopAffordance: value },
+        });
+
+        const mockResponse = {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 's-per-task-stop',
+              usage: { input_tokens: 0, output_tokens: 0 },
+            };
+          },
+        };
+        vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
+
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+
+        const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        expect(call?.options?.perTaskStopAffordance).toBe(value);
+      }
+    );
+
+    it('should omit perTaskStopAffordance when unset and let sdkOptions override it', async () => {
+      const modelUnset = new ClaudeCodeLanguageModel({ id: 'sonnet', settings: {} });
+      const modelOverridden = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: {
+          perTaskStopAffordance: false,
+          sdkOptions: { perTaskStopAffordance: true },
+        } as any,
+      });
+
+      const mockResponse = () => ({
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-per-task-stop-2',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      });
+
+      vi.mocked(mockQuery).mockReturnValue(mockResponse() as any);
+      await modelUnset.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+      const unsetCall = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect('perTaskStopAffordance' in (unsetCall?.options ?? {})).toBe(false);
+
+      vi.mocked(mockQuery).mockClear();
+      vi.mocked(mockQuery).mockReturnValue(mockResponse() as any);
+      await modelOverridden.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+      const overriddenCall = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      expect(overriddenCall?.options?.perTaskStopAffordance).toBe(true);
+    });
+
     it('should pass through onUserDialog and supportedDialogKinds', async () => {
       const onUserDialog = vi.fn(async () => ({ behavior: 'cancelled' as const }));
       const modelWithDialogs = new ClaudeCodeLanguageModel({
