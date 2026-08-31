@@ -58,8 +58,9 @@ jobs:
           # Note: --allowedTools is intentionally omitted to preserve access to all
           # default tools (Read, Edit, Write, Glob, Grep, etc.). Specifying it acts
           # as a full allowlist and would block core file tools.
+          # No --model: defer to the Claude Code default for the account
+          # (currently Opus 5), so model retirements never break this job.
           claude_args: |
-            --model claude-opus-4-6
             --max-turns 25
 
           # Optional: Advanced settings configuration
