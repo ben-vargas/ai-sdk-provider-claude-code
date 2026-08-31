@@ -725,6 +725,32 @@ try {
 
 The metadata accessor returns the full captured stderr, capped at 4000 characters. Authentication and timeout failures are also classified when the only evidence is in stderr, using high-precision matching to avoid false positives from unrelated stderr output.
 
+When the Agent SDK reports a structured assistant error kind (`SDKAssistantMessageError`, e.g. `'account_on_hold'`, `'billing_error'`, `'overloaded'`, `'rate_limit'`), `getErrorMetadata()` returns it as `errorKind` on every mapped error path — and `undefined` otherwise: heuristic classifications from message/stderr text never fabricate one. Check the value (not key presence), and prefer `getErrorMetadata(error)` over casting `error.data` directly. Unrecognized future kinds fall through to the existing message/stderr/exit-code heuristics and land on the generic non-retryable path only when no heuristic matches — either way the kind remains visible in `errorKind`.
+
+Account-state failures — `account_on_hold` and `billing_error` — map to non-retryable `APICallError`s with actionable guidance. They are **not** credential failures: re-authenticating will not fix them; resolve the hold or billing issue in the [Anthropic Console](https://console.anthropic.com). Check for them with `isAccountStateError()` **before** the authentication branch:
+
+```ts
+import { generateText } from 'ai';
+import {
+  claudeCode,
+  getErrorMetadata,
+  isAccountStateError,
+  isAuthenticationError,
+} from 'ai-sdk-provider-claude-code';
+
+try {
+  await generateText({ model: claudeCode('sonnet'), prompt: 'Hello!' });
+} catch (error) {
+  if (isAccountStateError(error)) {
+    // Account-state problem — fix in the Anthropic Console, do not re-authenticate
+    const kind = getErrorMetadata(error)?.errorKind; // 'account_on_hold' | 'billing_error'
+    console.error(kind === 'account_on_hold' ? 'Account on hold' : 'Billing problem');
+  } else if (isAuthenticationError(error)) {
+    console.error('Re-authenticate the Claude Code SDK');
+  }
+}
+```
+
 ## Tool Error Parity (Streaming)
 
 - AI SDK v7 represents failed tool executions with the standard `tool-result` stream event/part and `isError: true`.

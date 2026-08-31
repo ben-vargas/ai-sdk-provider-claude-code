@@ -3,6 +3,8 @@ import * as indexExports from './index.js';
 import * as providerExports from './claude-code-provider.js';
 import * as errorExports from './errors.js';
 import type {
+  ClaudeCodeErrorMetadata,
+  SDKAssistantMessageError,
   ClaudeCodeSettings,
   ClaudeCodeHookEvent,
   ClaudeCodeMcpStatusEvent,
@@ -63,6 +65,15 @@ type HookSurfaceExportedTypes = [
 
 const hookSurfaceExportedTypesCompileCheck: HookSurfaceExportedTypes | null = null;
 
+// Compile-time check that the re-exported ClaudeCodeErrorMetadata keeps
+// `errorKind` open (`string`, not the SDK union) so future SDK kinds flow
+// through without a type-level break, and that the SDK's current known-value
+// union is importable from the package entry point.
+const openErrorKindCompileCheck: ClaudeCodeErrorMetadata = {
+  errorKind: 'future_sdk_kind',
+};
+const sdkAssistantMessageErrorCompileCheck: SDKAssistantMessageError | null = null;
+
 describe('index exports', () => {
   it('should export all expected functions and types', () => {
     // Provider exports
@@ -83,6 +94,8 @@ describe('index exports', () => {
     expect(typeof indexExports.isAuthenticationError).toBe('function');
     expect(indexExports.isTimeoutError).toBeDefined();
     expect(typeof indexExports.isTimeoutError).toBe('function');
+    expect(indexExports.isAccountStateError).toBeDefined();
+    expect(typeof indexExports.isAccountStateError).toBe('function');
     expect(indexExports.getErrorMetadata).toBeDefined();
     expect(typeof indexExports.getErrorMetadata).toBe('function');
     expect(indexExports.createAPICallError).toBeDefined();
@@ -145,6 +158,7 @@ describe('index exports', () => {
     expect(indexExports.claudeCode).toBe(providerExports.claudeCode);
     expect(indexExports.isAuthenticationError).toBe(errorExports.isAuthenticationError);
     expect(indexExports.isTimeoutError).toBe(errorExports.isTimeoutError);
+    expect(indexExports.isAccountStateError).toBe(errorExports.isAccountStateError);
   });
 
   it('should export Agent SDK callback and controller public types', () => {
@@ -153,5 +167,10 @@ describe('index exports', () => {
 
   it('should export the SDK 0.3.251 hook surface types', () => {
     expect(hookSurfaceExportedTypesCompileCheck).toBeNull();
+  });
+
+  it('should keep errorKind open and re-export SDKAssistantMessageError', () => {
+    expect(openErrorKindCompileCheck.errorKind).toBe('future_sdk_kind');
+    expect(sdkAssistantMessageErrorCompileCheck).toBeNull();
   });
 });

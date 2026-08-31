@@ -45,6 +45,22 @@ export interface ClaudeCodeErrorMetadata {
   code?: string;
 
   /**
+   * Structured assistant error kind reported by the Claude Agent SDK
+   * (`SDKAssistantMessageError`), e.g. 'account_on_hold', 'billing_error',
+   * 'overloaded', 'rate_limit', 'model_not_found', 'authentication_failed'.
+   *
+   * Holds a defined value only when the SDK delivered the kind structurally
+   * on the failing assistant message; errors classified purely from
+   * message/stderr text, process state, or exit codes read as `undefined`
+   * (the property may exist with an `undefined` value, like the other
+   * fields in this metadata envelope — check the value, not key presence).
+   * Typed as `string` (not the SDK union) so new SDK kinds flow through
+   * without a type-level break; treat unrecognized values as a generic
+   * failure.
+   */
+  errorKind?: string;
+
+  /**
    * Exit code from the Claude Code SDK process.
    * Common codes:
    * - 401: Authentication error
@@ -71,6 +87,7 @@ export interface ClaudeCodeErrorMetadata {
  * @param options - Error details and metadata
  * @param options.message - Human-readable error message
  * @param options.code - Error code from the CLI process
+ * @param options.errorKind - Structured SDK assistant error kind, when reported
  * @param options.exitCode - Exit code from the CLI
  * @param options.stderr - Standard error output
  * @param options.promptExcerpt - Excerpt of the prompt that caused the error
@@ -89,6 +106,7 @@ export interface ClaudeCodeErrorMetadata {
 export function createAPICallError({
   message,
   code,
+  errorKind,
   exitCode,
   stderr,
   promptExcerpt,
@@ -99,6 +117,7 @@ export function createAPICallError({
 }): APICallError {
   const metadata: ClaudeCodeErrorMetadata = {
     code,
+    errorKind,
     exitCode,
     stderr,
     promptExcerpt,
@@ -123,6 +142,7 @@ export function createAPICallError({
  *
  * @param options - Error configuration
  * @param options.message - Error message describing the authentication failure
+ * @param options.errorKind - Structured SDK assistant error kind, when reported
  * @returns A LoadAPIKeyError instance
  *
  * @example
@@ -135,16 +155,21 @@ export function createAPICallError({
 export function createAuthenticationError({
   message,
   stderr,
+  errorKind,
 }: {
   message: string;
   stderr?: string;
+  errorKind?: string;
 }): LoadAPIKeyError {
   const error = new LoadAPIKeyError({
     message:
       message || 'Authentication failed. Please ensure Claude Code SDK is properly authenticated.',
   });
-  if (stderr) {
-    (error as LoadAPIKeyError & { data?: ClaudeCodeErrorMetadata }).data = { stderr };
+  if (stderr || errorKind !== undefined) {
+    (error as LoadAPIKeyError & { data?: ClaudeCodeErrorMetadata }).data = {
+      ...(stderr && { stderr }),
+      ...(errorKind !== undefined && { errorKind }),
+    };
   }
   return error;
 }
@@ -156,6 +181,7 @@ export function createAuthenticationError({
  * @param options.message - Error message describing the timeout
  * @param options.promptExcerpt - Excerpt of the prompt that timed out
  * @param options.timeoutMs - Timeout duration in milliseconds
+ * @param options.errorKind - Structured SDK assistant error kind, when reported
  * @returns An APICallError instance configured as a timeout error
  *
  * @example
@@ -171,15 +197,18 @@ export function createTimeoutError({
   stderr,
   promptExcerpt,
   timeoutMs,
+  errorKind,
 }: {
   message: string;
   stderr?: string;
   promptExcerpt?: string;
   timeoutMs?: number;
+  errorKind?: string;
 }): APICallError {
   // Store timeoutMs in metadata for potential use by error handlers
   const metadata: ClaudeCodeErrorMetadata = {
     code: 'TIMEOUT',
+    errorKind,
     stderr,
     promptExcerpt,
   };
@@ -240,6 +269,37 @@ export function isTimeoutError(error: unknown): boolean {
   if (error instanceof APICallError && (error.data as ClaudeCodeErrorMetadata)?.code === 'TIMEOUT')
     return true;
   return false;
+}
+
+/**
+ * Checks if an error is an account-state error (billing hold or billing
+ * failure on the Anthropic account). These are not credential problems:
+ * re-authenticating will not resolve them — the account must be fixed in
+ * the Anthropic Console (https://console.anthropic.com).
+ *
+ * Returns true exactly when the provider classified the error as
+ * account-state, which happens if and only if the metadata carries the
+ * structured SDK error kind 'account_on_hold' or 'billing_error' on an
+ * APICallError. Message text and stderr are intentionally not inspected.
+ *
+ * @param error - The error to check
+ * @returns True if the error is an account-state error
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await model.generate(...);
+ * } catch (error) {
+ *   if (isAccountStateError(error)) {
+ *     console.log('Resolve the billing issue or hold in the Anthropic Console');
+ *   }
+ * }
+ * ```
+ */
+export function isAccountStateError(error: unknown): boolean {
+  if (!(error instanceof APICallError)) return false;
+  const kind = (error.data as ClaudeCodeErrorMetadata | undefined)?.errorKind;
+  return kind === 'account_on_hold' || kind === 'billing_error';
 }
 
 /**

@@ -9,16 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`errorKind` on `ClaudeCodeErrorMetadata`** ([#155](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/155)) - The structured SDK assistant error kind (`SDKAssistantMessageError`, e.g. `'account_on_hold'`, `'billing_error'`, `'overloaded'`) is now preserved on every mapped error path: authentication `LoadAPIKeyError`s, timeouts, retryable overload/rate-limit errors, model-not-found, and the generic fallback. The field is set only when the SDK delivered the kind structurally — heuristic (message/stderr text) classifications never fabricate one. Typed as open `string` so future SDK kinds flow through without a type-level break.
+- **`isAccountStateError()` helper** ([#155](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/155)) - Returns true exactly when the metadata carries the structured kind `'account_on_hold'` or `'billing_error'` on an `APICallError`. These are account-state problems resolved in the Anthropic Console, not credential problems — they are `APICallError`, never `LoadAPIKeyError`, and never satisfy `isAuthenticationError()`.
+- **`SDKAssistantMessageError` type re-export** - The SDK's current known-value union of structured assistant error kinds, for consumers narrowing `errorKind`.
+- **Actionable `account_on_hold` / `billing_error` mapping** ([#155](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/155)) - Structurally reported account-state kinds now map to non-retryable `APICallError`s with console guidance, classified before the auth-substring heuristics so account-state error text mentioning "unauthorized" cannot be misrouted to re-authentication.
 - **`perTaskStopAffordance` setting** ([#153](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/153)) - Maps the Agent SDK's new `perTaskStopAffordance` option: a capability assertion that the host app renders per-task stop controls wired to `stopTask()`, so an interrupt on a live open-input query spares running background tasks and only aborts the current turn. Unset means the SDK's fail-closed default (interrupt kills background tasks); one-shot (closed-input) requests kill held-back tasks on interrupt regardless.
 - **Completed hook type re-exports** - Re-exports `PreModelSwitchHookInput`, `PostModelSwitchHookInput`, `PreModelSwitchHookSpecificOutput`, and `PostModelSwitchHookSpecificOutput` (new in SDK 0.3.251) plus the previously missing `DirectoryAddedHookInput`, restoring the "every member of the SDK `HookInput` union" guarantee, with a compile-time entry-point check.
 
 ### Changed
 
+- **Account-state error messages** - Structurally reported `account_on_hold` / `billing_error` failures now carry actionable Anthropic Console guidance appended to the original SDK message (previously generic fall-through text). Retryability and error classes for all previously mapped kinds are unchanged.
 - **Claude Agent SDK pinned at `0.3.251`** - Bumps the exact `@anthropic-ai/claude-agent-sdk` pin from `0.3.232`, resolving the weekly canary's Options drift guard failure ([#153](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/153)). `perTaskStopAffordance` was the only new `Options` key (64 → 65); typecheck and the unit suite pass against the new pin.
 
 ### Inherited upstream behavior changes
 
-- Because this bump replaces the bundled Agent SDK runtime, 0.3.232 → 0.3.251 behavior changes are inherited. Notably, an `AgentDefinition` that omits `model` now uses a configured default subagent model before falling back to the parent model. New hook events `PreModelSwitch`/`PostModelSwitch` and the `account_on_hold` assistant error kind (currently mapped to a generic non-retryable error, like `billing_error`) also arrive with this runtime.
+- Because this bump replaces the bundled Agent SDK runtime, 0.3.232 → 0.3.251 behavior changes are inherited. Notably, an `AgentDefinition` that omits `model` now uses a configured default subagent model before falling back to the parent model. New hook events `PreModelSwitch`/`PostModelSwitch` and the `account_on_hold` assistant error kind (mapped to an actionable non-retryable error in this release, together with `billing_error` — see Added above) also arrive with this runtime.
 
 ## [4.1.1] - 2026-08-14
 
