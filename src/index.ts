@@ -292,6 +292,8 @@ export type {
   ThinkingAdaptive,
   ThinkingEnabled,
   ThinkingDisabled,
+  // Structured assistant error kinds (values that can appear in error metadata `errorKind`)
+  SDKAssistantMessageError,
 } from '@anthropic-ai/claude-agent-sdk';
 
 /**
@@ -300,6 +302,7 @@ export type {
  *
  * @see {@link isAuthenticationError} to check for authentication failures
  * @see {@link isTimeoutError} to check for timeout errors
+ * @see {@link isAccountStateError} to check for account-state (billing/hold) failures
  * @see {@link getErrorMetadata} to extract error metadata
  * @see {@link createAPICallError} to create general API errors
  * @see {@link createAuthenticationError} to create authentication errors
@@ -308,6 +311,7 @@ export type {
 export {
   isAuthenticationError,
   isTimeoutError,
+  isAccountStateError,
   getErrorMetadata,
   createAPICallError,
   createAuthenticationError,

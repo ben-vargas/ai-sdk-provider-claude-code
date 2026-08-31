@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
-import { getErrorMetadata, isAuthenticationError } from './errors.js';
+import {
+  getErrorMetadata,
+  isAccountStateError,
+  isAuthenticationError,
+  isTimeoutError,
+} from './errors.js';
 import type {
   ClaudeCodeHookEvent,
   ClaudeCodeMcpStatusEvent,
@@ -3274,6 +3279,26 @@ describe('ClaudeCodeLanguageModel', () => {
       expect((thrownError as APICallError).isRetryable).toBe(true);
       // SDKResultError detail comes from errors[], not the missing result field
       expect((thrownError as APICallError).message).toContain('API request failed');
+      expect(getErrorMetadata(thrownError)?.errorKind).toBe('overloaded');
+    });
+
+    it('should classify structured rate_limit result errors as retryable with the kind preserved', async () => {
+      vi.mocked(mockQuery).mockReturnValue(
+        structuredErrorResponse('rate_limit', ['Request failed with status 429']) as any
+      );
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(true);
+      expect(getErrorMetadata(thrownError)?.errorKind).toBe('rate_limit');
     });
 
     it('should classify structured model_not_found result errors as non-retryable', async () => {
@@ -3293,25 +3318,31 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(thrownError).toBeInstanceOf(APICallError);
       expect((thrownError as APICallError).isRetryable).toBe(false);
       expect((thrownError as APICallError).message).toContain('model was not found');
+      expect(getErrorMetadata(thrownError)?.errorKind).toBe('model_not_found');
     });
 
-    it('should classify structured oauth_org_not_allowed result errors as authentication errors', async () => {
-      vi.mocked(mockQuery).mockReturnValue(
-        structuredErrorResponse('oauth_org_not_allowed', ['Request failed with status 403']) as any
-      );
+    it.each(['oauth_org_not_allowed', 'authentication_failed'])(
+      'should classify structured %s result errors as authentication errors with the kind preserved',
+      async (kind) => {
+        vi.mocked(mockQuery).mockReturnValue(
+          structuredErrorResponse(kind, ['Request failed with status 403']) as any
+        );
 
-      let thrownError: unknown;
-      try {
-        await model.doGenerate({
-          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
-        });
-      } catch (e) {
-        thrownError = e;
+        let thrownError: unknown;
+        try {
+          await model.doGenerate({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+          });
+        } catch (e) {
+          thrownError = e;
+        }
+
+        expect(thrownError).toBeDefined();
+        expect(thrownError).toBeInstanceOf(LoadAPIKeyError);
+        expect(isAuthenticationError(thrownError)).toBe(true);
+        expect(getErrorMetadata(thrownError)?.errorKind).toBe(kind);
       }
-
-      expect(thrownError).toBeDefined();
-      expect(isAuthenticationError(thrownError)).toBe(true);
-    });
+    );
 
     it('should emit a retryable error chunk for structured overloaded errors in streaming', async () => {
       vi.mocked(mockQuery).mockReturnValue(
@@ -3337,6 +3368,222 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(errorChunk!.error).toBeInstanceOf(APICallError);
       expect((errorChunk!.error as APICallError).isRetryable).toBe(true);
       expect((errorChunk!.error as APICallError).message).toContain('API request failed');
+    });
+
+    // Account-state kinds (issue #155): billing hold / billing failure.
+    // Non-retryable APICallError with console guidance — never LoadAPIKeyError,
+    // because re-authenticating cannot fix the account.
+    const ACCOUNT_ON_HOLD_GUIDANCE =
+      'Your Anthropic account is on hold, so requests are being rejected. Resolve the hold in the Anthropic Console (https://console.anthropic.com), then retry — signing in again will not fix this.';
+    const BILLING_ERROR_GUIDANCE =
+      'A billing problem on your Anthropic account is blocking requests. Resolve the billing issue in the Anthropic Console (https://console.anthropic.com), then retry — signing in again will not fix this.';
+
+    it.each([
+      ['account_on_hold', ACCOUNT_ON_HOLD_GUIDANCE],
+      ['billing_error', BILLING_ERROR_GUIDANCE],
+    ])(
+      'should map structured %s result errors to actionable non-retryable APICallErrors',
+      async (kind, guidance) => {
+        vi.mocked(mockQuery).mockReturnValue(
+          structuredErrorResponse(kind, ['Request failed with status 402']) as any
+        );
+
+        let thrownError: unknown;
+        try {
+          await model.doGenerate({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+          });
+        } catch (e) {
+          thrownError = e;
+        }
+
+        expect(thrownError).toBeInstanceOf(APICallError);
+        expect(thrownError).not.toBeInstanceOf(LoadAPIKeyError);
+        expect((thrownError as APICallError).isRetryable).toBe(false);
+        expect((thrownError as APICallError).message).toBe(
+          `Request failed with status 402. ${guidance}`
+        );
+        expect(isAuthenticationError(thrownError)).toBe(false);
+        expect(isAccountStateError(thrownError)).toBe(true);
+        expect(getErrorMetadata(thrownError)?.errorKind).toBe(kind);
+      }
+    );
+
+    it('should classify structured account_on_hold errors before the auth-substring heuristics', async () => {
+      vi.mocked(mockQuery).mockReturnValue(
+        structuredErrorResponse('account_on_hold', ['Request unauthorized: account on hold']) as any
+      );
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect(thrownError).not.toBeInstanceOf(LoadAPIKeyError);
+      expect(isAuthenticationError(thrownError)).toBe(false);
+      expect(isAccountStateError(thrownError)).toBe(true);
+    });
+
+    it.each([
+      ['billing_error', 'upstream flagged account_on_hold for this org', BILLING_ERROR_GUIDANCE],
+      ['account_on_hold', 'upstream flagged billing_error for this org', ACCOUNT_ON_HOLD_GUIDANCE],
+    ])(
+      'should keep the structured kind %s authoritative over conflicting message text',
+      async (kind, errorsText, guidance) => {
+        vi.mocked(mockQuery).mockReturnValue(structuredErrorResponse(kind, [errorsText]) as any);
+
+        let thrownError: unknown;
+        try {
+          await model.doGenerate({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+          });
+        } catch (e) {
+          thrownError = e;
+        }
+
+        expect(thrownError).toBeInstanceOf(APICallError);
+        expect((thrownError as APICallError).message).toBe(`${errorsText}. ${guidance}`);
+        expect(getErrorMetadata(thrownError)?.errorKind).toBe(kind);
+      }
+    );
+
+    it('should not treat account-state tokens in message text as account-state errors without a structured kind', async () => {
+      vi.mocked(mockQuery).mockImplementation(() => {
+        throw new Error('API error: billing_error');
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      expect((thrownError as APICallError).isRetryable).toBe(false);
+      expect((thrownError as APICallError).message).not.toContain('console.anthropic.com');
+      expect((thrownError as APICallError).message).not.toContain('Anthropic Console');
+      expect(getErrorMetadata(thrownError)?.errorKind).toBeUndefined();
+      expect(isAccountStateError(thrownError)).toBe(false);
+    });
+
+    it('should preserve the structured kind when message text routes to the timeout branch', async () => {
+      vi.mocked(mockQuery).mockReturnValue(
+        structuredErrorResponse('unknown', ['Gateway timeout while routing request']) as any
+      );
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(isTimeoutError(thrownError)).toBe(true);
+      expect((thrownError as APICallError).isRetryable).toBe(true);
+      expect(getErrorMetadata(thrownError)?.code).toBe('TIMEOUT');
+      expect(getErrorMetadata(thrownError)?.errorKind).toBe('unknown');
+    });
+
+    it.each(['server_error', 'future_sdk_kind'])(
+      'should fall through unmapped structured kind %s to a generic non-retryable error with the kind preserved',
+      async (kind) => {
+        vi.mocked(mockQuery).mockReturnValue(
+          structuredErrorResponse(kind, ['Internal server error']) as any
+        );
+
+        let thrownError: unknown;
+        try {
+          await model.doGenerate({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+          });
+        } catch (e) {
+          thrownError = e;
+        }
+
+        expect(thrownError).toBeInstanceOf(APICallError);
+        expect(thrownError).not.toBeInstanceOf(LoadAPIKeyError);
+        expect((thrownError as APICallError).isRetryable).toBe(false);
+        expect((thrownError as APICallError).message).not.toContain('Anthropic Console');
+        expect((thrownError as APICallError).message).not.toContain('model was not found');
+        expect((thrownError as APICallError).message).not.toContain('authenticated');
+        expect(getErrorMetadata(thrownError)?.errorKind).toBe(kind);
+        expect(isAccountStateError(thrownError)).toBe(false);
+        expect(isAuthenticationError(thrownError)).toBe(false);
+      }
+    );
+
+    it.each([
+      ['account_on_hold', ACCOUNT_ON_HOLD_GUIDANCE],
+      ['billing_error', BILLING_ERROR_GUIDANCE],
+    ])(
+      'should emit a non-retryable error chunk for structured %s errors in streaming',
+      async (kind, guidance) => {
+        vi.mocked(mockQuery).mockReturnValue(
+          structuredErrorResponse(kind, ['Request failed with status 402']) as any
+        );
+
+        const result = await model.doStream({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+
+        const chunks: ExtendedStreamPart[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        const errorChunk = chunks.find((chunk) => chunk.type === 'error') as
+          | { type: 'error'; error: unknown }
+          | undefined;
+        expect(errorChunk).toBeDefined();
+        expect(errorChunk!.error).toBeInstanceOf(APICallError);
+        expect((errorChunk!.error as APICallError).isRetryable).toBe(false);
+        expect((errorChunk!.error as APICallError).message).toBe(
+          `Request failed with status 402. ${guidance}`
+        );
+        expect(getErrorMetadata(errorChunk!.error)?.errorKind).toBe(kind);
+        expect(isAccountStateError(errorChunk!.error)).toBe(true);
+      }
+    );
+
+    it('should append the stderr tail once to account-state errors and keep full stderr in metadata', async () => {
+      vi.mocked(mockQuery).mockImplementation(({ options }: any) => {
+        options?.stderr?.('Billing hold diagnostic line\n');
+        return structuredErrorResponse('account_on_hold', [
+          'Request failed with status 402',
+        ]) as any;
+      });
+
+      let thrownError: unknown;
+      try {
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(APICallError);
+      const message = (thrownError as APICallError).message;
+      expect(message).toBe(
+        `Request failed with status 402. ${ACCOUNT_ON_HOLD_GUIDANCE} | stderr (tail): Billing hold diagnostic line`
+      );
+      expect(message.match(/ \| stderr \(tail\):/g)).toHaveLength(1);
+      expect(getErrorMetadata(thrownError)?.stderr).toBe('Billing hold diagnostic line\n');
+      expect(getErrorMetadata(thrownError)?.errorKind).toBe('account_on_hold');
+      expect(isAccountStateError(thrownError)).toBe(true);
     });
 
     it('should throw error when result message has is_error flag', async () => {

@@ -5,6 +5,7 @@ import {
   createTimeoutError,
   isAuthenticationError,
   isTimeoutError,
+  isAccountStateError,
   getErrorMetadata,
   stderrTail,
 } from './errors.js';
@@ -73,6 +74,18 @@ describe('Error Creation Functions', () => {
       expect(error).toBeInstanceOf(APICallError);
       expect(error.message).toBe('Minimal error');
       expect(error.requestBodyValues).toBeUndefined();
+      // Value semantics: the property may exist but reads undefined when the
+      // SDK did not deliver a structured kind.
+      expect(getErrorMetadata(error)?.errorKind).toBeUndefined();
+    });
+
+    it('round-trips errorKind into metadata', () => {
+      const error = createAPICallError({
+        message: 'Billing failure',
+        errorKind: 'billing_error',
+      });
+
+      expect(getErrorMetadata(error)?.errorKind).toBe('billing_error');
     });
 
     it('should set retryable flag', () => {
@@ -161,6 +174,36 @@ describe('Error Creation Functions', () => {
         'Authentication failed. Please ensure Claude Code SDK is properly authenticated.'
       );
     });
+
+    it('should expose errorKind metadata without stderr', () => {
+      const error = createAuthenticationError({
+        message: 'Auth failed',
+        errorKind: 'authentication_failed',
+      });
+
+      expect(error).toBeInstanceOf(LoadAPIKeyError);
+      expect(getErrorMetadata(error)?.errorKind).toBe('authentication_failed');
+      expect(getErrorMetadata(error)?.stderr).toBeUndefined();
+    });
+
+    it('should expose both stderr and errorKind metadata when both are present', () => {
+      const error = createAuthenticationError({
+        message: 'Auth failed',
+        stderr: 'Not authenticated',
+        errorKind: 'oauth_org_not_allowed',
+      });
+
+      expect(getErrorMetadata(error)?.stderr).toBe('Not authenticated');
+      expect(getErrorMetadata(error)?.errorKind).toBe('oauth_org_not_allowed');
+    });
+
+    it('should attach no data when neither stderr nor errorKind is provided', () => {
+      const error = createAuthenticationError({
+        message: 'Auth failed',
+      });
+
+      expect(getErrorMetadata(error)).toBeUndefined();
+    });
   });
 
   describe('createTimeoutError', () => {
@@ -189,6 +232,17 @@ describe('Error Creation Functions', () => {
 
       expect(error.requestBodyValues).toBeUndefined();
       expect((error.data as any).timeoutMs).toBe(60000);
+    });
+
+    it('should accept and store errorKind without changing the timeout contract', () => {
+      const error = createTimeoutError({
+        message: 'Timeout',
+        errorKind: 'unknown',
+      });
+
+      expect(getErrorMetadata(error)?.errorKind).toBe('unknown');
+      expect(getErrorMetadata(error)?.code).toBe('TIMEOUT');
+      expect(error.isRetryable).toBe(true);
     });
   });
 });
@@ -254,6 +308,87 @@ describe('Error Detection Functions', () => {
         )
       ).toBe(false);
       expect(isTimeoutError(null)).toBe(false);
+    });
+  });
+
+  describe('isAccountStateError', () => {
+    it.each(['account_on_hold', 'billing_error'])(
+      'should detect APICallError with structured kind %s',
+      (errorKind) => {
+        const error = createAPICallError({
+          message: 'Request failed with status 402',
+          errorKind,
+        });
+
+        expect(isAccountStateError(error)).toBe(true);
+      }
+    );
+
+    it('should return false for other structured kinds and missing errorKind', () => {
+      expect(
+        isAccountStateError(createAPICallError({ message: 'Overloaded', errorKind: 'overloaded' }))
+      ).toBe(false);
+      expect(
+        isAccountStateError(
+          createAPICallError({ message: 'No model', errorKind: 'model_not_found' })
+        )
+      ).toBe(false);
+      expect(isAccountStateError(createAPICallError({ message: 'Generic failure' }))).toBe(false);
+    });
+
+    it('should return false when only the message mentions an account-state token', () => {
+      const error = createAPICallError({
+        message: 'Upstream reported billing_error for this org',
+      });
+
+      expect(isAccountStateError(error)).toBe(false);
+    });
+
+    it('should return false for non-APICallError values', () => {
+      expect(isAccountStateError(new LoadAPIKeyError({ message: 'Auth failed' }))).toBe(false);
+      expect(isAccountStateError(new Error('billing_error'))).toBe(false);
+      expect(isAccountStateError(null)).toBe(false);
+      expect(isAccountStateError(undefined)).toBe(false);
+      expect(isAccountStateError({ data: { errorKind: 'billing_error' } })).toBe(false);
+    });
+
+    it.each(['account_on_hold', 'billing_error'])(
+      'should veto isAuthenticationError for kind %s even with exit code 401',
+      (errorKind) => {
+        const error = createAPICallError({
+          message: 'Request failed with status 401',
+          errorKind,
+          exitCode: 401,
+        });
+
+        expect(isAccountStateError(error)).toBe(true);
+        expect(isAuthenticationError(error)).toBe(false);
+      }
+    );
+
+    it('should leave plain exit-code-401 errors classified as authentication', () => {
+      const error = createAPICallError({
+        message: 'Unauthorized',
+        exitCode: 401,
+      });
+
+      expect(isAuthenticationError(error)).toBe(true);
+      expect(isAccountStateError(error)).toBe(false);
+    });
+
+    it('should not cross-classify with authentication or timeout checks', () => {
+      const accountStateError = createAPICallError({
+        message: 'Account on hold',
+        errorKind: 'account_on_hold',
+        exitCode: 1,
+      });
+      const authError = createAuthenticationError({ message: 'Auth failed' });
+      const timeoutError = createTimeoutError({ message: 'Timeout' });
+
+      expect(isAuthenticationError(accountStateError)).toBe(false);
+      expect(isTimeoutError(accountStateError)).toBe(false);
+      expect(isAccountStateError(authError)).toBe(false);
+      expect(isAccountStateError(timeoutError)).toBe(false);
     });
   });
 });

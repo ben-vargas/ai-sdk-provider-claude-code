@@ -213,8 +213,9 @@ function extractJsonObjectText(text: string): string | undefined {
 /**
  * Extracts the structured error kind attached to errors thrown from result
  * handling. SDK 0.3.x delivers API failure kinds (SDKAssistantMessageError,
- * e.g. 'overloaded', 'model_not_found', 'oauth_org_not_allowed') as structured
- * fields on assistant messages rather than in thrown error text, so
+ * e.g. 'overloaded', 'model_not_found', 'oauth_org_not_allowed',
+ * 'account_on_hold') as structured fields on assistant messages rather than
+ * in thrown error text, so
  * classification must not rely on message substrings alone.
  */
 function getStructuredErrorKind(error: unknown): string | undefined {
@@ -2259,6 +2260,33 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
     const exitCode =
       isErrorWithCode(error) && typeof error.exitCode === 'number' ? error.exitCode : undefined;
 
+    const errorCode = isErrorWithCode(error) && typeof error.code === 'string' ? error.code : '';
+
+    // SDK 0.3.x assistant error kinds: account-state problems (billing hold /
+    // billing failure). Non-retryable, and NOT an authentication error —
+    // re-authenticating cannot fix these; the account must be fixed in the
+    // Anthropic Console. Checked before the auth-substring heuristics so
+    // account-state error text mentioning "unauthorized" etc. cannot be
+    // misclassified as a credentials problem. Keys on the structured kind
+    // only — message text never selects or flips this classification.
+    if (errorKind === 'account_on_hold' || errorKind === 'billing_error') {
+      const originalMessage =
+        isErrorWithMessage(error) && error.message ? error.message : 'Account error';
+      const guidance =
+        errorKind === 'account_on_hold'
+          ? 'Your Anthropic account is on hold, so requests are being rejected. Resolve the hold in the Anthropic Console (https://console.anthropic.com), then retry — signing in again will not fix this.'
+          : 'A billing problem on your Anthropic account is blocking requests. Resolve the billing issue in the Anthropic Console (https://console.anthropic.com), then retry — signing in again will not fix this.';
+      return createAPICallError({
+        message: `${originalMessage}. ${guidance}`,
+        code: errorCode || undefined,
+        errorKind,
+        exitCode,
+        stderr,
+        promptExcerpt: messagesPrompt.substring(0, 200),
+        isRetryable: false,
+      });
+    }
+
     const isAuthError =
       errorKind === 'authentication_failed' ||
       errorKind === 'oauth_org_not_allowed' ||
@@ -2274,12 +2302,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
             : 'Authentication failed. Please ensure Claude Code SDK is properly authenticated.'
         ),
         stderr,
+        errorKind,
       });
     }
 
     // Check for timeout errors
-    const errorCode = isErrorWithCode(error) && typeof error.code === 'string' ? error.code : '';
-
     if (
       errorCode === 'ETIMEDOUT' ||
       errorMessage.includes('timeout') ||
@@ -2291,6 +2318,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
         ),
         stderr,
         promptExcerpt: messagesPrompt.substring(0, 200),
+        errorKind,
         // Don't specify timeoutMs since we don't know the actual timeout value
         // It's controlled by the consumer via AbortSignal
       });
@@ -2308,6 +2336,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
             ? error.message
             : 'Anthropic API is overloaded. Please retry.',
         code: errorCode || undefined,
+        errorKind,
         exitCode,
         stderr,
         promptExcerpt: messagesPrompt.substring(0, 200),
@@ -2326,6 +2355,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
       return createAPICallError({
         message: `${originalMessage}. The requested model was not found. Verify the model id passed to the provider (e.g. 'fable', 'opus', 'sonnet', 'haiku', or a full model name) and that your account has access to it.`,
         code: errorCode || undefined,
+        errorKind,
         exitCode,
         stderr,
         promptExcerpt: messagesPrompt.substring(0, 200),
@@ -2343,6 +2373,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
     return createAPICallError({
       message: isErrorWithMessage(error) && error.message ? error.message : 'Claude Code SDK error',
       code: errorCode || undefined,
+      errorKind,
       exitCode: exitCode,
       stderr,
       promptExcerpt: messagesPrompt.substring(0, 200),
