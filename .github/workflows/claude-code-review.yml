@@ -9,6 +9,8 @@ on:
 jobs:
   review-with-tracking:
     runs-on: ubuntu-latest
+    # Overrun backstop (instead of --max-turns; see note on claude_args below).
+    timeout-minutes: 30
     # The secrets context is not allowed in a job-level `if` — gating on
     # secrets.CLAUDE_CODE_OAUTH_TOKEN made the whole workflow file invalid, so
     # GitHub reported a 0-second "workflow file issue" failure on every push.
@@ -93,6 +95,8 @@ jobs:
           # mcp__github_inline_comment tool is what enables inline review comments.
           # No --model: defer to the Claude Code default for the account
           # (currently Opus 5), so model retirements never break this job.
+          # No --max-turns: a cap fails the run after spending tokens but before
+          # posting the review (a normal review of this repo already needs 20+
+          # turns). The job-level timeout-minutes above is the overrun backstop.
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
-            --max-turns 50
