@@ -77,6 +77,7 @@ type MappedKey =
   | 'forwardSubagentText'
   | 'agentProgressSummaries'
   | 'includeHookEvents'
+  | 'perTaskStopAffordance'
   | 'taskBudget' // alpha passthrough
   | 'sessionStore' // alpha passthrough
   | 'sessionStoreFlush' // alpha passthrough

@@ -212,8 +212,14 @@ describe('claudeCodeSettingsSchema', () => {
   });
 
   it('should accept the new boolean passthrough options', () => {
-    for (const key of ['forwardSubagentText', 'agentProgressSummaries', 'includeHookEvents']) {
+    for (const key of [
+      'forwardSubagentText',
+      'agentProgressSummaries',
+      'includeHookEvents',
+      'perTaskStopAffordance',
+    ]) {
       expect(claudeCodeSettingsSchema.safeParse({ [key]: true }).success).toBe(true);
+      expect(claudeCodeSettingsSchema.safeParse({ [key]: false }).success).toBe(true);
       expect(claudeCodeSettingsSchema.safeParse({ [key]: 'yes' }).success).toBe(false);
     }
   });

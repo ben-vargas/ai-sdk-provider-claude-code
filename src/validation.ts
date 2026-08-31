@@ -171,6 +171,7 @@ export const claudeCodeSettingsSchema = z
     forwardSubagentText: z.boolean().optional(),
     agentProgressSummaries: z.boolean().optional(),
     includeHookEvents: z.boolean().optional(),
+    perTaskStopAffordance: z.boolean().optional(),
     onSdkMessage: z
       .any()
       .refine((v) => v === undefined || typeof v === 'function', {
