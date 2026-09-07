@@ -99,6 +99,8 @@ export const claudeCodeSettingsSchema = z
       .enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'])
       .optional(),
     permissionPromptToolName: z.string().optional(),
+    permissionPrompts: z.enum(['host', 'none']).optional(),
+    pluginDelivery: z.enum(['argv', 'initialize']).optional(),
     continue: z.boolean().optional(),
     resume: z.string().optional(),
     // The CLI rejects --session-id values that are not valid UUIDs, so

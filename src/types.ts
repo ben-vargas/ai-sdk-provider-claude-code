@@ -332,6 +332,14 @@ export interface ClaudeCodeSettings {
   permissionPromptToolName?: string;
 
   /**
+   * Who answers permission prompts. 'host' uses canUseTool or
+   * permissionPromptToolName. 'none' denies requests that would need a prompt
+   * and never calls canUseTool; permission mode, rules and hooks still apply.
+   * @default 'host'
+   */
+  permissionPrompts?: Options['permissionPrompts'];
+
+  /**
    * Continue the most recent conversation
    */
   continue?: boolean;
@@ -390,6 +398,14 @@ export interface ClaudeCodeSettings {
    * Load custom plugins from local paths.
    */
   plugins?: SdkPluginConfig[];
+
+  /**
+   * How plugin paths reach Claude Code. 'argv' uses --plugin-dir flags;
+   * 'initialize' sends them over stdin to avoid command-line length limits.
+   * 'initialize' requires Claude Code 2.1.261+ (including the bundled binary).
+   * @default 'argv'
+   */
+  pluginDelivery?: Options['pluginDelivery'];
 
   /**
    * Resume session at a specific message UUID.

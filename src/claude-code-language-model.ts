@@ -1929,6 +1929,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
       opts,
       this.resolvePortableReasoningOptions(options, sdkOptions, claudeReasoningProviderOptions)
     );
+    if (this.settings.permissionPrompts !== undefined) {
+      opts.permissionPrompts = this.settings.permissionPrompts;
+    }
+    if (this.settings.pluginDelivery !== undefined) {
+      opts.pluginDelivery = this.settings.pluginDelivery;
+    }
     // Blocking user-dialog handling (SDK fails closed without these: the CLI
     // never emits a dialog kind that is not declared in supportedDialogKinds,
     // and the dialog-gated flow degrades to its no-dialog behavior).
