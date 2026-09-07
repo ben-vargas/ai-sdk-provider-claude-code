@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.1] - 2026-09-07
+
+### Fixed
+
+- **Guarded rewind model reuse** - After a successful guarded rewind, subsequent generation and streaming calls on the same model continue the resulting session instead of repeating the stale guard or forking again. Consumption applies after `sdkOptions` overrides, preserves failed attempts and shared caller settings, and clears the initial rewind/fork/session/continue controls.
+- **Rewind guidance** - Corrects `resumeDropsTurn` to identify the discarded prompt UUID paired with `resumeSessionAt` at the kept turn's last chain entry; documents one-shot successful consumption and clearing refused guards before plain resume.
+
 ## [4.3.0] - 2026-09-07
 
 ### Added

@@ -408,13 +408,21 @@ export interface ClaudeCodeSettings {
   pluginDelivery?: Options['pluginDelivery'];
 
   /**
-   * Resume session at a specific message UUID.
+   * Resume session at a specific message UUID. For a guarded rewind, use the
+   * last chain entry of the kept turn together with `resumeDropsTurn`.
    */
   resumeSessionAt?: string;
 
   /**
-   * When resuming, drop the turn containing this chain-entry UUID (use with
-   * `resume`; see the SDK docs for choosing the fork point).
+   * Guard a rewind (`resume` + `resumeSessionAt`) with the UUID of the prompt
+   * intended to be discarded. The SDK rejects the rewind if the discarded
+   * range contains entries from another turn. Set `resumeSessionAt` to the
+   * last chain entry of the turn being kept (not necessarily an assistant).
+   * After a successful guarded rewind, this model instance consumes the rewind
+   * pair and initial fork/session/continue controls, then resumes the resulting
+   * session on subsequent calls. Create a new model to request another rewind.
+   * On "Resume rejected by --resume-drops-turn:", clear both pending rewind
+   * controls before plain resume; retrying the same refused guard cannot succeed.
    */
   resumeDropsTurn?: string;
 

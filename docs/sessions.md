@@ -13,7 +13,7 @@ For a runnable end-to-end walkthrough, see [examples/session-management.ts](../e
 | `sessionId`       | `string`  | Use a specific session ID for a **new** session (deterministic tracking/correlation). Must be a UUID.                                                             |
 | `resume`          | `string`  | Resume an existing session by ID. The conversation context is restored from the persisted transcript.                                                             |
 | `resumeSessionAt` | `string`  | When resuming, restore the session only up to a specific message UUID (later messages are discarded from context).                                                |
-| `resumeDropsTurn` | `string`  | When resuming, drop the turn containing this chain-entry UUID from the restored context. Use with `resume`; fork at the kept turn's last chain-entry UUID.        |
+| `resumeDropsTurn` | `string`  | Guard `resume` + `resumeSessionAt` with the discarded prompt UUID. See [guarded rewind](#guarded-rewind).                                                         |
 | `forkSession`     | `boolean` | When resuming, fork to a **new** session ID instead of continuing under the original ID (combine with `sessionId` to choose the fork's ID).                       |
 | `continue`        | `boolean` | Continue the most recent conversation for the working directory, without needing its ID.                                                                          |
 | `persistSession`  | `boolean` | When `false`, the session is not written to `~/.claude/projects/` and cannot be resumed or inspected later. Useful for ephemeral workflows. Default `true`.       |
@@ -42,6 +42,25 @@ const followUp = await generateText({
 });
 // followUp.text mentions "papaya"; the session keeps the same ID.
 ```
+
+### Guarded rewind
+
+Use `resume` to select the session, `resumeSessionAt` for the **last chain entry of the turn being kept** (not necessarily an assistant message), and `resumeDropsTurn` for the **UUID of the user prompt being discarded**. The guard checks that the discarded range contains no entries from another turn; it does not choose the rewind point itself. A partial transcript view may omit chain entries, so do not assume its last visible assistant UUID is always the kept turn's final chain entry.
+
+```ts
+const model = claudeCode('sonnet', {
+  resume: sessionId,
+  resumeSessionAt: keptTurnLastChainEntryUuid,
+  resumeDropsTurn: discardedPromptUuid,
+  // forkSession: true, // optional: run the replacement turn in a new session
+});
+await generateText({ model, prompt: 'Replace the discarded turn with this request.' });
+await generateText({ model, prompt: 'Continue from the replacement turn.' });
+```
+
+After a successful non-error SDK result, this model consumes the rewind pair and initial `resume`, `forkSession`, `sessionId`, and `continue` controls, including values supplied through `sdkOptions`. Later generation or streaming calls on the same model resume the captured resulting session, including a new fork. Caller settings remain unchanged; a separate model created from the same settings still performs its own rewind. Create a new model to request another rewind. This behavior applies only to the guarded pair; an unguarded `resumeSessionAt` retains its existing behavior. Use the model sequentially and finish consuming a stream before starting the next call.
+
+Failed or rejected requests do not consume the pending guard. If the SDK reports `Resume rejected by --resume-drops-turn:`, clear **both** `resumeSessionAt` and `resumeDropsTurn` (also from `sdkOptions`, if present) before retrying as a plain resume. Create a fresh model with `{ resume: sessionId }` to resume the intended existing session without the refused guard; retrying the same guarded model simply repeats the rejection.
 
 ### Forking at query time (the `forkSession` setting)
 

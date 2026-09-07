@@ -2,6 +2,8 @@
 
 > **Historical:** Covers legacy provider versions 0.x (AI SDK v4). See the [main README](../../README.md) for current documentation.
 
+For current AI SDK v7 guarded rewind semantics and model reuse, see [Session Management](../sessions.md#guarded-rewind).
+
 ## Essential Examples
 
 ### Streaming Responses
