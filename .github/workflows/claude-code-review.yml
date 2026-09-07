@@ -9,7 +9,17 @@ on:
 jobs:
   review-with-tracking:
     runs-on: ubuntu-latest
-    if: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+    # Overrun backstop (instead of --max-turns; see note on claude_args below).
+    timeout-minutes: 30
+    # The secrets context is not allowed in a job-level `if` — gating on
+    # secrets.CLAUDE_CODE_OAUTH_TOKEN made the whole workflow file invalid, so
+    # GitHub reported a 0-second "workflow file issue" failure on every push.
+    # Gate on the cases where secrets are actually withheld instead, so they
+    # skip cleanly rather than fail in the action: fork PRs, and runs
+    # triggered by Dependabot (its branches are same-repo so the fork check
+    # misses them; the actor check still lets the review run when a human
+    # triggers the workflow on a Dependabot PR, e.g. via the labeled event).
+    if: ${{ !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}
     permissions:
       contents: read
       pull-requests: write
@@ -79,9 +89,14 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Note: --allowedTools is intentionally omitted to preserve access to all
-          # default tools (Read, Edit, Write, Glob, Grep, etc.). Specifying it acts
-          # as a full allowlist and would block core file tools.
+          # --allowedTools matches the upstream pr-review-comprehensive template.
+          # The action APPENDS these to its base set (Glob, Grep, LS, Read,
+          # comment/commit tools), so core file tools stay available; listing an
+          # mcp__github_inline_comment tool is what enables inline review comments.
+          # No --model: defer to the Claude Code default for the account
+          # (currently Opus 5), so model retirements never break this job.
+          # No --max-turns: a cap fails the run after spending tokens but before
+          # posting the review (a normal review of this repo already needs 20+
+          # turns). The job-level timeout-minutes above is the overrun backstop.
           claude_args: |
-            --model claude-opus-4-6
-            --max-turns 12
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"

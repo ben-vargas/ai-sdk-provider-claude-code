@@ -1,4 +1,26 @@
 import { describe, it, expect } from 'vitest';
+import type {
+  HookInput,
+  PreModelSwitchHookInput,
+  PostModelSwitchHookInput,
+  DirectoryAddedHookInput,
+  PreModelSwitchHookSpecificOutput,
+  PostModelSwitchHookSpecificOutput,
+} from './index.js';
+
+// Compile-time check that the hook types added through SDK 0.3.251 are
+// re-exported from the package entry point and stay members of the HookInput
+// union (runtime HOOK_EVENTS assertions cannot see type-only exports).
+type MemberOfHookInput<T extends HookInput> = T;
+type HookSurfaceExportedTypes = [
+  MemberOfHookInput<PreModelSwitchHookInput>,
+  MemberOfHookInput<PostModelSwitchHookInput>,
+  MemberOfHookInput<DirectoryAddedHookInput>,
+  PreModelSwitchHookSpecificOutput,
+  PostModelSwitchHookSpecificOutput,
+];
+
+const hookSurfaceExportedTypesCompileCheck: HookSurfaceExportedTypes | null = null;
 
 describe('index exports', () => {
   it('should export all expected functions and types', async () => {
@@ -40,6 +62,10 @@ describe('index exports', () => {
     expect(exports.HOOK_EVENTS).toBeDefined();
     expect(Array.isArray(exports.HOOK_EVENTS)).toBe(true);
     expect(exports.HOOK_EVENTS).toContain('PreToolUse');
+    expect(exports.HOOK_EVENTS).toEqual(
+      expect.arrayContaining(['PreModelSwitch', 'PostModelSwitch', 'DirectoryAdded'])
+    );
+    expect(hookSurfaceExportedTypesCompileCheck).toBeNull();
     expect(exports.AbortError).toBeDefined();
     expect(typeof exports.AbortError).toBe('function');
 

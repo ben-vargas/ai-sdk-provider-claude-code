@@ -13,10 +13,17 @@ For a runnable end-to-end walkthrough, see [examples/session-management.ts](../e
 | `sessionId`       | `string`  | Use a specific session ID for a **new** session (deterministic tracking/correlation). Must be a UUID.                                                             |
 | `resume`          | `string`  | Resume an existing session by ID. The conversation context is restored from the persisted transcript.                                                             |
 | `resumeSessionAt` | `string`  | When resuming, restore the session only up to a specific message UUID (later messages are discarded from context).                                                |
+| `resumeDropsTurn` | `string`  | With `resumeSessionAt`, validate that the discarded range belongs to the turn with this prompt UUID. Available in v3.6.0+.                                        |
 | `forkSession`     | `boolean` | When resuming, fork to a **new** session ID instead of continuing under the original ID (combine with `sessionId` to choose the fork's ID).                       |
 | `continue`        | `boolean` | Continue the most recent conversation for the working directory, without needing its ID.                                                                          |
 | `persistSession`  | `boolean` | When `false`, the session is not written to `~/.claude/projects/` and cannot be resumed or inspected later. Useful for ephemeral workflows. Default `true`.       |
 | `title`           | `string`  | Custom title for a **new** session (instead of auto-generating one from the first prompt). When resuming, the resumed session's persisted title takes precedence. |
+
+### Guarded rewinds (v3.6.0+)
+
+Use `resume` with `resumeSessionAt` set to the **last chain entry of the kept turn**, and `resumeDropsTurn` set to the **prompt UUID of the turn you intend to discard**. The SDK refuses if the discarded range includes unrelated entries, such as another queued user message or a task notification. For structured-output or end-turn tool sessions, the kept turn may end with a tool-result carrier or structured-output attachment rather than an assistant message.
+
+A refusal starts with `Resume rejected by --resume-drops-turn:`. Clear the pending `resumeSessionAt` and `resumeDropsTurn` target and resume plainly to retain the evidence; repeatedly sending the same rejected rewind cannot succeed. These options apply to the SDK/headless path, not interactive CLI resumes.
 
 ### Capturing the session ID
 

@@ -32,6 +32,7 @@ describe('claudeCodeSettingsSchema', () => {
       maxBudgetUsd: 2.5,
       plugins: [{ type: 'local', path: './plugins/my-plugin' }],
       resumeSessionAt: 'message-uuid',
+      resumeDropsTurn: 'dropped-turn-uuid',
       sandbox: { enabled: true },
       tools: ['Read', 'Write'],
       verbose: true,
@@ -210,9 +211,38 @@ describe('claudeCodeSettingsSchema', () => {
     expect(claudeCodeSettingsSchema.safeParse({ title: 42 }).success).toBe(false);
   });
 
+  it.each([
+    ['permissionPrompts', ['host', 'none']],
+    ['pluginDelivery', ['argv', 'initialize']],
+  ])('validates %s without materializing an unset default', (key, values) => {
+    for (const value of values) {
+      const result = claudeCodeSettingsSchema.safeParse({ [key]: value });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data).toHaveProperty(key, value);
+    }
+    for (const value of ['invalid', false, null, 42]) {
+      expect(claudeCodeSettingsSchema.safeParse({ [key]: value }).success).toBe(false);
+    }
+    expect(claudeCodeSettingsSchema.parse({})).not.toHaveProperty(key);
+  });
+
+  it('validates resumeDropsTurn as an optional string', () => {
+    expect(claudeCodeSettingsSchema.parse({ resumeDropsTurn: 'turn-id' }).resumeDropsTurn).toBe(
+      'turn-id'
+    );
+    expect(claudeCodeSettingsSchema.safeParse({ resumeDropsTurn: 42 }).success).toBe(false);
+    expect(claudeCodeSettingsSchema.parse({})).not.toHaveProperty('resumeDropsTurn');
+  });
+
   it('should accept the new boolean passthrough options', () => {
-    for (const key of ['forwardSubagentText', 'agentProgressSummaries', 'includeHookEvents']) {
+    for (const key of [
+      'forwardSubagentText',
+      'agentProgressSummaries',
+      'includeHookEvents',
+      'perTaskStopAffordance',
+    ]) {
       expect(claudeCodeSettingsSchema.safeParse({ [key]: true }).success).toBe(true);
+      expect(claudeCodeSettingsSchema.safeParse({ [key]: false }).success).toBe(true);
       expect(claudeCodeSettingsSchema.safeParse({ [key]: 'yes' }).success).toBe(false);
     }
   });

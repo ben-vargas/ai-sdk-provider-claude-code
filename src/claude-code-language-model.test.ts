@@ -2,8 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
 import { getErrorMetadata, isAuthenticationError } from './errors.js';
-import type { Logger } from './types.js';
-import { APICallError, LoadAPIKeyError, type LanguageModelV3StreamPart } from '@ai-sdk/provider';
+import type { ClaudeCodeSettings, Logger } from './types.js';
+import {
+  APICallError,
+  LoadAPIKeyError,
+  type LanguageModelV3CallOptions,
+  type LanguageModelV3StreamPart,
+} from '@ai-sdk/provider';
 
 // Extend stream part union locally to include provider-specific 'tool-error'
 type ToolErrorPart = {
@@ -200,21 +205,26 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(typeof call.prompt).toBe('string');
     });
 
-    it('throws when canUseTool is combined with permissionPromptToolName', async () => {
-      const model = new ClaudeCodeLanguageModel({
-        id: 'sonnet',
-        settings: {
-          canUseTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-          permissionPromptToolName: 'stdio',
-          streamingInput: 'auto',
-        } as any,
-      });
+    it.each([undefined, 'host', 'none'] as const)(
+      'rejects conflicting permission handlers with permissionPrompts=%s',
+      async (permissionPrompts) => {
+        const model = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: {
+            canUseTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            permissionPromptToolName: 'stdio',
+            permissionPrompts,
+            streamingInput: 'auto',
+          } as any,
+        });
 
-      const promise = model.doGenerate({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
-      } as any);
-      await expect(promise).rejects.toThrow(/cannot be used with permissionPromptToolName/);
-    });
+        const promise = model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+        await expect(promise).rejects.toThrow(/cannot be used with permissionPromptToolName/);
+      }
+    );
+
     it('should pass through hooks and canUseTool to SDK query options', async () => {
       const preToolHook = async () => ({ continue: true });
       const hooks = { PreToolUse: [{ hooks: [preToolHook] }] } as any;
@@ -577,6 +587,7 @@ describe('ClaudeCodeLanguageModel', () => {
           maxBudgetUsd: 2,
           plugins: [{ type: 'local', path: './plugins/example' }],
           resumeSessionAt: 'message-uuid',
+          resumeDropsTurn: 'dropped-turn-uuid',
           sandbox: { enabled: true },
           tools: ['Read'],
           sdkOptions: {
@@ -609,6 +620,7 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.maxBudgetUsd).toBe(2);
       expect(call?.options?.plugins).toEqual([{ type: 'local', path: './plugins/example' }]);
       expect(call?.options?.resumeSessionAt).toBe('message-uuid');
+      expect(call?.options?.resumeDropsTurn).toBe('dropped-turn-uuid');
       expect(call?.options?.sandbox).toEqual({ enabled: true });
       expect(call?.options?.tools).toEqual(['Read']);
       expect(call?.options?.allowDangerouslySkipPermissions).toBe(true);
@@ -688,6 +700,131 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.forwardSubagentText).toBe(true);
       expect(call?.options?.agentProgressSummaries).toBe(true);
       expect(call?.options?.includeHookEvents).toBe(true);
+    });
+
+    describe.each(['doGenerate', 'doStream'] as const)('%s SDK delivery options', (method) => {
+      const cases: Array<{
+        name: string;
+        settings: ClaudeCodeSettings;
+        permissionPrompts?: 'host' | 'none';
+        pluginDelivery?: 'argv' | 'initialize';
+        perTaskStopAffordance?: boolean;
+        resumeDropsTurn?: string;
+      }> = [
+        { name: 'unset defaults', settings: {} },
+        {
+          name: 'explicit defaults',
+          settings: {
+            permissionPrompts: 'host',
+            pluginDelivery: 'argv',
+            perTaskStopAffordance: false,
+            resumeDropsTurn: 'old-turn',
+          },
+          perTaskStopAffordance: false,
+          resumeDropsTurn: 'old-turn',
+          permissionPrompts: 'host',
+          pluginDelivery: 'argv',
+        },
+        {
+          name: 'headless prompts and stdin plugins',
+          settings: {
+            permissionPrompts: 'none',
+            pluginDelivery: 'initialize',
+            perTaskStopAffordance: true,
+            resumeDropsTurn: 'new-turn',
+          },
+          perTaskStopAffordance: true,
+          resumeDropsTurn: 'new-turn',
+          permissionPrompts: 'none',
+          pluginDelivery: 'initialize',
+        },
+        {
+          name: 'SDK overrides',
+          perTaskStopAffordance: false,
+          resumeDropsTurn: 'new-turn',
+          settings: {
+            permissionPrompts: 'host',
+            pluginDelivery: 'argv',
+            perTaskStopAffordance: true,
+            resumeDropsTurn: 'old-turn',
+            sdkOptions: {
+              permissionPrompts: 'none',
+              pluginDelivery: 'initialize',
+              perTaskStopAffordance: false,
+              resumeDropsTurn: 'new-turn',
+            },
+          },
+          permissionPrompts: 'none',
+          pluginDelivery: 'initialize',
+        },
+        {
+          name: 'undefined SDK overrides preserve settings',
+          perTaskStopAffordance: false,
+          resumeDropsTurn: 'old-turn',
+          settings: {
+            permissionPrompts: 'none',
+            pluginDelivery: 'initialize',
+            perTaskStopAffordance: false,
+            resumeDropsTurn: 'old-turn',
+            sdkOptions: {
+              permissionPrompts: undefined,
+              pluginDelivery: undefined,
+              perTaskStopAffordance: undefined,
+              resumeDropsTurn: undefined,
+            },
+          },
+          permissionPrompts: 'none',
+          pluginDelivery: 'initialize',
+        },
+      ];
+
+      it.each(cases)('preserves $name at the SDK boundary', async (testCase) => {
+        const canUseTool = vi.fn(async () => ({ behavior: 'deny' as const, message: 'Denied' }));
+        const plugins = [{ type: 'local' as const, path: '/tmp/test-plugin' }];
+        const model = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: { ...testCase.settings, plugins, canUseTool },
+        });
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 's-delivery-options',
+              usage: { input_tokens: 0, output_tokens: 0 },
+            };
+          },
+        } as any);
+        const options: LanguageModelV3CallOptions = {
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        };
+        if (method === 'doGenerate') {
+          await model.doGenerate(options);
+        } else {
+          const { stream } = await model.doStream(options);
+          const reader = stream.getReader();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            expect(value.type).not.toBe('error');
+          }
+        }
+        const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+        for (const key of [
+          'permissionPrompts',
+          'pluginDelivery',
+          'perTaskStopAffordance',
+          'resumeDropsTurn',
+        ] as const) {
+          if (testCase[key] === undefined) expect(call?.options).not.toHaveProperty(key);
+          else expect(call?.options?.[key]).toBe(testCase[key]);
+        }
+        // The SDK owns prompt suppression; keep the callback and streaming
+        // input contract intact even when permissionPrompts is 'none'.
+        expect(call?.options?.canUseTool).toBe(canUseTool);
+        expect(typeof call?.prompt).not.toBe('string');
+        expect(call?.options?.plugins).toEqual(plugins);
+      });
     });
 
     it('should pass through onUserDialog and supportedDialogKinds', async () => {

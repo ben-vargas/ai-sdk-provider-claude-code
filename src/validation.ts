@@ -99,6 +99,8 @@ export const claudeCodeSettingsSchema = z
       .enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'])
       .optional(),
     permissionPromptToolName: z.string().optional(),
+    permissionPrompts: z.enum(['host', 'none']).optional(),
+    pluginDelivery: z.enum(['argv', 'initialize']).optional(),
     continue: z.boolean().optional(),
     resume: z.string().optional(),
     // The CLI rejects --session-id values that are not valid UUIDs, so
@@ -130,6 +132,7 @@ export const claudeCodeSettingsSchema = z
       )
       .optional(),
     resumeSessionAt: z.string().optional(),
+    resumeDropsTurn: z.string().optional(),
     sandbox: z
       .any()
       .refine((val) => val === undefined || typeof val === 'object', {
@@ -170,6 +173,7 @@ export const claudeCodeSettingsSchema = z
     forwardSubagentText: z.boolean().optional(),
     agentProgressSummaries: z.boolean().optional(),
     includeHookEvents: z.boolean().optional(),
+    perTaskStopAffordance: z.boolean().optional(),
     taskBudget: z.object({ total: z.number().positive() }).strict().optional(),
     sessionStore: z
       .any()

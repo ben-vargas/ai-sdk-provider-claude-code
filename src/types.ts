@@ -182,6 +182,14 @@ export interface ClaudeCodeSettings {
   permissionPromptToolName?: string;
 
   /**
+   * Who answers permission prompts. 'host' uses canUseTool or
+   * permissionPromptToolName. 'none' denies requests that would need a prompt
+   * and never calls canUseTool; permission mode, rules and hooks still apply.
+   * @default 'host'
+   */
+  permissionPrompts?: Options['permissionPrompts'];
+
+  /**
    * Continue the most recent conversation
    */
   continue?: boolean;
@@ -242,9 +250,27 @@ export interface ClaudeCodeSettings {
   plugins?: SdkPluginConfig[];
 
   /**
+   * How plugin paths reach Claude Code. 'argv' uses --plugin-dir flags;
+   * 'initialize' sends them over stdin to avoid command-line length limits.
+   * 'initialize' requires Claude Code 2.1.261+ (including the bundled binary).
+   * @default 'argv'
+   */
+  pluginDelivery?: Options['pluginDelivery'];
+
+  /**
    * Resume session at a specific message UUID.
    */
   resumeSessionAt?: string;
+
+  /**
+   * With `resume` and `resumeSessionAt`, declare the prompt UUID of the turn
+   * intended to be discarded. The SDK rejects the rewind if the discarded
+   * range contains entries from another turn. Set `resumeSessionAt` to the
+   * last chain entry of the turn being kept (not necessarily an assistant).
+   * On "Resume rejected by --resume-drops-turn:", clear the pending rewind
+   * and resume plainly; retrying the same rejected rewind cannot succeed.
+   */
+  resumeDropsTurn?: string;
 
   /**
    * Configure sandbox behavior programmatically.
@@ -343,6 +369,23 @@ export interface ClaudeCodeSettings {
    * @default false
    */
   includeHookEvents?: boolean;
+
+  /**
+   * Declare that the host application renders a per-task stop control wired
+   * to `Query.stopTask()` (accessed through `onQueryCreated`), so an
+   * interrupt on a live open-input query spares running background tasks and
+   * only aborts the current turn.
+   *
+   * This is a capability assertion, not a feature toggle: set `true` only when
+   * the host actually exposes per-task stop controls to the user. It does not
+   * enable streaming input, and it is only meaningful while an open-input
+   * query is live (`streamingInput: 'auto' | 'always'`); the provider closes
+   * streaming input when the terminal result arrives, and one-shot
+   * (closed-input) runs kill held-back background tasks on interrupt
+   * regardless of this declaration. When unset, the SDK fails closed: an
+   * interrupt kills background tasks.
+   */
+  perTaskStopAffordance?: boolean;
 
   /**
    * MCP server configuration
