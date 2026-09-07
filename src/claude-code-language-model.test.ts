@@ -54,6 +54,146 @@ describe('ClaudeCodeLanguageModel', () => {
     });
   });
 
+  describe('guarded rewind reuse', () => {
+    const callOptions: LanguageModelV3CallOptions = {
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'next turn' }] }],
+    };
+    type Method = 'doGenerate' | 'doStream';
+    async function invoke(instance: ClaudeCodeLanguageModel, method: Method) {
+      if (method === 'doGenerate') return instance.doGenerate(callOptions);
+      const { stream } = await instance.doStream(callOptions);
+      for await (const part of stream as unknown as AsyncIterable<LanguageModelV3StreamPart>) {
+        if (part.type === 'error') throw part.error;
+      }
+    }
+    function success(sessionId: string) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'system', subtype: 'init', session_id: sessionId };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            is_error: false,
+            session_id: sessionId,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+    }
+
+    describe.each([
+      ['doGenerate', 'doGenerate'],
+      ['doGenerate', 'doStream'],
+      ['doStream', 'doGenerate'],
+      ['doStream', 'doStream'],
+    ] as const)('%s then %s', (firstMethod, nextMethod) => {
+      it.each([
+        { overrides: false, fork: false },
+        { overrides: true, fork: false },
+        { overrides: false, fork: true },
+        { overrides: true, fork: true },
+      ])(
+        'continues the resulting session ($overrides overrides, $fork fork)',
+        async ({ overrides, fork }) => {
+          const target = Object.freeze({
+            resume: 'source-session',
+            resumeSessionAt: 'kept-message',
+            resumeDropsTurn: 'discarded-prompt',
+            ...(fork ? { forkSession: true, sessionId: 'fork-session' } : {}),
+          });
+          const settings: ClaudeCodeSettings = Object.freeze(
+            overrides
+              ? {
+                  resume: 'shadowed-source',
+                  resumeSessionAt: 'shadowed-message',
+                  resumeDropsTurn: 'shadowed-prompt',
+                  sdkOptions: target,
+                }
+              : { ...target, sdkOptions: Object.freeze({ resumeDropsTurn: undefined }) }
+          );
+          const instance = new ClaudeCodeLanguageModel({ id: 'sonnet', settings });
+          const resultingSession = fork ? 'fork-session' : 'source-session';
+          vi.mocked(mockQuery).mockImplementation(() => success(resultingSession) as any);
+          await invoke(instance, firstMethod);
+          expect(vi.mocked(mockQuery).mock.calls[0]?.[0].options).toMatchObject(target);
+
+          // Two subsequent calls must append to the result, not rewind/fork again.
+          await invoke(instance, nextMethod);
+          await invoke(instance, firstMethod);
+          for (const call of vi.mocked(mockQuery).mock.calls.slice(1)) {
+            expect(call[0].options?.resume).toBe(resultingSession);
+            for (const key of [
+              'resumeSessionAt',
+              'resumeDropsTurn',
+              'forkSession',
+              'sessionId',
+              'continue',
+            ]) {
+              expect(call[0].options).not.toHaveProperty(key);
+            }
+          }
+          // Consumption belongs to the model, never the caller's shared settings.
+          const separateInstance = new ClaudeCodeLanguageModel({ id: 'sonnet', settings });
+          await invoke(separateInstance, nextMethod);
+          expect(vi.mocked(mockQuery).mock.calls[3]?.[0].options).toMatchObject(target);
+        }
+      );
+    });
+
+    describe.each(['doGenerate', 'doStream'] as const)('%s failures', (method) => {
+      it.each(['init-then-throw', 'error-result', 'error-subtype'] as const)(
+        'does not consume a pending rewind after %s',
+        async (failure) => {
+          const target = {
+            resume: 'source-session',
+            resumeSessionAt: 'kept-message',
+            resumeDropsTurn: 'discarded-prompt',
+          };
+          const instance = new ClaudeCodeLanguageModel({
+            id: 'sonnet',
+            settings: { sdkOptions: target },
+          });
+          vi.mocked(mockQuery)
+            .mockReturnValueOnce({
+              async *[Symbol.asyncIterator]() {
+                yield { type: 'system', subtype: 'init', session_id: 'failed-session' };
+                if (failure === 'init-then-throw')
+                  throw new Error('Resume rejected by --resume-drops-turn: wrong turn');
+                yield {
+                  type: 'result',
+                  subtype: failure === 'error-result' ? 'success' : 'error_during_execution',
+                  is_error: true,
+                  result: 'Resume rejected by --resume-drops-turn: wrong turn',
+                  errors: ['Resume rejected by --resume-drops-turn: wrong turn'],
+                  session_id: 'failed-session',
+                  usage: { input_tokens: 0, output_tokens: 0 },
+                };
+              },
+            } as any)
+            .mockReturnValue(success('source-session') as any);
+          await expect(invoke(instance, method)).rejects.toThrow(
+            'Resume rejected by --resume-drops-turn:'
+          );
+          await invoke(instance, method);
+          expect(vi.mocked(mockQuery).mock.calls[1]?.[0].options).toMatchObject(target);
+        }
+      );
+
+      it('leaves unguarded resumeSessionAt behavior unchanged', async () => {
+        const target = {
+          resume: 'source-session',
+          resumeSessionAt: 'kept-message',
+          forkSession: true,
+        };
+        const instance = new ClaudeCodeLanguageModel({ id: 'sonnet', settings: target });
+        vi.mocked(mockQuery).mockImplementation(() => success('fork-session') as any);
+        await invoke(instance, method);
+        await invoke(instance, method);
+        expect(vi.mocked(mockQuery).mock.calls[1]?.[0].options).toMatchObject(target);
+      });
+    });
+  });
+
   describe('doGenerate', () => {
     it('invokes onQueryCreated with the query response', async () => {
       const onQueryCreated = vi.fn();

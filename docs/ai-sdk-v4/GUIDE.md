@@ -2,6 +2,8 @@
 
 > **Historical:** Covers legacy provider versions 0.x (AI SDK v4). See the [main README](../../README.md) for current documentation.
 
+For the current AI SDK v6 provider (3.6.0+), `resumeDropsTurn`, `perTaskStopAffordance`, `permissionPrompts`, and `pluginDelivery` are documented in the [compatibility update](../../README.md#v360-compatibility-update); guarded rewind and model reuse are covered in [session management](../sessions.md#guarded-rewinds-v360). These additions do not apply to the legacy provider versions covered by this guide.
+
 ## Essential Examples
 
 ### Streaming Responses

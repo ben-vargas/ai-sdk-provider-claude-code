@@ -267,6 +267,9 @@ export interface ClaudeCodeSettings {
    * intended to be discarded. The SDK rejects the rewind if the discarded
    * range contains entries from another turn. Set `resumeSessionAt` to the
    * last chain entry of the turn being kept (not necessarily an assistant).
+   * After a successful guarded rewind, this model instance consumes the rewind
+   * pair and initial fork/session target, then resumes the resulting session on
+   * subsequent calls. Create a new model instance to request another rewind.
    * On "Resume rejected by --resume-drops-turn:", clear the pending rewind
    * and resume plainly; retrying the same rejected rewind cannot succeed.
    */

@@ -23,6 +23,8 @@ For a runnable end-to-end walkthrough, see [examples/session-management.ts](../e
 
 Use `resume` with `resumeSessionAt` set to the **last chain entry of the kept turn**, and `resumeDropsTurn` set to the **prompt UUID of the turn you intend to discard**. The SDK refuses if the discarded range includes unrelated entries, such as another queued user message or a task notification. For structured-output or end-turn tool sessions, the kept turn may end with a tool-result carrier or structured-output attachment rather than an assistant message.
 
+After a successful guarded rewind, the model instance consumes the `resumeSessionAt` / `resumeDropsTurn` pair and the initial fork/session target, including values supplied through `sdkOptions`. Reusing that model continues the resulting session (the new session if forked), preserving subsequent turns. The caller's settings object is not modified. Create a new model instance for another rewind. Failed requests do not consume the pair.
+
 A refusal starts with `Resume rejected by --resume-drops-turn:`. Clear the pending `resumeSessionAt` and `resumeDropsTurn` target and resume plainly to retain the evidence; repeatedly sending the same rejected rewind cannot succeed. These options apply to the SDK/headless path, not interactive CLI resumes.
 
 ### Capturing the session ID

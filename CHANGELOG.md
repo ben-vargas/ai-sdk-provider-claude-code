@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.6.0] - 2026-09-07
 
+### Fixed
+
+- Consume guarded-rewind settings after a successful request so subsequent calls on the same model continue the resulting session instead of reapplying a stale rewind. Includes generation/streaming reuse, forked sessions, and `sdkOptions` overrides; failed requests retain the pending rewind.
+
 ### Added
 
 - Backported the canary-driven `resumeDropsTurn`, `perTaskStopAffordance`, `permissionPrompts`, and `pluginDelivery` settings from the v7 provider line ([#143](https://github.com/ben-vargas/ai-sdk-provider-claude-code/pull/143), [#154](https://github.com/ben-vargas/ai-sdk-provider-claude-code/pull/154), [#165](https://github.com/ben-vargas/ai-sdk-provider-claude-code/pull/165)). Includes validation, query forwarding, SDK override precedence, and generation/streaming regression coverage. Unset settings preserve SDK defaults.
