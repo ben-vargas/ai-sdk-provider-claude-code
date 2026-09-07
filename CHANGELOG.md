@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-09-07
+
+### Fixed
+
+- Consume guarded-rewind settings after a successful request so subsequent calls on the same model continue the resulting session instead of reapplying a stale rewind. Includes generation/streaming reuse, forked sessions, and `sdkOptions` overrides; failed requests retain the pending rewind.
+
+### Added
+
+- Backported the canary-driven `resumeDropsTurn`, `perTaskStopAffordance`, `permissionPrompts`, and `pluginDelivery` settings from the v7 provider line ([#143](https://github.com/ben-vargas/ai-sdk-provider-claude-code/pull/143), [#154](https://github.com/ben-vargas/ai-sdk-provider-claude-code/pull/154), [#165](https://github.com/ben-vargas/ai-sdk-provider-claude-code/pull/165)). Includes validation, query forwarding, SDK override precedence, and generation/streaming regression coverage. Unset settings preserve SDK defaults.
+- Re-exported `PreModelSwitchHookInput`, `PostModelSwitchHookInput`, both specific output types, and `DirectoryAddedHookInput`, with compile-time export coverage.
+
+### Changed
+
+- Pinned `@anthropic-ai/claude-agent-sdk` exactly to `0.3.263` (previously `^0.3.205`, locked at `0.3.206`) and updated the exhaustive Options drift guard. This also updates the bundled Claude Code runtime; plugin delivery over stdin requires Claude Code 2.1.261+ when using a custom executable.
+- Retained AI SDK v6 / `LanguageModelV3`, Node >=18, existing v6 dependency ranges, and the `ai-sdk-v6` publish tag. The existing `agent` and `onElicitation` exclusions remain available through `sdkOptions`.
+
 ## [3.5.3] - 2026-07-10
 
 ### Fixed

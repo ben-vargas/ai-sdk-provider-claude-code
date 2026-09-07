@@ -58,6 +58,9 @@ type MappedKey =
   | 'mcpServers'
   | 'canUseTool'
   // --- conditionally-set block (only assigned when the setting is defined) ---
+  | 'resumeDropsTurn'
+  | 'permissionPrompts'
+  | 'pluginDelivery'
   | 'onUserDialog'
   | 'supportedDialogKinds'
   | 'systemPrompt' // also fed by deprecated customSystemPrompt/appendSystemPrompt
@@ -74,6 +77,7 @@ type MappedKey =
   | 'forwardSubagentText'
   | 'agentProgressSummaries'
   | 'includeHookEvents'
+  | 'perTaskStopAffordance'
   | 'taskBudget' // alpha passthrough
   | 'sessionStore' // alpha passthrough
   | 'sessionStoreFlush' // alpha passthrough

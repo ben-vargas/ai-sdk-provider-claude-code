@@ -2,8 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { ClaudeCodeLanguageModel } from './claude-code-language-model.js';
 import { getErrorMetadata, isAuthenticationError } from './errors.js';
-import type { Logger } from './types.js';
-import { APICallError, LoadAPIKeyError, type LanguageModelV3StreamPart } from '@ai-sdk/provider';
+import type { ClaudeCodeSettings, Logger } from './types.js';
+import {
+  APICallError,
+  LoadAPIKeyError,
+  type LanguageModelV3CallOptions,
+  type LanguageModelV3StreamPart,
+} from '@ai-sdk/provider';
 
 // Extend stream part union locally to include provider-specific 'tool-error'
 type ToolErrorPart = {
@@ -46,6 +51,146 @@ describe('ClaudeCodeLanguageModel', () => {
     model = new ClaudeCodeLanguageModel({
       id: 'sonnet',
       settings: {},
+    });
+  });
+
+  describe('guarded rewind reuse', () => {
+    const callOptions: LanguageModelV3CallOptions = {
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'next turn' }] }],
+    };
+    type Method = 'doGenerate' | 'doStream';
+    async function invoke(instance: ClaudeCodeLanguageModel, method: Method) {
+      if (method === 'doGenerate') return instance.doGenerate(callOptions);
+      const { stream } = await instance.doStream(callOptions);
+      for await (const part of stream as unknown as AsyncIterable<LanguageModelV3StreamPart>) {
+        if (part.type === 'error') throw part.error;
+      }
+    }
+    function success(sessionId: string) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'system', subtype: 'init', session_id: sessionId };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            is_error: false,
+            session_id: sessionId,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      };
+    }
+
+    describe.each([
+      ['doGenerate', 'doGenerate'],
+      ['doGenerate', 'doStream'],
+      ['doStream', 'doGenerate'],
+      ['doStream', 'doStream'],
+    ] as const)('%s then %s', (firstMethod, nextMethod) => {
+      it.each([
+        { overrides: false, fork: false },
+        { overrides: true, fork: false },
+        { overrides: false, fork: true },
+        { overrides: true, fork: true },
+      ])(
+        'continues the resulting session ($overrides overrides, $fork fork)',
+        async ({ overrides, fork }) => {
+          const target = Object.freeze({
+            resume: 'source-session',
+            resumeSessionAt: 'kept-message',
+            resumeDropsTurn: 'discarded-prompt',
+            ...(fork ? { forkSession: true, sessionId: 'fork-session' } : {}),
+          });
+          const settings: ClaudeCodeSettings = Object.freeze(
+            overrides
+              ? {
+                  resume: 'shadowed-source',
+                  resumeSessionAt: 'shadowed-message',
+                  resumeDropsTurn: 'shadowed-prompt',
+                  sdkOptions: target,
+                }
+              : { ...target, sdkOptions: Object.freeze({ resumeDropsTurn: undefined }) }
+          );
+          const instance = new ClaudeCodeLanguageModel({ id: 'sonnet', settings });
+          const resultingSession = fork ? 'fork-session' : 'source-session';
+          vi.mocked(mockQuery).mockImplementation(() => success(resultingSession) as any);
+          await invoke(instance, firstMethod);
+          expect(vi.mocked(mockQuery).mock.calls[0]?.[0].options).toMatchObject(target);
+
+          // Two subsequent calls must append to the result, not rewind/fork again.
+          await invoke(instance, nextMethod);
+          await invoke(instance, firstMethod);
+          for (const call of vi.mocked(mockQuery).mock.calls.slice(1)) {
+            expect(call[0].options?.resume).toBe(resultingSession);
+            for (const key of [
+              'resumeSessionAt',
+              'resumeDropsTurn',
+              'forkSession',
+              'sessionId',
+              'continue',
+            ]) {
+              expect(call[0].options).not.toHaveProperty(key);
+            }
+          }
+          // Consumption belongs to the model, never the caller's shared settings.
+          const separateInstance = new ClaudeCodeLanguageModel({ id: 'sonnet', settings });
+          await invoke(separateInstance, nextMethod);
+          expect(vi.mocked(mockQuery).mock.calls[3]?.[0].options).toMatchObject(target);
+        }
+      );
+    });
+
+    describe.each(['doGenerate', 'doStream'] as const)('%s failures', (method) => {
+      it.each(['init-then-throw', 'error-result', 'error-subtype'] as const)(
+        'does not consume a pending rewind after %s',
+        async (failure) => {
+          const target = {
+            resume: 'source-session',
+            resumeSessionAt: 'kept-message',
+            resumeDropsTurn: 'discarded-prompt',
+          };
+          const instance = new ClaudeCodeLanguageModel({
+            id: 'sonnet',
+            settings: { sdkOptions: target },
+          });
+          vi.mocked(mockQuery)
+            .mockReturnValueOnce({
+              async *[Symbol.asyncIterator]() {
+                yield { type: 'system', subtype: 'init', session_id: 'failed-session' };
+                if (failure === 'init-then-throw')
+                  throw new Error('Resume rejected by --resume-drops-turn: wrong turn');
+                yield {
+                  type: 'result',
+                  subtype: failure === 'error-result' ? 'success' : 'error_during_execution',
+                  is_error: true,
+                  result: 'Resume rejected by --resume-drops-turn: wrong turn',
+                  errors: ['Resume rejected by --resume-drops-turn: wrong turn'],
+                  session_id: 'failed-session',
+                  usage: { input_tokens: 0, output_tokens: 0 },
+                };
+              },
+            } as any)
+            .mockReturnValue(success('source-session') as any);
+          await expect(invoke(instance, method)).rejects.toThrow(
+            'Resume rejected by --resume-drops-turn:'
+          );
+          await invoke(instance, method);
+          expect(vi.mocked(mockQuery).mock.calls[1]?.[0].options).toMatchObject(target);
+        }
+      );
+
+      it('leaves unguarded resumeSessionAt behavior unchanged', async () => {
+        const target = {
+          resume: 'source-session',
+          resumeSessionAt: 'kept-message',
+          forkSession: true,
+        };
+        const instance = new ClaudeCodeLanguageModel({ id: 'sonnet', settings: target });
+        vi.mocked(mockQuery).mockImplementation(() => success('fork-session') as any);
+        await invoke(instance, method);
+        await invoke(instance, method);
+        expect(vi.mocked(mockQuery).mock.calls[1]?.[0].options).toMatchObject(target);
+      });
     });
   });
 
@@ -200,21 +345,26 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(typeof call.prompt).toBe('string');
     });
 
-    it('throws when canUseTool is combined with permissionPromptToolName', async () => {
-      const model = new ClaudeCodeLanguageModel({
-        id: 'sonnet',
-        settings: {
-          canUseTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-          permissionPromptToolName: 'stdio',
-          streamingInput: 'auto',
-        } as any,
-      });
+    it.each([undefined, 'host', 'none'] as const)(
+      'rejects conflicting permission handlers with permissionPrompts=%s',
+      async (permissionPrompts) => {
+        const model = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: {
+            canUseTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            permissionPromptToolName: 'stdio',
+            permissionPrompts,
+            streamingInput: 'auto',
+          } as any,
+        });
 
-      const promise = model.doGenerate({
-        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
-      } as any);
-      await expect(promise).rejects.toThrow(/cannot be used with permissionPromptToolName/);
-    });
+        const promise = model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+        await expect(promise).rejects.toThrow(/cannot be used with permissionPromptToolName/);
+      }
+    );
+
     it('should pass through hooks and canUseTool to SDK query options', async () => {
       const preToolHook = async () => ({ continue: true });
       const hooks = { PreToolUse: [{ hooks: [preToolHook] }] } as any;
@@ -577,6 +727,7 @@ describe('ClaudeCodeLanguageModel', () => {
           maxBudgetUsd: 2,
           plugins: [{ type: 'local', path: './plugins/example' }],
           resumeSessionAt: 'message-uuid',
+          resumeDropsTurn: 'dropped-turn-uuid',
           sandbox: { enabled: true },
           tools: ['Read'],
           sdkOptions: {
@@ -609,6 +760,7 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.maxBudgetUsd).toBe(2);
       expect(call?.options?.plugins).toEqual([{ type: 'local', path: './plugins/example' }]);
       expect(call?.options?.resumeSessionAt).toBe('message-uuid');
+      expect(call?.options?.resumeDropsTurn).toBe('dropped-turn-uuid');
       expect(call?.options?.sandbox).toEqual({ enabled: true });
       expect(call?.options?.tools).toEqual(['Read']);
       expect(call?.options?.allowDangerouslySkipPermissions).toBe(true);
@@ -688,6 +840,131 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call?.options?.forwardSubagentText).toBe(true);
       expect(call?.options?.agentProgressSummaries).toBe(true);
       expect(call?.options?.includeHookEvents).toBe(true);
+    });
+
+    describe.each(['doGenerate', 'doStream'] as const)('%s SDK delivery options', (method) => {
+      const cases: Array<{
+        name: string;
+        settings: ClaudeCodeSettings;
+        permissionPrompts?: 'host' | 'none';
+        pluginDelivery?: 'argv' | 'initialize';
+        perTaskStopAffordance?: boolean;
+        resumeDropsTurn?: string;
+      }> = [
+        { name: 'unset defaults', settings: {} },
+        {
+          name: 'explicit defaults',
+          settings: {
+            permissionPrompts: 'host',
+            pluginDelivery: 'argv',
+            perTaskStopAffordance: false,
+            resumeDropsTurn: 'old-turn',
+          },
+          perTaskStopAffordance: false,
+          resumeDropsTurn: 'old-turn',
+          permissionPrompts: 'host',
+          pluginDelivery: 'argv',
+        },
+        {
+          name: 'headless prompts and stdin plugins',
+          settings: {
+            permissionPrompts: 'none',
+            pluginDelivery: 'initialize',
+            perTaskStopAffordance: true,
+            resumeDropsTurn: 'new-turn',
+          },
+          perTaskStopAffordance: true,
+          resumeDropsTurn: 'new-turn',
+          permissionPrompts: 'none',
+          pluginDelivery: 'initialize',
+        },
+        {
+          name: 'SDK overrides',
+          perTaskStopAffordance: false,
+          resumeDropsTurn: 'new-turn',
+          settings: {
+            permissionPrompts: 'host',
+            pluginDelivery: 'argv',
+            perTaskStopAffordance: true,
+            resumeDropsTurn: 'old-turn',
+            sdkOptions: {
+              permissionPrompts: 'none',
+              pluginDelivery: 'initialize',
+              perTaskStopAffordance: false,
+              resumeDropsTurn: 'new-turn',
+            },
+          },
+          permissionPrompts: 'none',
+          pluginDelivery: 'initialize',
+        },
+        {
+          name: 'undefined SDK overrides preserve settings',
+          perTaskStopAffordance: false,
+          resumeDropsTurn: 'old-turn',
+          settings: {
+            permissionPrompts: 'none',
+            pluginDelivery: 'initialize',
+            perTaskStopAffordance: false,
+            resumeDropsTurn: 'old-turn',
+            sdkOptions: {
+              permissionPrompts: undefined,
+              pluginDelivery: undefined,
+              perTaskStopAffordance: undefined,
+              resumeDropsTurn: undefined,
+            },
+          },
+          permissionPrompts: 'none',
+          pluginDelivery: 'initialize',
+        },
+      ];
+
+      it.each(cases)('preserves $name at the SDK boundary', async (testCase) => {
+        const canUseTool = vi.fn(async () => ({ behavior: 'deny' as const, message: 'Denied' }));
+        const plugins = [{ type: 'local' as const, path: '/tmp/test-plugin' }];
+        const model = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: { ...testCase.settings, plugins, canUseTool },
+        });
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 's-delivery-options',
+              usage: { input_tokens: 0, output_tokens: 0 },
+            };
+          },
+        } as any);
+        const options: LanguageModelV3CallOptions = {
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        };
+        if (method === 'doGenerate') {
+          await model.doGenerate(options);
+        } else {
+          const { stream } = await model.doStream(options);
+          const reader = stream.getReader();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            expect(value.type).not.toBe('error');
+          }
+        }
+        const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
+        for (const key of [
+          'permissionPrompts',
+          'pluginDelivery',
+          'perTaskStopAffordance',
+          'resumeDropsTurn',
+        ] as const) {
+          if (testCase[key] === undefined) expect(call?.options).not.toHaveProperty(key);
+          else expect(call?.options?.[key]).toBe(testCase[key]);
+        }
+        // The SDK owns prompt suppression; keep the callback and streaming
+        // input contract intact even when permissionPrompts is 'none'.
+        expect(call?.options?.canUseTool).toBe(canUseTool);
+        expect(typeof call?.prompt).not.toBe('string');
+        expect(call?.options?.plugins).toEqual(plugins);
+      });
     });
 
     it('should pass through onUserDialog and supportedDialogKinds', async () => {

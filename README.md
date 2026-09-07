@@ -264,6 +264,7 @@ This provider exposes Agent SDK options directly. Key options include:
 | `sandbox`                         | Configure sandbox behavior (`{ enabled: true }`). Cannot be combined with a `settings` file path (inline `settings` objects are fine)                                                                                                                            |
 | `plugins`                         | Load custom plugins from local paths                                                                                                                                                                                                                             |
 | `resumeSessionAt`                 | Resume session at a specific message UUID                                                                                                                                                                                                                        |
+| `resumeDropsTurn`                 | Guard a truncating resume by declaring the prompt UUID of the turn to discard; pair with `resumeSessionAt` (v3.6.0+). See [session management](docs/sessions.md).                                                                                                |
 | `enableFileCheckpointing`         | Enable file rewind support                                                                                                                                                                                                                                       |
 | `maxBudgetUsd`                    | Maximum budget in USD for the query                                                                                                                                                                                                                              |
 | `tools`                           | Tool configuration (array of names or preset)                                                                                                                                                                                                                    |
@@ -287,6 +288,9 @@ This provider exposes Agent SDK options directly. Key options include:
 | `forwardSubagentText`             | Forward subagent text/thinking blocks for nested transcripts (v3.5.0+)                                                                                                                                                                                           |
 | `agentProgressSummaries`          | Periodic AI-generated progress summaries for running subagents (v3.5.0+)                                                                                                                                                                                         |
 | `includeHookEvents`               | Include hook lifecycle events in the output stream (v3.5.0+)                                                                                                                                                                                                     |
+| `perTaskStopAffordance`           | Declare that the host exposes per-task stop controls wired to `Query.stopTask()` (v3.6.0+). See the compatibility notes below.                                                                                                                                   |
+| `permissionPrompts`               | `'host'` (default) routes prompts to the host; `'none'` automatically denies requests that need approval without calling `canUseTool` (v3.6.0+).                                                                                                                 |
+| `pluginDelivery`                  | `'argv'` (default) passes plugin paths as flags; `'initialize'` sends them over stdin to avoid command-line length limits (v3.6.0+). Requires Claude Code 2.1.261+; the bundled binary qualifies.                                                                |
 | `fallbackModel`                   | Fallback model(s) if the primary is overloaded — accepts a comma-separated list to try in order. Must differ from the main model                                                                                                                                 |
 | `onUserDialog`                    | Callback rendering blocking CLI dialogs (`request_user_dialog`); see **User dialogs** below                                                                                                                                                                      |
 | `supportedDialogKinds`            | Dialog kinds your `onUserDialog` can render; required for dialogs to be emitted at all                                                                                                                                                                           |
@@ -388,7 +392,18 @@ A few Agent SDK surfaces are deliberately not wrapped by this provider. A compil
 
 ## Claude Agent SDK 0.3.x Notes
 
-This provider depends on `@anthropic-ai/claude-agent-sdk@^0.3.205`. The 0.3.x line introduces a few changes worth knowing about:
+This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.263` (exact pin). The 0.3.x line introduces a few changes worth knowing about:
+
+### v3.6.0 compatibility update
+
+This release backports the canary-driven SDK options from the AI SDK v7 line while retaining AI SDK v6 / `LanguageModelV3` interfaces and the `ai-sdk-v6` npm tag. The exact SDK pin prevents fresh installs from silently adopting later SDK releases.
+
+- `permissionPrompts: 'none'` denies actions that would require approval. Permission mode, rules, and hooks still apply. The SDK still rejects combining `canUseTool` and `permissionPromptToolName`, even when prompts are disabled.
+- `pluginDelivery: 'initialize'` requires Claude Code 2.1.261 or newer. This matters when supplying a custom `pathToClaudeCodeExecutable`; the bundled binary supports it.
+- `perTaskStopAffordance: true` is a host capability assertion: only set it when the app actually provides task-stop controls using the raw `Query` captured through `onQueryCreated`. On a live open-input query it lets an interrupt spare background tasks; unset retains the SDK's fail-closed behavior. It does not enable streaming input, and closed-input runs still kill background tasks on interrupt. Query controls must be called while the query is live.
+- `resumeDropsTurn` declares the prompt UUID of the turn a truncating resume intends to discard. Pair it with `resumeSessionAt` set to the last chain entry of the kept turn. If the discarded range contains anything belonging to another turn, the SDK rejects the rewind; clear the rewind options and resume plainly instead of retrying the same rejected request. After success, the same model instance consumes the rewind pair and continues the resulting session; create a new instance for another rewind. See [session settings](docs/sessions.md).
+
+All four settings are omitted when unset and support the existing `sdkOptions` override precedence. Hook type exports now also include `PreModelSwitchHookInput`, `PostModelSwitchHookInput`, their specific output types, and `DirectoryAddedHookInput`.
 
 ### New peer dependencies
 
