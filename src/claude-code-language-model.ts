@@ -53,7 +53,7 @@ import type {
  * Provider version reported to the Agent SDK via CLAUDE_AGENT_SDK_CLIENT_APP.
  * Keep in sync with package.json (kept as a constant to avoid a build step).
  */
-const PROVIDER_VERSION = '4.3.0';
+const PROVIDER_VERSION = '4.3.1';
 const DEFAULT_CLIENT_APP = `ai-sdk-provider-claude-code/${PROVIDER_VERSION}`;
 
 const CLAUDE_CODE_TRUNCATION_WARNING =
@@ -1203,6 +1203,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
   readonly settings: ClaudeCodeSettings;
 
   private sessionId?: string;
+  private guardedRewindCompleted = false;
   private modelValidationWarning?: string;
   private settingsValidationWarnings: string[];
   private logger: Logger;
@@ -1261,6 +1262,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
   }
 
   private getEffectiveResume(sdkOptions?: Partial<Options>): string | undefined {
+    // A successful guarded rewind starts this instance's continuing conversation,
+    // including when the initial request forked into a different session.
+    if (this.guardedRewindCompleted) return this.sessionId;
     // The SDK treats a blank/whitespace resume id as absent, so skip blanks
     // rather than letting one shadow a real later candidate or reach the CLI
     // as `--resume ''`.
@@ -2112,6 +2116,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
 
     this.applyClaudeReasoningProviderOptions(opts, claudeReasoningProviderOptions);
 
+    // Rewind controls are one-shot for this model instance. Apply this AFTER
+    // sdkOptions so overrides cannot reintroduce the consumed target or fork.
+    if (this.guardedRewindCompleted) {
+      opts.resume = effectiveResume;
+      delete opts.resumeSessionAt;
+      delete opts.resumeDropsTurn;
+      delete opts.forkSession;
+      delete opts.continue;
+      delete opts.sessionId;
+    }
+
     // Resolve all session-id / resume cross-option rules on the FINAL merged
     // options: blank-resume restoration then --session-id exclusivity, in that
     // order. See applySessionResolution for the full rationale.
@@ -2385,6 +2400,22 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
       promptExcerpt: messagesPrompt.substring(0, 200),
       isRetryable,
     });
+  }
+
+  private completeGuardedRewind(
+    options: Options,
+    result: Extract<SDKMessage, { type: 'result' }>
+  ): void {
+    // Init messages and failed/rejected requests do not establish success.
+    // Keep state on the instance instead of mutating shared caller settings.
+    if (
+      result.subtype === 'success' &&
+      !result.is_error &&
+      options.resumeSessionAt &&
+      options.resumeDropsTurn
+    ) {
+      this.guardedRewindCompleted = true;
+    }
   }
 
   private setSessionId(sessionId: string): void {
@@ -3235,6 +3266,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
           done();
           receivedResultMessage = true;
           this.setSessionId(message.session_id);
+          this.completeGuardedRewind(queryOptions, message);
           costUsd = message.total_cost_usd;
           durationMs = message.duration_ms;
           modelUsage = message.modelUsage;
@@ -4744,6 +4776,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
 
               // Store session ID in the model instance
               this.setSessionId(message.session_id);
+              this.completeGuardedRewind(queryOptions, message);
 
               // Use structured output from SDK if available (native JSON schema support)
               const structuredOutput =
