@@ -53,7 +53,7 @@ import type {
  * Provider version reported to the Agent SDK via CLAUDE_AGENT_SDK_CLIENT_APP.
  * Keep in sync with package.json (kept as a constant to avoid a build step).
  */
-const PROVIDER_VERSION = '4.2.0';
+const PROVIDER_VERSION = '4.3.0';
 const DEFAULT_CLIENT_APP = `ai-sdk-provider-claude-code/${PROVIDER_VERSION}`;
 
 const CLAUDE_CODE_TRUNCATION_WARNING =
@@ -1929,6 +1929,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
       opts,
       this.resolvePortableReasoningOptions(options, sdkOptions, claudeReasoningProviderOptions)
     );
+    if (this.settings.permissionPrompts !== undefined) {
+      opts.permissionPrompts = this.settings.permissionPrompts;
+    }
+    if (this.settings.pluginDelivery !== undefined) {
+      opts.pluginDelivery = this.settings.pluginDelivery;
+    }
     // Blocking user-dialog handling (SDK fails closed without these: the CLI
     // never emits a dialog kind that is not declared in supportedDialogKinds,
     // and the dialog-gated flow degrades to its no-dialog behavior).

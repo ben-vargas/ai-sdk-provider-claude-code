@@ -211,6 +211,21 @@ describe('claudeCodeSettingsSchema', () => {
     expect(claudeCodeSettingsSchema.safeParse({ title: 42 }).success).toBe(false);
   });
 
+  it.each([
+    ['permissionPrompts', ['host', 'none']],
+    ['pluginDelivery', ['argv', 'initialize']],
+  ])('validates %s without materializing an unset default', (key, values) => {
+    for (const value of values) {
+      const result = claudeCodeSettingsSchema.safeParse({ [key]: value });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data).toHaveProperty(key, value);
+    }
+    for (const value of ['invalid', false, null, 42]) {
+      expect(claudeCodeSettingsSchema.safeParse({ [key]: value }).success).toBe(false);
+    }
+    expect(claudeCodeSettingsSchema.parse({})).not.toHaveProperty(key);
+  });
+
   it('should accept the new boolean passthrough options', () => {
     for (const key of [
       'forwardSubagentText',

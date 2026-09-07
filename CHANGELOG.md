@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.0] - 2026-09-07
+
+### Added
+
+- **`permissionPrompts` and `pluginDelivery` settings** ([#164](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/164)) - Exposes the SDK's permission prompt routing (`host` or `none`) and plugin delivery (`argv` or `initialize`) options, with validation and `sdkOptions` overrides. Unset options preserve SDK defaults. `permissionPrompts: 'none'` denies requests that would prompt; permission mode, rules and hooks still apply. Plugin delivery over stdin requires Claude Code 2.1.261+ (the bundled binary qualifies).
+
+### Changed
+
+- **Claude Agent SDK pinned at `0.3.263`** - Updates the exact pin from `0.3.251` and accounts for both new options in the compile-time drift guard for #164.
+
 ## [4.2.0] - 2026-08-31
 
 ### Added

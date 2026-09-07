@@ -59,6 +59,8 @@ type MappedKey =
   | 'mcpServers'
   | 'canUseTool'
   // --- conditionally-set block (only assigned when the setting is defined) ---
+  | 'permissionPrompts'
+  | 'pluginDelivery'
   | 'onUserDialog'
   | 'onElicitation'
   | 'supportedDialogKinds'
