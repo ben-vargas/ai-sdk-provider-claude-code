@@ -67,6 +67,7 @@ type MappedKey =
   | 'systemPrompt' // also fed by deprecated customSystemPrompt/appendSystemPrompt
   | 'settingSources' // pinned to [] when unset (isolation default)
   | 'additionalDirectories'
+  | 'projectConfigRoot'
   | 'agent'
   | 'agents'
   | 'skills'

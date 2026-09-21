@@ -17,6 +17,15 @@ export function isBlankResume(value: unknown): boolean {
   return typeof value === 'string' && value.trim() === '';
 }
 
+/**
+ * Absolute-path check that does not depend on node:path so settings
+ * validation stays runtime-agnostic: POSIX (`/...`), Windows drive
+ * (`C:\...` / `C:/...`) or UNC (`\\server\share`).
+ */
+function isAbsolutePathLike(value: string): boolean {
+  return value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\');
+}
+
 // Helper for Zod v3/v4 compatibility
 // Use a simple z.any() for functions to work with both versions
 const loggerFunctionSchema = z.object({
@@ -284,6 +293,11 @@ export const claudeCodeSettingsSchema = z
     logger: z.union([z.literal(false), loggerFunctionSchema]).optional(),
     env: z.record(z.string(), z.string().optional()).optional(),
     additionalDirectories: z.array(z.string()).optional(),
+    // SDK contract: an absolute path (the trusted checkout `cwd` is a worktree of).
+    projectConfigRoot: z
+      .string()
+      .refine(isAbsolutePathLike, { message: 'projectConfigRoot must be an absolute path' })
+      .optional(),
     agent: z.string().optional(),
     agents: z
       .record(

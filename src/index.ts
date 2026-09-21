@@ -195,6 +195,9 @@ export type {
   PermissionUpdateDestination,
   // Provenance of a canUseTool decision (PermissionResult.decisionClassification)
   PermissionDecisionClassification,
+  // MCP server provenance carried on canUseTool options (`mcpServer`) and
+  // tool hook inputs (`mcp_server`) for `mcp__*` tools
+  McpServerProvenance,
   // Blocking user-dialog callback (`onUserDialog` setting) and its request/result shapes
   OnUserDialog,
   OnElicitation,

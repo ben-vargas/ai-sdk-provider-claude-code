@@ -730,6 +730,19 @@ export interface ClaudeCodeSettings {
   additionalDirectories?: string[];
 
   /**
+   * Trusted checkout that `cwd` is a worktree of (absolute path). Project
+   * settings (hooks, permissions), `.mcp.json`, the `.claude` config trees
+   * (commands, agents, skills, workflows, routines, output-styles) and
+   * `CLAUDE_PROJECT_DIR` are resolved from here instead of `cwd`, so whatever
+   * the branch checked out in `cwd` carries is not what the session runs.
+   * Relevant when the session loads project configuration (for example
+   * `settingSources` includes `'project'`); unset keeps the SDK default of
+   * resolving these from `cwd`. Requires Claude Code 2.1.275+ (the bundled
+   * binary qualifies).
+   */
+  projectConfigRoot?: string;
+
+  /**
    * Named agent persona for the main conversation. The agent must be defined
    * in `agents` or loaded from settings; its prompt/tools/model augment the
    * main thread similarly to the Claude Code `--agent` flag.

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.2] - 2026-09-21
+
+### Added
+
+- **`projectConfigRoot` setting** ([#170](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/170)) - Maps the Agent SDK's new `projectConfigRoot` option: the absolute path of the trusted checkout that `cwd` is a worktree of. Project settings (hooks, permissions), `.mcp.json`, the `.claude` config trees (commands, agents, skills, workflows, routines, output-styles) and `CLAUDE_PROJECT_DIR` resolve from there instead of `cwd`, so the branch checked out in the worktree cannot change what the session runs. Forwarded only when set (the SDK default resolves from `cwd`); `sdkOptions.projectConfigRoot` overrides it. Validation rejects relative paths. Requires Claude Code 2.1.275+ (the bundled binary qualifies).
+- **`McpServerProvenance` type re-export** - The SDK 0.3.278 `{ name, source }` shape now carried on `canUseTool` options (`mcpServer`) and tool hook inputs (`mcp_server`) for `mcp__*` tools, so hosts can key trust decisions on `source` instead of the tool-name prefix.
+
+### Changed
+
+- **Claude Agent SDK pinned at `0.3.278`** - Bumps the exact `@anthropic-ai/claude-agent-sdk` pin from `0.3.263`, resolving the weekly canary's Options drift guard failure ([#170](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/170)). `projectConfigRoot` was the only new `Options` key (67 → 68); typecheck and the unit suite pass against the new pin.
+
+### Inherited upstream behavior changes
+
+- Because this bump replaces the bundled Agent SDK runtime, 0.3.263 → 0.3.278 behavior changes are inherited. Notably, system-prompt recording is now on by default: a conversation's first request renders the system prompt (including a preset `append` or a custom prompt), records it, and every later request or resume of that session sends the record as-is until compaction or a new session — pass `snapshot: false` on the preset/custom prompt object to render fresh each request. `AgentDefinition` gains `omitClaudeMd` (passes through the `agents` setting unchanged), and `canUseTool` options / tool hook inputs carry MCP server provenance (see Added above).
+
 ## [4.3.1] - 2026-09-07
 
 ### Fixed
