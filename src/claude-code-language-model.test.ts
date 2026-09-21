@@ -1154,6 +1154,67 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(overriddenCall?.options?.perTaskStopAffordance).toBe(true);
     });
 
+    describe.each(['doGenerate', 'doStream'] as const)('%s projectConfigRoot', (method) => {
+      const resultMessage = () => ({
+        async *[Symbol.asyncIterator]() {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's-project-config-root',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      });
+
+      async function run(model: ClaudeCodeLanguageModel) {
+        vi.mocked(mockQuery).mockClear();
+        vi.mocked(mockQuery).mockReturnValue(resultMessage() as any);
+        const options: LanguageModelV4CallOptions = {
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        };
+        if (method === 'doGenerate') {
+          await model.doGenerate(options);
+        } else {
+          const { stream } = await model.doStream(options);
+          const reader = stream.getReader();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            expect(value.type).not.toBe('error');
+          }
+        }
+        return vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+      }
+
+      it('forwards projectConfigRoot verbatim alongside cwd', async () => {
+        const call = await run(
+          new ClaudeCodeLanguageModel({
+            id: 'sonnet',
+            settings: { projectConfigRoot: '/srv/checkouts/main' },
+          })
+        );
+        expect(call?.options?.projectConfigRoot).toBe('/srv/checkouts/main');
+      });
+
+      it('omits projectConfigRoot when unset (SDK default resolves from cwd)', async () => {
+        const call = await run(new ClaudeCodeLanguageModel({ id: 'sonnet', settings: {} }));
+        expect('projectConfigRoot' in (call?.options ?? {})).toBe(false);
+      });
+
+      it('lets sdkOptions override projectConfigRoot', async () => {
+        const call = await run(
+          new ClaudeCodeLanguageModel({
+            id: 'sonnet',
+            settings: {
+              projectConfigRoot: '/srv/checkouts/main',
+              sdkOptions: { projectConfigRoot: '/srv/checkouts/trusted' },
+            } as any,
+          })
+        );
+        expect(call?.options?.projectConfigRoot).toBe('/srv/checkouts/trusted');
+      });
+    });
+
     it('should pass through onUserDialog and supportedDialogKinds', async () => {
       const onUserDialog = vi.fn(async () => ({ behavior: 'cancelled' as const }));
       const modelWithDialogs = new ClaudeCodeLanguageModel({
