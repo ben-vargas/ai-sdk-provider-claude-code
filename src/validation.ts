@@ -457,6 +457,20 @@ export function validateSettings(settings: unknown): {
       return undefined;
     };
 
+    // SDK contract: projectConfigRoot is an absolute path. The schema checks
+    // the first-class setting, but sdkOptions.projectConfigRoot overrides it
+    // at query time, so check the effective value too.
+    const effProjectConfigRoot = effective('projectConfigRoot');
+    if (
+      effProjectConfigRoot !== undefined &&
+      (typeof effProjectConfigRoot !== 'string' || !isAbsolutePathLike(effProjectConfigRoot))
+    ) {
+      errors.push(
+        'sdkOptions.projectConfigRoot must be an absolute path (it overrides the projectConfigRoot setting).'
+      );
+      return { valid: false, warnings, errors };
+    }
+
     // SDK constraint: sessionStore mirroring requires local session writes,
     // so it cannot be combined with persistSession: false.
     if (effSessionStore !== undefined && effective('persistSession') === false) {

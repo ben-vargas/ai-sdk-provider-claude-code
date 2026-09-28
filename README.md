@@ -503,7 +503,7 @@ The Agent SDK now distributes the Claude Code runtime as per-platform native bin
 
 SDK 0.3.x changed the SDK-level default: omitting `settingSources` now loads ALL filesystem settings (user, project, and local — matching CLI behavior). This provider preserves its documented isolation default by explicitly passing `settingSources: []` when you don't set it. Opt in to filesystem settings via `settingSources: ['user', 'project', 'local']` (or override through `sdkOptions.settingSources`).
 
-When `cwd` is a git worktree of a trusted checkout, set `projectConfigRoot` (v4.3.2+) to that checkout's absolute path. Project settings (hooks, permissions), `.mcp.json`, the `.claude` config trees (commands, agents, skills, workflows, routines, output-styles) and `CLAUDE_PROJECT_DIR` then come from the trusted checkout instead of from whatever branch the worktree has checked out. The option is forwarded only when set, `sdkOptions.projectConfigRoot` overrides it, and validation rejects relative paths. Requires Claude Code 2.1.275+ (the bundled binary qualifies).
+When `cwd` is a git worktree of a trusted checkout, set `projectConfigRoot` (v4.3.2+) to that checkout's absolute path. Project settings (hooks, permissions), `.mcp.json`, the `.claude` config trees (commands, agents, skills, workflows, routines, output-styles) and `CLAUDE_PROJECT_DIR` then come from the trusted checkout instead of from whatever branch the worktree has checked out. The option is forwarded only when set, `sdkOptions.projectConfigRoot` overrides it, and validation rejects relative paths (including in that override). Requires Claude Code 2.1.275+ (the bundled binary qualifies).
 
 ### Subprocess environment allowlist
 
