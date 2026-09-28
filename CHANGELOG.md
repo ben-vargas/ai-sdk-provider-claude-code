@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Claude Agent SDK pinned at `0.3.283`** - Bumps the exact `@anthropic-ai/claude-agent-sdk` pin from `0.3.278`, resolving the weekly canary's Options drift guard failure ([#172](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/172)). `verbatimPrompts` was the only new `Options` key (68 → 69); typecheck and the unit suite pass against the new pin.
+- **Claude Agent SDK pinned at `0.3.283`** - Bumps the exact `@anthropic-ai/claude-agent-sdk` pin from `0.3.278`, resolving the weekly canary's Options drift guard failure ([#172](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/172)). `verbatimPrompts` was the only new `Options` key (68 → 69); typecheck and the unit suite pass against the new pin. The bundled Claude Code CLI moves from 2.1.278 to 2.1.283, the latest CLI release.
 
 ### Inherited upstream behavior changes
 

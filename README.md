@@ -23,6 +23,8 @@
 | 1.x.x            | v5             | `@anthropic-ai/claude-code`      | `v1-claude-code-sdk` | Legacy      | `v1`        |
 | 0.x.x            | v4             | `@anthropic-ai/claude-code`      | `ai-sdk-v4`          | Legacy      | `ai-sdk-v4` |
 
+**Claude Code CLI:** provider 4.3.3 bundles Claude Code CLI `2.1.283`, the latest CLI release (2026-09-25), through its exact `@anthropic-ai/claude-agent-sdk@0.3.283` pin. If you run your own binary via `pathToClaudeCodeExecutable`, check the minimum Claude Code version noted on individual settings.
+
 Install commands for each line are listed under [Installation](#installation) below.
 
 ## Zod Compatibility
@@ -482,7 +484,7 @@ const model = claudeCode('sonnet', {
 
 ## Claude Agent SDK 0.3.x Notes
 
-This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.283` (exact pin). The pin is exact rather than a caret because upstream releases have shipped broken `sdk.d.ts` declarations before (0.3.198–0.3.202 collapsed `SDKMessage` to `any`, fixed in 0.3.203); the weekly canary gates each pin move. The 0.3.x line introduces a few changes worth knowing about:
+This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.283` (exact pin), which bundles Claude Code CLI `2.1.283`. The pin is exact rather than a caret because upstream releases have shipped broken `sdk.d.ts` declarations before (0.3.198–0.3.202 collapsed `SDKMessage` to `any`, fixed in 0.3.203); the weekly canary gates each pin move. The 0.3.x line introduces a few changes worth knowing about:
 
 ### New peer dependencies
 
