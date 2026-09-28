@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.3] - 2026-09-28
+
+### Added
+
+- **`verbatimPrompts` setting** ([#172](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/172)) - Maps the Agent SDK's new `verbatimPrompts` option: every user message is sent with `client_composed: true`, so Claude Code delivers the prompt text as written, with no `@path` file-mention expansion and no slash-command dispatch. Use it when prompt text is assembled from content the end user did not type. On current CLIs such a turn also skips the turn-start attachment pass as a whole (`@server:resource` MCP mentions, nested `CLAUDE.md` and rules files, skill and tool listings, per-turn reminders); most of that context arrives after the turn's first tool call instead. Forwarded only when set (the SDK default is `false`); `sdkOptions.verbatimPrompts` overrides it. Requires Claude Code 2.1.248+ (the bundled binary qualifies). Provider notes: ordinary AI SDK user prompt text is prefixed with `Human:`, so a leading slash in that text does not reach the CLI as a leading command; messages sent through `MessageInjector` or `Query.streamInput()` are not prefixed, and the setting applies to those too. In smoke tests against the bundled CLI, `@path` mentions were not expanded under the isolation default (`settingSources: []`) even with the setting off.
+
+### Changed
+
+- **Claude Agent SDK pinned at `0.3.283`** - Bumps the exact `@anthropic-ai/claude-agent-sdk` pin from `0.3.278`, resolving the weekly canary's Options drift guard failure ([#172](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/172)). `verbatimPrompts` was the only new `Options` key (68 → 69); typecheck and the unit suite pass against the new pin.
+
+### Inherited upstream behavior changes
+
+- Because this bump replaces the bundled Agent SDK runtime (Claude Code 2.1.278 → 2.1.283), 0.3.278 → 0.3.283 changes are inherited. All are additive for this provider: a new alpha `prewarm()`/`SpareProcess` API (a standalone SDK query path like `startup()`; not re-exported here), `Query.readMcpResource()` for MCP Apps `ui://` resources (reachable through the raw `Query`), optional `trigger`/`user_message_uuid`/`timestamp` fields on `conversation_reset` messages, and `client_composed`/`inline_pastes` fields on `SDKUserMessage`. `Query.setMaxThinkingTokens()` now rejects a `'highlights'` display the session cannot send instead of silently falling back; the provider's `ClaudeCodeQueryController` does not accept `'highlights'`, so this only affects callers of the raw `Query`.
+
 ## [4.3.2] - 2026-09-21
 
 ### Added

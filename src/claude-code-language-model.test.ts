@@ -1154,7 +1154,7 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(overriddenCall?.options?.perTaskStopAffordance).toBe(true);
     });
 
-    describe.each(['doGenerate', 'doStream'] as const)('%s projectConfigRoot', (method) => {
+    describe.each(['doGenerate', 'doStream'] as const)('%s SDK passthroughs', (method) => {
       const resultMessage = () => ({
         async *[Symbol.asyncIterator]() {
           yield {
@@ -1212,6 +1212,31 @@ describe('ClaudeCodeLanguageModel', () => {
           })
         );
         expect(call?.options?.projectConfigRoot).toBe('/srv/checkouts/trusted');
+      });
+
+      it.each([true, false])(
+        'forwards verbatimPrompts: %s (explicit false preserved)',
+        async (value) => {
+          const call = await run(
+            new ClaudeCodeLanguageModel({ id: 'sonnet', settings: { verbatimPrompts: value } })
+          );
+          expect(call?.options?.verbatimPrompts).toBe(value);
+        }
+      );
+
+      it('omits verbatimPrompts when unset (SDK default false)', async () => {
+        const call = await run(new ClaudeCodeLanguageModel({ id: 'sonnet', settings: {} }));
+        expect('verbatimPrompts' in (call?.options ?? {})).toBe(false);
+      });
+
+      it('lets sdkOptions override verbatimPrompts', async () => {
+        const call = await run(
+          new ClaudeCodeLanguageModel({
+            id: 'sonnet',
+            settings: { verbatimPrompts: true, sdkOptions: { verbatimPrompts: false } } as any,
+          })
+        );
+        expect(call?.options?.verbatimPrompts).toBe(false);
       });
     });
 

@@ -249,6 +249,7 @@ describe('claudeCodeSettingsSchema', () => {
       'agentProgressSummaries',
       'includeHookEvents',
       'perTaskStopAffordance',
+      'verbatimPrompts',
     ]) {
       expect(claudeCodeSettingsSchema.safeParse({ [key]: true }).success).toBe(true);
       expect(claudeCodeSettingsSchema.safeParse({ [key]: false }).success).toBe(true);
