@@ -183,6 +183,7 @@ export const claudeCodeSettingsSchema = z
     agentProgressSummaries: z.boolean().optional(),
     includeHookEvents: z.boolean().optional(),
     perTaskStopAffordance: z.boolean().optional(),
+    verbatimPrompts: z.boolean().optional(),
     onSdkMessage: z
       .any()
       .refine((v) => v === undefined || typeof v === 'function', {
@@ -455,6 +456,20 @@ export function validateSettings(settings: unknown): {
       }
       return undefined;
     };
+
+    // SDK contract: projectConfigRoot is an absolute path. The schema checks
+    // the first-class setting, but sdkOptions.projectConfigRoot overrides it
+    // at query time, so check the effective value too.
+    const effProjectConfigRoot = effective('projectConfigRoot');
+    if (
+      effProjectConfigRoot !== undefined &&
+      (typeof effProjectConfigRoot !== 'string' || !isAbsolutePathLike(effProjectConfigRoot))
+    ) {
+      errors.push(
+        'sdkOptions.projectConfigRoot must be an absolute path (it overrides the projectConfigRoot setting).'
+      );
+      return { valid: false, warnings, errors };
+    }
 
     // SDK constraint: sessionStore mirroring requires local session writes,
     // so it cannot be combined with persistSession: false.

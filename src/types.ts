@@ -542,6 +542,31 @@ export interface ClaudeCodeSettings {
   perTaskStopAffordance?: boolean;
 
   /**
+   * Send every user message with `client_composed: true`, so Claude Code
+   * delivers the prompt text as written: no `@path` file-mention expansion and
+   * no slash-command dispatch. Use when prompts are assembled from content the
+   * end user did not type (retrieved documents, tool output, other users'
+   * text). Covers both string prompts and streaming input.
+   *
+   * On current Claude Code versions such a turn also skips the turn-start
+   * attachment pass as a whole: `@server:resource` MCP mentions are not
+   * expanded, and nested `CLAUDE.md`/rules files, skill and tool listings and
+   * other per-turn reminders are not attached to the prompt (most arrive after
+   * the turn's first tool call instead). Requires Claude Code 2.1.248+ (the
+   * bundled binary qualifies); older CLIs ignore it. Unset keeps the SDK
+   * default (`false`).
+   *
+   * Provider notes: ordinary AI SDK user prompt text is prefixed with
+   * `Human:`, so a leading slash in that text does not reach the CLI as a
+   * leading command. Messages sent through `MessageInjector` or
+   * `Query.streamInput()` are not prefixed; this setting applies to those too.
+   * In smoke tests against the bundled CLI, `@path` mentions were not expanded
+   * under the isolation default (`settingSources: []`) even with this setting
+   * off.
+   */
+  verbatimPrompts?: boolean;
+
+  /**
    * Callback invoked for every raw Agent SDK message emitted by the query.
    * Use this as a forward-compatible escape hatch when the provider does not
    * yet expose a dedicated callback or metadata field for a new SDK subtype.

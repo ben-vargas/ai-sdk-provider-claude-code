@@ -249,6 +249,7 @@ describe('claudeCodeSettingsSchema', () => {
       'agentProgressSummaries',
       'includeHookEvents',
       'perTaskStopAffordance',
+      'verbatimPrompts',
     ]) {
       expect(claudeCodeSettingsSchema.safeParse({ [key]: true }).success).toBe(true);
       expect(claudeCodeSettingsSchema.safeParse({ [key]: false }).success).toBe(true);
@@ -517,6 +518,29 @@ describe('validateSettings', () => {
     expect(result.valid).toBe(false);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain('projectConfigRoot must be an absolute path');
+  });
+
+  it('should validate the effective projectConfigRoot when sdkOptions overrides it', () => {
+    for (const sdkOptions of [
+      { projectConfigRoot: 'relative/checkout' },
+      { projectConfigRoot: '' },
+      { projectConfigRoot: 42 },
+    ]) {
+      const result = validateSettings({ projectConfigRoot: '/srv/checkouts/main', sdkOptions });
+      expect(result.valid).toBe(false);
+      expect(result.errors).toEqual([
+        'sdkOptions.projectConfigRoot must be an absolute path (it overrides the projectConfigRoot setting).',
+      ]);
+    }
+    expect(
+      validateSettings({ sdkOptions: { projectConfigRoot: 'C:\\repos\\trusted' } }).valid
+    ).toBe(true);
+    expect(
+      validateSettings({
+        projectConfigRoot: '/srv/checkouts/main',
+        sdkOptions: { projectConfigRoot: undefined },
+      }).valid
+    ).toBe(true);
   });
 
   it('should handle invalid settings type', () => {

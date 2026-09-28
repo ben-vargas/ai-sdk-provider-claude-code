@@ -81,6 +81,7 @@ type MappedKey =
   | 'agentProgressSummaries'
   | 'includeHookEvents'
   | 'perTaskStopAffordance'
+  | 'verbatimPrompts'
   | 'taskBudget' // alpha passthrough
   | 'sessionStore' // alpha passthrough
   | 'sessionStoreFlush' // alpha passthrough

@@ -23,6 +23,8 @@
 | 1.x.x            | v5             | `@anthropic-ai/claude-code`      | `v1-claude-code-sdk` | Legacy      | `v1`        |
 | 0.x.x            | v4             | `@anthropic-ai/claude-code`      | `ai-sdk-v4`          | Legacy      | `ai-sdk-v4` |
 
+**Claude Code CLI:** provider 4.3.3 bundles Claude Code CLI `2.1.283`, the latest CLI release (2026-09-25), through its exact `@anthropic-ai/claude-agent-sdk@0.3.283` pin. If you run your own binary via `pathToClaudeCodeExecutable`, check the minimum Claude Code version noted on individual settings.
+
 Install commands for each line are listed under [Installation](#installation) below.
 
 ## Zod Compatibility
@@ -137,11 +139,11 @@ This release ports the provider to AI SDK v7 / `LanguageModelV4`, adds first-cla
 
 Version 4.0.0 intentionally keeps optional provider surfaces absent unless the Claude Agent SDK has a durable provider-reference mapping:
 
-- `ProviderV4.files()` is not implemented yet. The AI SDK interface uploads `{ type: 'data' }` or `{ type: 'text' }` bytes and returns a reusable provider reference, but Claude Agent SDK `0.3.278` exposes no direct upload/reuse API for that contract. This provider forwards inline **image** file parts in prompts; non-image inline files (for example PDFs) emit an unsupported-file call warning and are not forwarded. It does not upload files into durable provider references.
+- `ProviderV4.files()` is not implemented yet. The AI SDK interface uploads `{ type: 'data' }` or `{ type: 'text' }` bytes and returns a reusable provider reference, but Claude Agent SDK `0.3.283` exposes no direct upload/reuse API for that contract. This provider forwards inline **image** file parts in prompts; non-image inline files (for example PDFs) emit an unsupported-file call warning and are not forwarded. It does not upload files into durable provider references.
 - Canonical V4 tool-result file parts are replayed into conversation history as text markers like `[File <name>: <mediaType>]`; raw file bytes are not re-sent on replay. Richer tool-result file replay, such as re-sending actual image/file bytes for tool-result file parts, is deferred.
 - `ProviderV4.skills()` is not implemented yet. Claude Code skills are loaded from configured user/project/local skill directories with the existing `skills` setting below; there is no Agent SDK API that uploads a skill bundle and returns an AI SDK provider reference.
 - Workflow serialization is deferred. `@ai-sdk/provider-utils@5.0.27` exposes `WORKFLOW_SERIALIZE`, `WORKFLOW_DESERIALIZE`, and `serializeModelOptions()` for provider model classes in the AI SDK v7 stack, but this provider has not added a serialization contract for provider instances or settings. Callback/function settings such as `canUseTool`, hooks, `logger`, `spawnClaudeCodeProcess`, and `SessionStore` methods are not JSON-serializable and must be recreated by the application.
-- V4 `custom` and `reasoning-file` parts are not emitted as provider output yet. Claude Agent SDK `0.3.278` has no durable reasoning-file artifact output that maps to AI SDK `reasoning-file`; assistant-history `custom` and `reasoning-file` parts have no Claude Code replay representation and are skipped (unknown unsupported content variants still warn).
+- V4 `custom` and `reasoning-file` parts are not emitted as provider output yet. Claude Agent SDK `0.3.283` has no durable reasoning-file artifact output that maps to AI SDK `reasoning-file`; assistant-history `custom` and `reasoning-file` parts have no Claude Code replay representation and are skipped (unknown unsupported content variants still warn).
 
 ### Version 3.0.0 (AI SDK v6 Stable)
 
@@ -340,6 +342,7 @@ This provider exposes Agent SDK options directly. Key options include:
 | `pluginDelivery`                  | How plugin paths reach Claude Code (v4.3.0+): `'argv'` (default) uses flags; `'initialize'` sends them over stdin to avoid command-line length limits. Requires Claude Code 2.1.261+; the bundled binary qualifies.                                                                                                                                                     |
 | `projectConfigRoot`               | Trusted checkout that `cwd` is a worktree of (v4.3.2+). Project settings, `.mcp.json`, the `.claude` config trees and `CLAUDE_PROJECT_DIR` resolve from here instead of `cwd`, so the branch checked out in `cwd` cannot change what the session runs. Absolute path; requires Claude Code 2.1.275+ (the bundled binary qualifies)                                      |
 | `perTaskStopAffordance`           | Declare that your app renders per-task stop controls wired to `stopTask`, so an interrupt on a live open-input query spares background tasks (v4.2.0+). A capability assertion, not a toggle — see **Query controller access** below                                                                                                                                    |
+| `verbatimPrompts`                 | Send prompts as written (v4.3.3+): no `@path` mention expansion or slash-command dispatch, for prompt text the end user did not type. Current CLIs also skip turn-start context attachments (nested `CLAUDE.md`/rules, skill and tool listings). Requires Claude Code 2.1.248+ (the bundled binary qualifies)                                                           |
 | `fallbackModel`                   | Fallback model(s) if the primary is overloaded — accepts a comma-separated list to try in order. Must differ from the main model                                                                                                                                                                                                                                        |
 | `onUserDialog`                    | Callback rendering blocking CLI dialogs (`request_user_dialog`); see **User dialogs** below                                                                                                                                                                                                                                                                             |
 | `supportedDialogKinds`            | Dialog kinds your `onUserDialog` can render; required for dialogs to be emitted at all                                                                                                                                                                                                                                                                                  |
@@ -481,7 +484,7 @@ const model = claudeCode('sonnet', {
 
 ## Claude Agent SDK 0.3.x Notes
 
-This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.278` (exact pin). The pin is exact rather than a caret because upstream releases have shipped broken `sdk.d.ts` declarations before (0.3.198–0.3.202 collapsed `SDKMessage` to `any`, fixed in 0.3.203); the weekly canary gates each pin move. The 0.3.x line introduces a few changes worth knowing about:
+This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.283` (exact pin), which bundles Claude Code CLI `2.1.283`. The pin is exact rather than a caret because upstream releases have shipped broken `sdk.d.ts` declarations before (0.3.198–0.3.202 collapsed `SDKMessage` to `any`, fixed in 0.3.203); the weekly canary gates each pin move. The 0.3.x line introduces a few changes worth knowing about:
 
 ### New peer dependencies
 
@@ -500,7 +503,7 @@ The Agent SDK now distributes the Claude Code runtime as per-platform native bin
 
 SDK 0.3.x changed the SDK-level default: omitting `settingSources` now loads ALL filesystem settings (user, project, and local — matching CLI behavior). This provider preserves its documented isolation default by explicitly passing `settingSources: []` when you don't set it. Opt in to filesystem settings via `settingSources: ['user', 'project', 'local']` (or override through `sdkOptions.settingSources`).
 
-When `cwd` is a git worktree of a trusted checkout, set `projectConfigRoot` (v4.3.2+) to that checkout's absolute path. Project settings (hooks, permissions), `.mcp.json`, the `.claude` config trees (commands, agents, skills, workflows, routines, output-styles) and `CLAUDE_PROJECT_DIR` then come from the trusted checkout instead of from whatever branch the worktree has checked out. The option is forwarded only when set, `sdkOptions.projectConfigRoot` overrides it, and validation rejects relative paths. Requires Claude Code 2.1.275+ (the bundled binary qualifies).
+When `cwd` is a git worktree of a trusted checkout, set `projectConfigRoot` (v4.3.2+) to that checkout's absolute path. Project settings (hooks, permissions), `.mcp.json`, the `.claude` config trees (commands, agents, skills, workflows, routines, output-styles) and `CLAUDE_PROJECT_DIR` then come from the trusted checkout instead of from whatever branch the worktree has checked out. The option is forwarded only when set, `sdkOptions.projectConfigRoot` overrides it, and validation rejects relative paths (including in that override). Requires Claude Code 2.1.275+ (the bundled binary qualifies).
 
 ### Subprocess environment allowlist
 
