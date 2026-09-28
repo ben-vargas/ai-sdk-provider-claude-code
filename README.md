@@ -15,12 +15,15 @@
 
 ## Version Compatibility
 
-| Provider Version | AI SDK Version | Underlying SDK                       | NPM Tag              | Status | Branch                                                                                  |
-| ---------------- | -------------- | ------------------------------------ | -------------------- | ------ | --------------------------------------------------------------------------------------- |
-| 3.x.x            | v6             | `@anthropic-ai/claude-agent-sdk`     | `latest`             | Stable | `main`                                                                                  |
-| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk`     | `ai-sdk-v5`          | Stable | [`ai-sdk-v5`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v5) |
-| 1.x.x            | v5             | `@anthropic-ai/claude-code` (legacy) | `v1-claude-code-sdk` | Legacy | [`v1`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/v1)               |
-| 0.x.x            | v4             | `@anthropic-ai/claude-code` (legacy) | `ai-sdk-v4`          | Legacy | [`ai-sdk-v4`](https://github.com/ben-vargas/ai-sdk-provider-claude-code/tree/ai-sdk-v4) |
+| Provider Version | AI SDK Version | Underlying SDK                   | NPM Tag              | Status      | Branch      |
+| ---------------- | -------------- | -------------------------------- | -------------------- | ----------- | ----------- |
+| 4.x.x            | v7             | `@anthropic-ai/claude-agent-sdk` | `latest`             | Stable      | `main`      |
+| 3.x.x            | v6             | `@anthropic-ai/claude-agent-sdk` | `ai-sdk-v6`          | Maintenance | `ai-sdk-v6` |
+| 2.x.x            | v5             | `@anthropic-ai/claude-agent-sdk` | `ai-sdk-v5`          | Legacy      | `ai-sdk-v5` |
+| 1.x.x            | v5             | `@anthropic-ai/claude-code`      | `v1-claude-code-sdk` | Legacy      | `v1`        |
+| 0.x.x            | v4             | `@anthropic-ai/claude-code`      | `ai-sdk-v4`          | Legacy      | `ai-sdk-v4` |
+
+**Claude Code CLI:** provider 3.6.1 bundles Claude Code CLI `2.1.283`, the latest CLI release (2026-09-25), through its exact `@anthropic-ai/claude-agent-sdk@0.3.283` pin. If you run your own binary via `pathToClaudeCodeExecutable`, check the minimum Claude Code version noted on individual settings.
 
 Install commands for each line are listed under [Installation](#installation) below.
 
@@ -29,7 +32,7 @@ Install commands for each line are listed under [Installation](#installation) be
 **Starting from v3.2.0, this package requires Zod 4.**
 
 ```bash
-npm install ai-sdk-provider-claude-code ai zod@^4.0.0
+npm install ai-sdk-provider-claude-code@ai-sdk-v6 ai@^6.0.0 zod@^4.0.0
 ```
 
 > **Note:** Zod 3 support was dropped in v3.2.0 due to the underlying `@anthropic-ai/claude-agent-sdk@0.2.x` requiring Zod 4. If you need Zod 3 support, use `ai-sdk-provider-claude-code@3.1.x`.
@@ -48,9 +51,11 @@ claude auth login
 ### 2. Add the provider
 
 ```bash
-# For AI SDK v6 (recommended)
-npm install ai-sdk-provider-claude-code ai@^6.0.0
-# or explicitly: npm install ai-sdk-provider-claude-code@latest
+# For AI SDK v7 (4.x; current latest tag)
+npm install ai-sdk-provider-claude-code ai
+
+# For AI SDK v6 maintenance (3.x, this branch)
+npm install ai-sdk-provider-claude-code@ai-sdk-v6 ai@^6.0.0
 
 # For AI SDK v5
 npm install ai-sdk-provider-claude-code@ai-sdk-v5 ai@^5.0.0
@@ -394,7 +399,7 @@ A few Agent SDK surfaces are deliberately not wrapped by this provider. A compil
 
 ## Claude Agent SDK 0.3.x Notes
 
-This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.283` (exact pin). The 0.3.x line introduces a few changes worth knowing about:
+This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.283` (exact pin), which bundles Claude Code CLI `2.1.283`. The 0.3.x line introduces a few changes worth knowing about:
 
 ### v3.6.0 compatibility update
 

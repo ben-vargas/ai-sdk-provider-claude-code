@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Pinned `@anthropic-ai/claude-agent-sdk` exactly to `0.3.283` (previously `0.3.263`) and updated the exhaustive Options drift guard (`projectConfigRoot` and `verbatimPrompts` were the only new `Options` keys). This also updates the bundled Claude Code runtime from 2.1.263 to 2.1.283.
+- README Version Compatibility table and install commands now match `main`: 4.x (AI SDK v7) is `latest` on `main`; 3.x is the `ai-sdk-v6` maintenance line, installed with `ai-sdk-provider-claude-code@ai-sdk-v6`.
+- Pinned `@anthropic-ai/claude-agent-sdk` exactly to `0.3.283` (previously `0.3.263`) and updated the exhaustive Options drift guard (`projectConfigRoot` and `verbatimPrompts` were the only new `Options` keys). This also updates the bundled Claude Code CLI from 2.1.263 to 2.1.283, the latest CLI release.
 
 ### Inherited upstream behavior changes
 
