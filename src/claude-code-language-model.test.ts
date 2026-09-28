@@ -850,6 +850,8 @@ describe('ClaudeCodeLanguageModel', () => {
         pluginDelivery?: 'argv' | 'initialize';
         perTaskStopAffordance?: boolean;
         resumeDropsTurn?: string;
+        projectConfigRoot?: string;
+        verbatimPrompts?: boolean;
       }> = [
         { name: 'unset defaults', settings: {} },
         {
@@ -859,9 +861,11 @@ describe('ClaudeCodeLanguageModel', () => {
             pluginDelivery: 'argv',
             perTaskStopAffordance: false,
             resumeDropsTurn: 'old-turn',
+            verbatimPrompts: false,
           },
           perTaskStopAffordance: false,
           resumeDropsTurn: 'old-turn',
+          verbatimPrompts: false,
           permissionPrompts: 'host',
           pluginDelivery: 'argv',
         },
@@ -872,9 +876,13 @@ describe('ClaudeCodeLanguageModel', () => {
             pluginDelivery: 'initialize',
             perTaskStopAffordance: true,
             resumeDropsTurn: 'new-turn',
+            projectConfigRoot: '/srv/checkouts/main',
+            verbatimPrompts: true,
           },
           perTaskStopAffordance: true,
           resumeDropsTurn: 'new-turn',
+          projectConfigRoot: '/srv/checkouts/main',
+          verbatimPrompts: true,
           permissionPrompts: 'none',
           pluginDelivery: 'initialize',
         },
@@ -882,16 +890,22 @@ describe('ClaudeCodeLanguageModel', () => {
           name: 'SDK overrides',
           perTaskStopAffordance: false,
           resumeDropsTurn: 'new-turn',
+          projectConfigRoot: '/srv/checkouts/trusted',
+          verbatimPrompts: false,
           settings: {
             permissionPrompts: 'host',
             pluginDelivery: 'argv',
             perTaskStopAffordance: true,
             resumeDropsTurn: 'old-turn',
+            projectConfigRoot: '/srv/checkouts/main',
+            verbatimPrompts: true,
             sdkOptions: {
               permissionPrompts: 'none',
               pluginDelivery: 'initialize',
               perTaskStopAffordance: false,
               resumeDropsTurn: 'new-turn',
+              projectConfigRoot: '/srv/checkouts/trusted',
+              verbatimPrompts: false,
             },
           },
           permissionPrompts: 'none',
@@ -901,16 +915,22 @@ describe('ClaudeCodeLanguageModel', () => {
           name: 'undefined SDK overrides preserve settings',
           perTaskStopAffordance: false,
           resumeDropsTurn: 'old-turn',
+          projectConfigRoot: '/srv/checkouts/main',
+          verbatimPrompts: true,
           settings: {
             permissionPrompts: 'none',
             pluginDelivery: 'initialize',
             perTaskStopAffordance: false,
             resumeDropsTurn: 'old-turn',
+            projectConfigRoot: '/srv/checkouts/main',
+            verbatimPrompts: true,
             sdkOptions: {
               permissionPrompts: undefined,
               pluginDelivery: undefined,
               perTaskStopAffordance: undefined,
               resumeDropsTurn: undefined,
+              projectConfigRoot: undefined,
+              verbatimPrompts: undefined,
             },
           },
           permissionPrompts: 'none',
@@ -955,6 +975,8 @@ describe('ClaudeCodeLanguageModel', () => {
           'pluginDelivery',
           'perTaskStopAffordance',
           'resumeDropsTurn',
+          'projectConfigRoot',
+          'verbatimPrompts',
         ] as const) {
           if (testCase[key] === undefined) expect(call?.options).not.toHaveProperty(key);
           else expect(call?.options?.[key]).toBe(testCase[key]);

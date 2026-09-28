@@ -234,12 +234,30 @@ describe('claudeCodeSettingsSchema', () => {
     expect(claudeCodeSettingsSchema.parse({})).not.toHaveProperty('resumeDropsTurn');
   });
 
+  it('validates projectConfigRoot as an absolute path without materializing an unset default', () => {
+    for (const value of [
+      '/srv/checkouts/main',
+      'C:\\repos\\main',
+      'D:/repos/main',
+      '\\\\server\\share\\repo',
+    ]) {
+      const result = claudeCodeSettingsSchema.safeParse({ projectConfigRoot: value });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data).toHaveProperty('projectConfigRoot', value);
+    }
+    for (const value of ['', 'relative/checkout', './checkout', '~/checkout', 42, null, ['/srv']]) {
+      expect(claudeCodeSettingsSchema.safeParse({ projectConfigRoot: value }).success).toBe(false);
+    }
+    expect(claudeCodeSettingsSchema.parse({})).not.toHaveProperty('projectConfigRoot');
+  });
+
   it('should accept the new boolean passthrough options', () => {
     for (const key of [
       'forwardSubagentText',
       'agentProgressSummaries',
       'includeHookEvents',
       'perTaskStopAffordance',
+      'verbatimPrompts',
     ]) {
       expect(claudeCodeSettingsSchema.safeParse({ [key]: true }).success).toBe(true);
       expect(claudeCodeSettingsSchema.safeParse({ [key]: false }).success).toBe(true);
@@ -451,6 +469,37 @@ describe('validateSettings', () => {
     expect(result.valid).toBe(false);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain('Working directory must exist');
+  });
+
+  it('should reject a relative projectConfigRoot with an actionable message', () => {
+    const result = validateSettings({ projectConfigRoot: 'relative/checkout' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('projectConfigRoot must be an absolute path');
+  });
+
+  it('should validate the effective projectConfigRoot when sdkOptions overrides it', () => {
+    for (const sdkOptions of [
+      { projectConfigRoot: 'relative/checkout' },
+      { projectConfigRoot: '' },
+      { projectConfigRoot: 42 },
+    ]) {
+      const result = validateSettings({ projectConfigRoot: '/srv/checkouts/main', sdkOptions });
+      expect(result.valid).toBe(false);
+      expect(result.errors).toEqual([
+        'sdkOptions.projectConfigRoot must be an absolute path (it overrides the projectConfigRoot setting).',
+      ]);
+    }
+    expect(
+      validateSettings({ sdkOptions: { projectConfigRoot: 'C:\\repos\\trusted' } }).valid
+    ).toBe(true);
+    expect(
+      validateSettings({
+        projectConfigRoot: '/srv/checkouts/main',
+        sdkOptions: { projectConfigRoot: undefined },
+      }).valid
+    ).toBe(true);
   });
 
   it('should handle invalid settings type', () => {
