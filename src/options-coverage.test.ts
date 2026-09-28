@@ -66,6 +66,7 @@ type MappedKey =
   | 'systemPrompt' // also fed by deprecated customSystemPrompt/appendSystemPrompt
   | 'settingSources' // pinned to [] when unset (isolation default)
   | 'additionalDirectories'
+  | 'projectConfigRoot'
   | 'agents'
   | 'skills'
   | 'settings'
@@ -78,6 +79,7 @@ type MappedKey =
   | 'agentProgressSummaries'
   | 'includeHookEvents'
   | 'perTaskStopAffordance'
+  | 'verbatimPrompts'
   | 'taskBudget' // alpha passthrough
   | 'sessionStore' // alpha passthrough
   | 'sessionStoreFlush' // alpha passthrough

@@ -289,6 +289,8 @@ This provider exposes Agent SDK options directly. Key options include:
 | `agentProgressSummaries`          | Periodic AI-generated progress summaries for running subagents (v3.5.0+)                                                                                                                                                                                         |
 | `includeHookEvents`               | Include hook lifecycle events in the output stream (v3.5.0+)                                                                                                                                                                                                     |
 | `perTaskStopAffordance`           | Declare that the host exposes per-task stop controls wired to `Query.stopTask()` (v3.6.0+). See the compatibility notes below.                                                                                                                                   |
+| `projectConfigRoot`               | Trusted checkout that `cwd` is a worktree of (v3.6.1+); project settings, `.mcp.json` and `.claude` config resolve from here instead of `cwd`. Absolute path; requires Claude Code 2.1.275+ (the bundled binary qualifies)                                       |
+| `verbatimPrompts`                 | Send prompts as written (v3.6.1+): no `@path` mention expansion or slash-command dispatch; current CLIs also skip turn-start context attachments. Requires Claude Code 2.1.248+                                                                                  |
 | `permissionPrompts`               | `'host'` (default) routes prompts to the host; `'none'` automatically denies requests that need approval without calling `canUseTool` (v3.6.0+).                                                                                                                 |
 | `pluginDelivery`                  | `'argv'` (default) passes plugin paths as flags; `'initialize'` sends them over stdin to avoid command-line length limits (v3.6.0+). Requires Claude Code 2.1.261+; the bundled binary qualifies.                                                                |
 | `fallbackModel`                   | Fallback model(s) if the primary is overloaded — accepts a comma-separated list to try in order. Must differ from the main model                                                                                                                                 |
@@ -392,7 +394,7 @@ A few Agent SDK surfaces are deliberately not wrapped by this provider. A compil
 
 ## Claude Agent SDK 0.3.x Notes
 
-This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.263` (exact pin). The 0.3.x line introduces a few changes worth knowing about:
+This provider depends on `@anthropic-ai/claude-agent-sdk@0.3.283` (exact pin). The 0.3.x line introduces a few changes worth knowing about:
 
 ### v3.6.0 compatibility update
 
@@ -421,6 +423,8 @@ The Agent SDK now distributes the Claude Code runtime as per-platform native bin
 ### Settings isolation (`settingSources`)
 
 SDK 0.3.x changed the SDK-level default: omitting `settingSources` now loads ALL filesystem settings (user, project, and local — matching CLI behavior). This provider preserves its documented isolation default by explicitly passing `settingSources: []` when you don't set it. Opt in to filesystem settings via `settingSources: ['user', 'project', 'local']` (or override through `sdkOptions.settingSources`).
+
+When `cwd` is a git worktree of a trusted checkout, set `projectConfigRoot` (v3.6.1+) to that checkout's absolute path. Project settings (hooks, permissions), `.mcp.json`, the `.claude` config trees (commands, agents, skills, workflows, routines, output-styles) and `CLAUDE_PROJECT_DIR` then come from the trusted checkout instead of from whatever branch the worktree has checked out. The option is forwarded only when set, `sdkOptions.projectConfigRoot` overrides it, and validation rejects relative paths. Requires Claude Code 2.1.275+ (the bundled binary qualifies).
 
 ### Subprocess environment allowlist
 

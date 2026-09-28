@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.1] - 2026-09-28
+
+### Added
+
+- Backported the canary-driven `projectConfigRoot` and `verbatimPrompts` settings from the v7 provider line ([#171](https://github.com/ben-vargas/ai-sdk-provider-claude-code/pull/171), [#172](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/172)). `projectConfigRoot` is the absolute path of the trusted checkout that `cwd` is a worktree of; project settings, `.mcp.json`, the `.claude` config trees and `CLAUDE_PROJECT_DIR` resolve from there instead of `cwd` (validation rejects relative paths; requires Claude Code 2.1.275+). `verbatimPrompts` sends every user message with `client_composed: true`, so Claude Code delivers prompt text as written, with no `@path` mention expansion, no slash-command dispatch and (on current CLIs) no turn-start context attachments (requires Claude Code 2.1.248+). Provider notes: ordinary AI SDK user prompt text is prefixed with `Human:`, so a leading slash in that text does not reach the CLI as a leading command; messages sent through `MessageInjector` or `Query.streamInput()` are not prefixed, and the setting applies to those too. In smoke tests against the bundled CLI, `@path` mentions were not expanded under the isolation default (`settingSources: []`) even with the setting off. Both are forwarded only when set and `sdkOptions` overrides them; unset settings preserve SDK defaults.
+- Re-exported `McpServerProvenance`, the `{ name, source }` shape carried on `canUseTool` options (`mcpServer`) and tool hook inputs (`mcp_server`) for `mcp__*` tools.
+
+### Changed
+
+- Pinned `@anthropic-ai/claude-agent-sdk` exactly to `0.3.283` (previously `0.3.263`) and updated the exhaustive Options drift guard (`projectConfigRoot` and `verbatimPrompts` were the only new `Options` keys). This also updates the bundled Claude Code runtime from 2.1.263 to 2.1.283.
+
+### Inherited upstream behavior changes
+
+- System-prompt recording is now on by default (since SDK 0.3.278): a conversation's first request renders the system prompt, records it, and later requests or resumes of that session send the record as-is until compaction or a new session. Pass `snapshot: false` on the preset/custom prompt object to render fresh each request.
+- Other 0.3.263 → 0.3.283 changes are additive for this provider: an alpha `prewarm()`/`SpareProcess` API (not re-exported), `Query.readMcpResource()`, `AgentDefinition.omitClaudeMd` (passes through `agents`), and new optional fields on `conversation_reset` and `SDKUserMessage`. `Query.setMaxThinkingTokens()` now rejects a `'highlights'` display the session cannot send instead of silently falling back; this affects applications calling `Query.setMaxThinkingTokens()` through `onQueryCreated`; the provider itself does not call it.
+
 ## [3.6.0] - 2026-09-07
 
 ### Fixed
