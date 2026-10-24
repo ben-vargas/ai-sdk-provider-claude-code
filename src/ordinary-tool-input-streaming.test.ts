@@ -35,7 +35,7 @@ const result = {
 };
 const inputDeltas = (chunks: any[], id: string) =>
   chunks.filter((c) => c.type === 'tool-input-delta' && c.id === id).map((c) => c.delta);
-async function collect(events: unknown[], json = false) {
+async function streamChunks(events: unknown[], json = false) {
   vi.mocked(query).mockReturnValue({
     async *[Symbol.asyncIterator]() {
       yield* events;
@@ -52,6 +52,10 @@ async function collect(events: unknown[], json = false) {
   });
   const chunks: any[] = [];
   for await (const chunk of stream) chunks.push(chunk);
+  return chunks;
+}
+async function collect(events: unknown[], json = false) {
+  const chunks = await streamChunks(events, json);
   expect(chunks.some((c) => c.type === 'error')).toBe(false);
   return chunks;
 }
@@ -250,5 +254,71 @@ describe('ordinary tool input finalization (#179)', () => {
   it('keeps the accumulator when no assistant snapshot precedes block_stop', async () => {
     const chunks = await collect([start('read'), delta('{"file_path":'), stop()]);
     expect(toolCall(chunks, 'read')?.input).toBe('{"file_path":');
+  });
+});
+
+describe('assistant snapshot after block_stop (#186)', () => {
+  const lifecycle = (chunks: any[], id: string) =>
+    chunks
+      .filter((c) => (c.id ?? c.toolCallId) === id && c.type.startsWith('tool-'))
+      .map((c) => c.type);
+  const callInput = (chunks: any[], id: string) =>
+    chunks.find((c) => c.type === 'tool-call' && c.toolCallId === id)?.input;
+
+  it.each([false, true])(
+    'emits no input delta after the call finalized from a partial accumulator (JSON mode %s)',
+    async (json) => {
+      const chunks = await collect(
+        [start('read'), delta('{"file_path":'), stop(), assistant('read', { file_path: '/a' })],
+        json
+      );
+      expect(lifecycle(chunks, 'read')).toEqual([
+        'tool-input-start',
+        'tool-input-delta',
+        'tool-input-end',
+        'tool-call',
+      ]);
+      expect(inputDeltas(chunks, 'read')).toEqual(['{"file_path":']);
+      expect(callInput(chunks, 'read')).toBe('{"file_path":');
+    }
+  );
+  it('emits no input delta after the call when the block had no input deltas', async () => {
+    const chunks = await collect([start('read'), stop(), assistant('read', { file_path: '/a' })]);
+    expect(lifecycle(chunks, 'read')).toEqual(['tool-input-start', 'tool-input-end', 'tool-call']);
+    expect(callInput(chunks, 'read')).toBe('');
+  });
+  it('emits no input delta after closed calls when subagent and root blocks share an index', async () => {
+    const sub = (chunk: object) => ({ ...chunk, parent_tool_use_id: 'task' });
+    const chunks = await collect([
+      start('root'),
+      sub(start('child')),
+      delta('{"file_path":'),
+      sub(delta('{"file_path":')),
+      sub(stop()),
+      stop(),
+      sub(assistant('child', { file_path: '/b' })),
+      assistant('root', { file_path: '/a' }),
+    ]);
+    for (const id of ['root', 'child']) {
+      expect(lifecycle(chunks, id)).toEqual([
+        'tool-input-start',
+        'tool-input-delta',
+        'tool-input-end',
+        'tool-call',
+      ]);
+      expect(callInput(chunks, id)).toBe('{"file_path":');
+    }
+  });
+  it('still rejects an oversized snapshot that arrives after block_stop', async () => {
+    const chunks = await streamChunks([
+      start('read'),
+      delta('{"file_path":'),
+      stop(),
+      assistant('read', { file_path: 'x'.repeat(1_048_576) }),
+    ]);
+    const errors = chunks.filter((c) => c.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].error.message).toMatch(/Tool input exceeds maximum size/);
+    expect(inputDeltas(chunks, 'read')).toEqual(['{"file_path":']);
   });
 });
