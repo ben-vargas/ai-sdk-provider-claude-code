@@ -790,6 +790,26 @@ export interface ClaudeCodeSettings {
   includePartialMessages?: boolean;
 
   /**
+   * Stream structured output (`responseFormat: { type: 'json' }` with a schema)
+   * as the model types it, instead of waiting for the CLI-validated object.
+   *
+   * By default (`false`), `doStream` holds back the internal `StructuredOutput`
+   * tool's partial JSON and emits the CLI's validated `structured_output` once
+   * at the end, so `streamText({ output })` yields the full object in one piece.
+   *
+   * When `true`, each `input_json_delta` is forwarded as a `text-delta` so
+   * `partialOutputStream` updates incrementally (requires partial messages,
+   * which `doStream` enables by default). Already-streamed text cannot be
+   * retracted, so if the model submits more than one `StructuredOutput` call
+   * in a turn (e.g. the CLI rejects the first for a schema mismatch and the
+   * model retries), the attempts are concatenated and the AI SDK fails to
+   * parse the object (`NoObjectGeneratedError`).
+   *
+   * @default false
+   */
+  streamStructuredOutput?: boolean;
+
+  /**
    * Model(s) to use if the primary model is overloaded or unavailable.
    * Accepts a comma-separated list to try each in order; the primary model
    * is re-tried at the start of each user turn.

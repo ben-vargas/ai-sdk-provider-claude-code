@@ -6,6 +6,11 @@
  * Demonstrates using streamText() with Output.object() to receive incremental
  * partial outputs as the AI generates structured data, enabling real-time UI
  * updates as each field becomes available.
+ *
+ * Incremental partials require `streamStructuredOutput: true`. By default the
+ * provider waits for the CLI-validated object and delivers it in one piece,
+ * because already-streamed text cannot be retracted if the model submits more
+ * than one StructuredOutput attempt (e.g. a schema-rejected first try).
  */
 
 import { createClaudeCode } from '../dist/index.js';
@@ -32,7 +37,7 @@ async function main() {
   let partialCount = 0;
 
   const { partialOutputStream, output } = streamText({
-    model: claudeCode('sonnet'),
+    model: claudeCode('sonnet', { streamStructuredOutput: true }),
     output: Output.object({ schema: profileSchema }),
     prompt:
       'Generate a fictional software developer profile with creative hobbies and an interesting bio.',
