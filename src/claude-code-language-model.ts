@@ -1232,13 +1232,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       return '';
     }
 
+    // Only serialization failures (cycles, BigInt, throwing toJSON) and values
+    // JSON cannot represent fall back to String(input). The size check stays
+    // outside the try so its error propagates instead of being swallowed.
+    let serialized: string | undefined;
     try {
-      const serialized = JSON.stringify(input);
-      return this.checkInputSize(serialized);
+      serialized = JSON.stringify(input);
     } catch {
-      const fallback = String(input);
-      return this.checkInputSize(fallback);
+      // Fall back to String(input) below.
     }
+    return this.checkInputSize(serialized ?? String(input));
   }
 
   private checkInputSize(str: string): string {
