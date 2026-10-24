@@ -3947,7 +3947,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     deltaPayload = '';
                   }
 
-                  if (deltaPayload) {
+                  // A snapshot that arrives after content_block_stop must not extend an
+                  // input that is already closed; the tool-call was emitted at the stop.
+                  if (deltaPayload && !state.inputClosed && !state.callEmitted) {
                     controller.enqueue({
                       type: 'tool-input-delta',
                       id: toolId,
