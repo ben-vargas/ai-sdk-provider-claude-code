@@ -133,6 +133,17 @@ const MISSING_STRUCTURED_OUTPUT_ERROR_MESSAGE =
   'This usually means the schema contains constructs the CLI cannot enforce (e.g. complex regex patterns with lookaheads/backreferences), causing it to silently fall back to prose. ' +
   "Simplify the generation schema and validate strictly client-side. See the 'Structured Outputs' section of the ai-sdk-provider-claude-code README for the list of known limitations.";
 
+const INTERNAL_STRUCTURED_OUTPUT_TOOL_NAME = 'StructuredOutput';
+
+function isInternalStructuredOutputTool(
+  toolName: string,
+  options: Parameters<LanguageModelV3['doStream']>[0]
+): boolean {
+  return (
+    options.responseFormat?.type === 'json' && toolName === INTERNAL_STRUCTURED_OUTPUT_TOOL_NAME
+  );
+}
+
 /**
  * Attempts to recover a JSON object/array from prose text returned when the
  * CLI silently skipped structured output. Tries the trimmed text first, then
@@ -150,17 +161,6 @@ const MISSING_STRUCTURED_OUTPUT_ERROR_MESSAGE =
  * @param text - Accumulated assistant prose text
  * @returns The valid JSON text (as emitted by the model) or undefined
  */
-const INTERNAL_STRUCTURED_OUTPUT_TOOL_NAME = 'StructuredOutput';
-
-function isInternalStructuredOutputTool(
-  toolName: string,
-  options: Parameters<LanguageModelV3['doStream']>[0]
-): boolean {
-  return (
-    options.responseFormat?.type === 'json' && toolName === INTERNAL_STRUCTURED_OUTPUT_TOOL_NAME
-  );
-}
-
 function extractJsonObjectText(text: string): string | undefined {
   const trimmed = text.trim();
   if (!trimmed) {
