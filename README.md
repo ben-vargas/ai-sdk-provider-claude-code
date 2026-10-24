@@ -217,7 +217,7 @@ If you're upgrading from version 1.x:
 
 ## Structured Outputs
 
-This provider supports **native structured outputs** via the Claude Agent SDK (v0.1.45+). When using `generateObject()` or `streamObject()`, the SDK returns schema-compliant JSON for **supported** JSON Schema features via constrained decoding.
+This provider supports **native structured outputs** via the Claude Agent SDK (v0.1.45+). When using `generateObject()` or `streamObject()`, the CLI validates the model's answer against your schema (asking the model to retry on a mismatch) and returns schema-compliant JSON for **supported** JSON Schema features.
 
 ```typescript
 import { generateObject } from 'ai';
@@ -240,7 +240,7 @@ console.log(result.object); // Matches the schema above
 
 **Benefits:**
 
-- ✅ **Schema compliance (supported features)** - Constrained decoding ensures valid output
+- ✅ **Schema compliance (supported features)** - The CLI validates output against the schema
 - ✅ **No JSON parsing errors** - SDK handles all validation
 - ✅ **No prompt engineering** - Schema enforcement is native to the SDK
 - ✅ **Better performance** - No retry/extraction logic needed
@@ -248,6 +248,26 @@ console.log(result.object); // Matches the schema above
 > **Note:** A schema is required for JSON output. Using `responseFormat: { type: 'json' }` without a schema is not supported by Claude Code (matching Anthropic's official provider behavior). An `unsupported-setting` warning will be emitted and the call will be treated as plain text.
 >
 > **Current CLI limitation:** Some JSON Schema features can cause the Claude Code CLI to silently fall back to prose (no `structured_output`). The provider mitigates the most common case: `format` keywords (`date-time`, `email`, `uri`, `uuid`, ... — produced by Zod's `.datetime()`, `.email()`, `.url()`, `.uuid()`) are stripped client-side before the schema is sent, with the hint folded into the field's `description` (e.g. `(expected format: email)`). Server-side enforcement of `format` still does not exist in the CLI, but `generateObject`/`streamObject` validate against your original Zod schema client-side, so nothing is lost. Complex regex `pattern`s (lookaheads/backreferences) remain unmitigated — `pattern` is passed through untouched because the CLI genuinely enforces simple patterns. If the CLI still falls back to prose, the provider first tries to parse the prose as JSON (graceful recovery, with a warning) and otherwise fails fast with a descriptive error instead of letting an opaque `AI_NoObjectGeneratedError` surface downstream. See `examples/structured-output-repro.ts` and `examples/limitations.ts`.
+
+### Streaming structured output
+
+By default, `streamObject()` delivers the object **in one piece when the run finishes**: the provider holds back the model's in-progress JSON and emits the CLI-validated `structured_output`. Tool progress and reasoning still stream live. This is deliberate. The model can submit more than one answer in a run (for example, the CLI rejects a first attempt that fails the schema and the model retries), and text that has already been streamed cannot be taken back, so streaming each attempt would concatenate them into unparseable JSON (`NoObjectGeneratedError`).
+
+To get incremental partial objects anyway, opt in with `streamStructuredOutput: true`:
+
+```typescript
+const { partialObjectStream, object } = streamObject({
+  model: claudeCode('sonnet', { streamStructuredOutput: true }),
+  schema: z.object({ name: z.string(), hobbies: z.array(z.string()) }),
+  prompt: 'Make up a person with three hobbies',
+});
+
+for await (const partial of partialObjectStream) {
+  console.log(partial); // Updates as each field is typed
+}
+```
+
+With the opt-in, a run in which the model submits more than one structured answer fails with `NoObjectGeneratedError`, and `partialObjectStream` can show fields from an attempt the CLI later rejected. Use it only where a live preview is worth an occasional failed run.
 
 ## Core Features
 

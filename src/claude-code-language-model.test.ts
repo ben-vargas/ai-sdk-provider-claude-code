@@ -4568,7 +4568,641 @@ describe('ClaudeCodeLanguageModel', () => {
         },
       });
 
-      it('streams JSON via input_json_delta events in JSON mode', async () => {
+      describe('structured output attempts (#175)', () => {
+        const jsonSchemaFormat = {
+          type: 'json' as const,
+          schema: {
+            type: 'object' as const,
+            properties: { answer: { type: 'number' as const } },
+            required: ['answer'],
+          },
+        };
+
+        const createToolUseStartEvent = (id: string, name: string, index = 0) => ({
+          type: 'stream_event',
+          event: {
+            type: 'content_block_start',
+            index,
+            content_block: { type: 'tool_use', id, name, input: {} },
+          },
+        });
+
+        const createContentBlockStopEvent = (index = 0) => ({
+          type: 'stream_event',
+          event: { type: 'content_block_stop', index },
+        });
+
+        const collectChunks = async (stream: ReadableStream<any>) => {
+          const chunks: any[] = [];
+          const reader = stream.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+          }
+          return chunks;
+        };
+
+        const textOf = (chunks: any[]) =>
+          chunks
+            .filter((chunk) => chunk.type === 'text-delta')
+            .map((chunk) => chunk.delta)
+            .join('');
+
+        function* structuredOutputAttempt(
+          id: string,
+          input: Record<string, unknown>,
+          verdict: { content: string; isError: boolean },
+          parentToolUseId: string | null = null
+        ) {
+          const scope = { parent_tool_use_id: parentToolUseId };
+          yield { ...createToolUseStartEvent(id, 'StructuredOutput'), ...scope };
+          yield { ...createJsonDeltaEvent(JSON.stringify(input)), ...scope };
+          yield { ...createContentBlockStopEvent(), ...scope };
+          yield {
+            type: 'assistant',
+            ...scope,
+            message: {
+              content: [{ type: 'tool_use', id, name: 'StructuredOutput', input }],
+            },
+          };
+          yield {
+            type: 'user',
+            ...scope,
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: id,
+                  content: verdict.content,
+                  is_error: verdict.isError,
+                },
+              ],
+            },
+          };
+        }
+
+        const rejected = {
+          content: 'Output does not match required schema: answer must be a number',
+          isError: true,
+        };
+        const accepted = { content: 'Structured output provided successfully', isError: false };
+
+        it('emits only the CLI-validated object when a StructuredOutput attempt is rejected', async () => {
+          vi.mocked(mockQuery).mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              yield* structuredOutputAttempt('toolu_so_1', { answer: 'forty-two' }, rejected);
+              yield* structuredOutputAttempt('toolu_so_2', { answer: 42 }, accepted);
+              yield {
+                type: 'result',
+                subtype: 'success',
+                session_id: 'so-retry-session',
+                structured_output: { answer: 42 },
+                usage: { input_tokens: 10, output_tokens: 8 },
+              };
+            },
+          } as any);
+
+          const result = await model.doStream({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+            responseFormat: jsonSchemaFormat,
+          });
+          const chunks = await collectChunks(result.stream);
+
+          expect(textOf(chunks)).toBe('{"answer":42}');
+          expect(chunks.filter((chunk) => chunk.type === 'text-delta')).toHaveLength(1);
+          expect(chunks.at(-1)).toMatchObject({
+            type: 'finish',
+            finishReason: { unified: 'stop' },
+          });
+        });
+
+        it('emits a single object when the model submits two schema-valid attempts', async () => {
+          vi.mocked(mockQuery).mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              yield* structuredOutputAttempt('toolu_so_1', { answer: 1 }, accepted);
+              yield* structuredOutputAttempt('toolu_so_2', { answer: 2 }, accepted);
+              yield {
+                type: 'result',
+                subtype: 'success',
+                session_id: 'so-double-session',
+                structured_output: { answer: 2 },
+                usage: { input_tokens: 10, output_tokens: 8 },
+              };
+            },
+          } as any);
+
+          const result = await model.doStream({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+            responseFormat: jsonSchemaFormat,
+          });
+
+          expect(textOf(await collectChunks(result.stream))).toBe('{"answer":2}');
+        });
+
+        it('holds structured output back until the result arrives', async () => {
+          let reachedResultGate = false;
+          let releaseResult!: () => void;
+          const resultGate = new Promise<void>((resolve) => {
+            releaseResult = resolve;
+          });
+          vi.mocked(mockQuery).mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              yield createToolUseStartEvent('toolu_so_1', 'StructuredOutput');
+              yield createJsonDeltaEvent('{"answer":');
+              yield createJsonDeltaEvent('42}');
+              yield createContentBlockStopEvent();
+              reachedResultGate = true;
+              await resultGate;
+              yield {
+                type: 'result',
+                subtype: 'success',
+                session_id: 'so-buffer-session',
+                structured_output: { answer: 42 },
+                usage: { input_tokens: 10, output_tokens: 8 },
+              };
+            },
+          } as any);
+
+          const result = await model.doStream({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+            responseFormat: jsonSchemaFormat,
+          });
+          const chunks: any[] = [];
+          const collected = (async () => {
+            const reader = result.stream.getReader();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunks.push(value);
+            }
+          })();
+
+          await vi.waitFor(() => expect(reachedResultGate).toBe(true));
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          expect(chunks.some((chunk) => chunk.type === 'text-delta')).toBe(false);
+
+          releaseResult();
+          await collected;
+          const types = chunks.map((chunk) => chunk.type);
+          expect(types.slice(-4)).toEqual(['text-start', 'text-delta', 'text-end', 'finish']);
+          expect(textOf(chunks)).toBe('{"answer":42}');
+        });
+
+        it.each([false, true])(
+          'never lets subagent StructuredOutput frames reach the answer (streamStructuredOutput: %s)',
+          async (streamStructuredOutput) => {
+            const scopedModel = new ClaudeCodeLanguageModel({
+              id: 'sonnet',
+              settings: { streamStructuredOutput },
+            });
+            vi.mocked(mockQuery).mockReturnValue({
+              async *[Symbol.asyncIterator]() {
+                yield* structuredOutputAttempt(
+                  'toolu_child_so',
+                  { child: true },
+                  accepted,
+                  'toolu_task_parent'
+                );
+                // Untracked subagent delta with no content_block_start.
+                yield {
+                  ...createJsonDeltaEvent('{"stray":1}', 3),
+                  parent_tool_use_id: 'toolu_task_parent',
+                };
+                yield* structuredOutputAttempt('toolu_root_so', { answer: 7 }, accepted);
+                yield {
+                  type: 'result',
+                  subtype: 'success',
+                  session_id: 'so-subagent-session',
+                  structured_output: { answer: 7 },
+                  usage: { input_tokens: 10, output_tokens: 8 },
+                };
+              },
+            } as any);
+
+            const result = await scopedModel.doStream({
+              prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+              responseFormat: jsonSchemaFormat,
+            });
+
+            expect(textOf(await collectChunks(result.stream))).toBe('{"answer":7}');
+          }
+        );
+
+        it('recovers from the latest non-rejected attempt when structured_output is missing', async () => {
+          vi.mocked(mockQuery).mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              yield* structuredOutputAttempt('toolu_so_1', { answer: 'forty-two' }, rejected);
+              yield* structuredOutputAttempt('toolu_so_2', { answer: 42 }, accepted);
+              yield {
+                type: 'result',
+                subtype: 'success',
+                session_id: 'so-recover-session',
+                usage: { input_tokens: 10, output_tokens: 8 },
+              };
+            },
+          } as any);
+
+          const result = await model.doStream({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+            responseFormat: jsonSchemaFormat,
+          });
+
+          expect(textOf(await collectChunks(result.stream))).toBe('{"answer":42}');
+        });
+
+        it('never recovers a rejected attempt when structured_output is missing', async () => {
+          vi.mocked(mockQuery).mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              yield* structuredOutputAttempt('toolu_so_1', { answer: 'forty-two' }, rejected);
+              yield {
+                type: 'result',
+                subtype: 'success',
+                session_id: 'so-rejected-only-session',
+                usage: { input_tokens: 10, output_tokens: 8 },
+              };
+            },
+          } as any);
+
+          const result = await model.doStream({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+            responseFormat: jsonSchemaFormat,
+          });
+          const chunks = await collectChunks(result.stream);
+
+          expect(textOf(chunks)).toBe('');
+          expect(chunks.find((chunk) => chunk.type === 'error')?.error.message).toMatch(
+            /returned no structured_output/
+          );
+        });
+
+        it.each(['supersedes', 'model_refusal_fallback'] as const)(
+          'never recovers an attempt from a message retracted via %s',
+          async (signal) => {
+            vi.mocked(mockQuery).mockReturnValue({
+              async *[Symbol.asyncIterator]() {
+                yield {
+                  type: 'assistant',
+                  uuid: 'uuid-old',
+                  message: {
+                    content: [
+                      {
+                        type: 'tool_use',
+                        id: 'toolu_so_old',
+                        name: 'StructuredOutput',
+                        input: { answer: 1 },
+                      },
+                    ],
+                  },
+                };
+                yield {
+                  type: 'assistant',
+                  uuid: 'uuid-new',
+                  ...(signal === 'supersedes' && { supersedes: ['uuid-old'] }),
+                  message: { content: [{ type: 'text', text: '{"answer":2}' }] },
+                };
+                if (signal === 'model_refusal_fallback') {
+                  yield {
+                    type: 'system',
+                    subtype: 'model_refusal_fallback',
+                    trigger: 'refusal',
+                    direction: 'retry',
+                    original_model: 'claude-opus-4-6',
+                    fallback_model: 'claude-sonnet-4-5',
+                    request_id: 'req-so-notice',
+                    retracted_message_uuids: ['uuid-old'],
+                    content: 'Retried on fallback model',
+                    session_id: 'so-retracted-session',
+                  };
+                }
+                yield {
+                  type: 'result',
+                  subtype: 'success',
+                  session_id: 'so-retracted-session',
+                  usage: { input_tokens: 10, output_tokens: 8 },
+                };
+              },
+            } as any);
+
+            const result = await model.doStream({
+              prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+              responseFormat: jsonSchemaFormat,
+            });
+
+            expect(textOf(await collectChunks(result.stream))).toBe('{"answer":2}');
+          }
+        );
+
+        it('applies a rejection to untracked fragments once their call is identified', async () => {
+          vi.mocked(mockQuery).mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              // Fragments with no content_block_start, so no call id yet.
+              yield createJsonDeltaEvent('{"answer":"bad"}');
+              yield {
+                type: 'assistant',
+                message: {
+                  content: [
+                    {
+                      type: 'tool_use',
+                      id: 'toolu_so_1',
+                      name: 'StructuredOutput',
+                      input: { answer: 'bad' },
+                    },
+                  ],
+                },
+              };
+              yield {
+                type: 'user',
+                message: {
+                  content: [
+                    {
+                      type: 'tool_result',
+                      tool_use_id: 'toolu_so_1',
+                      content: rejected.content,
+                      is_error: true,
+                    },
+                  ],
+                },
+              };
+              yield {
+                type: 'result',
+                subtype: 'success',
+                session_id: 'so-untracked-rejected-session',
+                usage: { input_tokens: 10, output_tokens: 8 },
+              };
+            },
+          } as any);
+
+          const result = await model.doStream({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+            responseFormat: jsonSchemaFormat,
+          });
+          const chunks = await collectChunks(result.stream);
+
+          expect(textOf(chunks)).toBe('');
+          expect(chunks.find((chunk) => chunk.type === 'error')?.error.message).toMatch(
+            /returned no structured_output/
+          );
+        });
+
+        const unrelatedToolResult = (scope: 'subagent' | 'root') => ({
+          type: 'user',
+          parent_tool_use_id: scope === 'subagent' ? 'toolu_task_parent' : null,
+          message: {
+            content: [{ type: 'tool_result', tool_use_id: `toolu_${scope}_read`, content: 'ok' }],
+          },
+        });
+
+        it.each(['subagent', 'root'] as const)(
+          'applies a rejection to untracked fragments across an interleaved %s tool result',
+          async (scope) => {
+            vi.mocked(mockQuery).mockReturnValue({
+              async *[Symbol.asyncIterator]() {
+                yield createJsonDeltaEvent('{"answer":"bad"}');
+                yield unrelatedToolResult(scope);
+                yield {
+                  type: 'assistant',
+                  message: {
+                    content: [
+                      {
+                        type: 'tool_use',
+                        id: 'toolu_so_1',
+                        name: 'StructuredOutput',
+                        input: { answer: 'bad' },
+                      },
+                    ],
+                  },
+                };
+                yield {
+                  type: 'user',
+                  message: {
+                    content: [
+                      {
+                        type: 'tool_result',
+                        tool_use_id: 'toolu_so_1',
+                        content: rejected.content,
+                        is_error: true,
+                      },
+                    ],
+                  },
+                };
+                yield {
+                  type: 'result',
+                  subtype: 'success',
+                  session_id: 'so-interleaved-rejected-session',
+                  usage: { input_tokens: 10, output_tokens: 8 },
+                };
+              },
+            } as any);
+
+            const result = await model.doStream({
+              prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+              responseFormat: jsonSchemaFormat,
+            });
+            const chunks = await collectChunks(result.stream);
+
+            expect(textOf(chunks)).toBe('');
+            expect(chunks.find((chunk) => chunk.type === 'error')?.error.message).toMatch(
+              /returned no structured_output/
+            );
+          }
+        );
+
+        it.each(['subagent', 'root'] as const)(
+          'retracts untracked fragments across an interleaved %s tool result',
+          async (scope) => {
+            vi.mocked(mockQuery).mockReturnValue({
+              async *[Symbol.asyncIterator]() {
+                yield createJsonDeltaEvent('{"answer":1}');
+                yield unrelatedToolResult(scope);
+                yield {
+                  type: 'assistant',
+                  uuid: 'uuid-old',
+                  message: {
+                    content: [
+                      {
+                        type: 'tool_use',
+                        id: 'toolu_so_old',
+                        name: 'StructuredOutput',
+                        input: { answer: 1 },
+                      },
+                    ],
+                  },
+                };
+                yield {
+                  type: 'assistant',
+                  uuid: 'uuid-new',
+                  supersedes: ['uuid-old'],
+                  message: { content: [{ type: 'text', text: '{"answer":2}' }] },
+                };
+                yield {
+                  type: 'result',
+                  subtype: 'success',
+                  session_id: 'so-interleaved-retracted-session',
+                  usage: { input_tokens: 10, output_tokens: 8 },
+                };
+              },
+            } as any);
+
+            const result = await model.doStream({
+              prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+              responseFormat: jsonSchemaFormat,
+            });
+
+            expect(textOf(await collectChunks(result.stream))).toBe('{"answer":2}');
+          }
+        );
+
+        it.each([
+          ['a text-only', [{ type: 'text', text: 'Let me answer that.' }]],
+          ['an empty-content', []],
+        ] as const)(
+          'never recovers a rejected attempt whose fragments preceded %s root assistant message',
+          async (_label, interveningContent) => {
+            vi.mocked(mockQuery).mockReturnValue({
+              async *[Symbol.asyncIterator]() {
+                yield createJsonDeltaEvent('{"answer":"bad"}');
+                yield { type: 'assistant', message: { content: interveningContent } };
+                yield {
+                  type: 'assistant',
+                  message: {
+                    content: [
+                      {
+                        type: 'tool_use',
+                        id: 'toolu_so_1',
+                        name: 'StructuredOutput',
+                        input: { answer: 'bad' },
+                      },
+                    ],
+                  },
+                };
+                yield {
+                  type: 'user',
+                  message: {
+                    content: [
+                      {
+                        type: 'tool_result',
+                        tool_use_id: 'toolu_so_1',
+                        content: rejected.content,
+                        is_error: true,
+                      },
+                    ],
+                  },
+                };
+                yield {
+                  type: 'result',
+                  subtype: 'success',
+                  session_id: 'so-orphan-session',
+                  usage: { input_tokens: 10, output_tokens: 8 },
+                };
+              },
+            } as any);
+
+            const result = await model.doStream({
+              prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+              responseFormat: jsonSchemaFormat,
+            });
+            const chunks = await collectChunks(result.stream);
+
+            expect(textOf(chunks)).toBe('');
+            expect(chunks.find((chunk) => chunk.type === 'error')?.error.message).toMatch(
+              /returned no structured_output/
+            );
+          }
+        );
+
+        it('keeps a new attempt when an earlier untracked fragment is retracted', async () => {
+          vi.mocked(mockQuery).mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              yield { ...createJsonDeltaEvent('{"answer":1}'), uuid: 'old-delta' };
+              yield {
+                type: 'user',
+                message: { content: [{ type: 'text', text: 'Try again' }] },
+              };
+              yield* structuredOutputAttempt('toolu_so_new', { answer: 9 }, accepted);
+              yield {
+                type: 'system',
+                subtype: 'model_refusal_fallback',
+                trigger: 'refusal',
+                direction: 'retry',
+                original_model: 'claude-opus-4-6',
+                fallback_model: 'claude-sonnet-4-5',
+                request_id: 'req-so-old-delta',
+                retracted_message_uuids: ['old-delta'],
+                content: 'Retried on fallback model',
+                session_id: 'so-old-delta-session',
+              };
+              yield {
+                type: 'result',
+                subtype: 'success',
+                session_id: 'so-old-delta-session',
+                usage: { input_tokens: 10, output_tokens: 8 },
+              };
+            },
+          } as any);
+
+          const result = await model.doStream({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+            responseFormat: jsonSchemaFormat,
+          });
+
+          expect(textOf(await collectChunks(result.stream))).toBe('{"answer":9}');
+        });
+
+        it('does not flush a partial attempt when the stream is truncated', async () => {
+          vi.mocked(mockQuery).mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              yield createToolUseStartEvent('toolu_so_1', 'StructuredOutput');
+              yield createJsonDeltaEvent('{"answer":');
+              throw new SyntaxError('Unexpected end of JSON input');
+            },
+          } as any);
+
+          const result = await model.doStream({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+            responseFormat: jsonSchemaFormat,
+          });
+
+          expect(textOf(await collectChunks(result.stream))).toBe('');
+        });
+
+        it('routes ordinary tool input deltas to tool-input-delta in JSON mode', async () => {
+          vi.mocked(mockQuery).mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              yield createToolUseStartEvent('toolu_read', 'Read');
+              yield createJsonDeltaEvent('{"file_path":"/tmp/a.txt"}');
+              yield createContentBlockStopEvent();
+              yield* structuredOutputAttempt('toolu_so_1', { answer: 5 }, accepted);
+              yield {
+                type: 'result',
+                subtype: 'success',
+                session_id: 'so-ordinary-tool-session',
+                structured_output: { answer: 5 },
+                usage: { input_tokens: 10, output_tokens: 8 },
+              };
+            },
+          } as any);
+
+          const result = await model.doStream({
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
+            responseFormat: jsonSchemaFormat,
+          });
+          const chunks = await collectChunks(result.stream);
+
+          expect(textOf(chunks)).toBe('{"answer":5}');
+          expect(
+            chunks.filter((chunk) => chunk.type === 'tool-input-delta' && chunk.id === 'toolu_read')
+          ).toEqual([
+            { type: 'tool-input-delta', id: 'toolu_read', delta: '{"file_path":"/tmp/a.txt"}' },
+          ]);
+        });
+      });
+
+      it('streams JSON via input_json_delta events in JSON mode with streamStructuredOutput', async () => {
+        const streamingModel = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: { streamStructuredOutput: true },
+        });
         const mockResponse = {
           async *[Symbol.asyncIterator]() {
             yield createJsonDeltaEvent('{"name":');
@@ -4587,7 +5221,7 @@ describe('ClaudeCodeLanguageModel', () => {
 
         vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
-        const result = await model.doStream({
+        const result = await streamingModel.doStream({
           prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
           responseFormat: { type: 'json', schema: { type: 'object' } },
         });
@@ -4641,7 +5275,11 @@ describe('ClaudeCodeLanguageModel', () => {
         expect(textDeltas[0].delta).toBe('Hello');
       });
 
-      it('skips empty input_json_delta events', async () => {
+      it('skips empty input_json_delta events with streamStructuredOutput', async () => {
+        const streamingModel = new ClaudeCodeLanguageModel({
+          id: 'sonnet',
+          settings: { streamStructuredOutput: true },
+        });
         const mockResponse = {
           async *[Symbol.asyncIterator]() {
             yield createJsonDeltaEvent(''); // Empty delta (common at start)
@@ -4660,7 +5298,7 @@ describe('ClaudeCodeLanguageModel', () => {
 
         vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
-        const result = await model.doStream({
+        const result = await streamingModel.doStream({
           prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
           responseFormat: { type: 'json', schema: { type: 'object' } },
         });
@@ -9066,7 +9704,11 @@ describe('structured output hardening', () => {
       expect(chunks.some((c) => c.type === 'finish')).toBe(false);
     });
 
-    it('does not interfere when structured output was already streamed via input_json_delta', async () => {
+    it('does not interfere when structured output was already streamed via input_json_delta (streamStructuredOutput)', async () => {
+      const streamingModel = new ClaudeCodeLanguageModel({
+        id: 'sonnet',
+        settings: { streamStructuredOutput: true },
+      });
       const mockResponse = {
         async *[Symbol.asyncIterator]() {
           yield {
@@ -9082,7 +9724,7 @@ describe('structured output hardening', () => {
       };
       vi.mocked(mockQuery).mockReturnValue(mockResponse as any);
 
-      const result = await model.doStream({
+      const result = await streamingModel.doStream({
         prompt: [{ role: 'user', content: [{ type: 'text', text: 'Generate JSON' }] }],
         responseFormat: { type: 'json', schema: { type: 'object' } },
       } as any);
