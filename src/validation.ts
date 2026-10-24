@@ -325,6 +325,7 @@ export const claudeCodeSettingsSchema = z
       )
       .optional(),
     includePartialMessages: z.boolean().optional(),
+    streamStructuredOutput: z.boolean().optional(),
     fallbackModel: z.string().optional(),
     forkSession: z.boolean().optional(),
     stderr: z

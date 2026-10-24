@@ -253,7 +253,7 @@ If you're upgrading from version 1.x:
 
 ## Structured Outputs
 
-This provider supports **native structured outputs** via Claude Agent SDK constrained decoding. On the 4.x line (AI SDK v7), use `generateText()` with an `output` specification such as `Output.object({ schema })`, then destructure `output` from the result. For streaming structured output, use `streamText()` with the same `output` setting and read `partialOutputStream` as partial objects arrive.
+This provider supports **native structured outputs** via the Claude Agent SDK's `outputFormat` option: the CLI validates the model's answer against your schema and asks the model to retry on a mismatch. On the 4.x line (AI SDK v7), use `generateText()` with an `output` specification such as `Output.object({ schema })`, then destructure `output` from the result. `streamText()` with the same `output` setting also works; see [Streaming structured output](#streaming-structured-output) for how partial objects are delivered.
 
 ```typescript
 import { generateText, Output } from 'ai';
@@ -278,7 +278,7 @@ console.log(output); // Matches the schema above
 
 **Benefits:**
 
-- ✅ **Schema compliance (supported features)** - Constrained decoding ensures valid output
+- ✅ **Schema compliance (supported features)** - The CLI validates output against the schema
 - ✅ **No JSON parsing errors** - AI SDK handles validation against your schema
 - ✅ **No prompt engineering** - Schema enforcement is native to the SDK
 - ✅ **Better performance** - No retry/extraction logic needed
@@ -288,6 +288,26 @@ console.log(output); // Matches the schema above
 > **Current CLI limitation:** Some JSON Schema features can cause the Claude Code CLI to silently fall back to prose (no `structured_output`). The provider mitigates the most common case: `format` keywords (`date-time`, `email`, `uri`, `uuid`, ... — produced by Zod's `.datetime()`, `.email()`, `.url()`, `.uuid()`) are stripped client-side before the schema is sent, with the hint folded into the field's `description` (e.g., `(expected format: email)`). Server-side enforcement of `format` still does not exist in the CLI, but the AI SDK validates `output` against your original Zod schema client-side, so nothing is lost. Complex regex `pattern`s (lookaheads/backreferences) remain unmitigated — `pattern` is passed through untouched because the CLI genuinely rejects some patterns. Keep generation schemas simple and enforce stricter invariants after generation.
 >
 > If you are staying on the 3.x (AI SDK v6) line, its legacy structured-output examples may still use `generateObject()` / `streamObject()`; new 4.x code should use `generateText()` / `streamText()` with `Output`.
+
+### Streaming structured output
+
+By default, `streamText({ output })` delivers the object **in one piece when the run finishes**: the provider holds back the model's in-progress JSON and emits the CLI-validated `structured_output`. Tool progress, reasoning, and raw events still stream live. This is deliberate. The model can submit more than one answer in a run (for example, the CLI rejects a first attempt that fails the schema and the model retries), and text that has already been streamed cannot be taken back, so streaming each attempt would concatenate them into unparseable JSON (`NoObjectGeneratedError`).
+
+To get incremental partial objects anyway, opt in with `streamStructuredOutput: true`:
+
+```typescript
+const { partialOutputStream, output } = streamText({
+  model: claudeCode('sonnet', { streamStructuredOutput: true }),
+  output: Output.object({ schema: UserProfileSchema }),
+  prompt: 'Generate a user profile for a software developer',
+});
+
+for await (const partial of partialOutputStream) {
+  console.log(partial); // Updates as each field is typed
+}
+```
+
+With the opt-in, a run in which the model submits more than one structured answer fails with `NoObjectGeneratedError`, and `partialOutputStream` can show fields from an attempt the CLI later rejected. Use it only where a live preview is worth an occasional failed run. To preview progress without that risk, keep the default and render previews from raw SDK events (`onSdkMessage`, or `includeRawChunks` on the AI SDK call), where the `StructuredOutput` tool's `input_json_delta` events arrive as stream events.
 
 ## Core Features
 
