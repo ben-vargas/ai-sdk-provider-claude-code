@@ -140,3 +140,109 @@ describe('tool input size limit', () => {
     ).toBe(expected);
   });
 });
+
+describe('tool input size limit for streamed input fragments (#182)', () => {
+  const event = (event: unknown) => ({ type: 'stream_event', event, parent_tool_use_id: null });
+  const start = (name = 'Read') =>
+    event({
+      type: 'content_block_start',
+      index: 0,
+      content_block: { type: 'tool_use', id: 'read', name, input: {} },
+    });
+  const delta = (partial_json: string) =>
+    event({
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'input_json_delta', partial_json },
+    });
+  const stop = event({ type: 'content_block_stop', index: 0 });
+  // A JSON object string of exactly `length` characters.
+  const jsonOfLength = (length: number) => `{"c":"${'x'.repeat(length - 8)}"}`;
+
+  async function streamEvents(events: unknown[], structuredOutput?: unknown) {
+    vi.mocked(query).mockReturnValue({
+      async *[Symbol.asyncIterator]() {
+        yield* events;
+        yield {
+          ...result,
+          ...(structuredOutput !== undefined && { structured_output: structuredOutput }),
+        };
+      },
+    } as any);
+    const { stream } = await createModel().doStream({
+      prompt,
+      ...(structuredOutput !== undefined && { responseFormat: jsonFormat }),
+    });
+    const chunks: any[] = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    return chunks;
+  }
+  const inputDeltas = (chunks: any[]) =>
+    chunks.filter((c) => c.type === 'tool-input-delta').map((c) => c.delta);
+  const expectSizeError = (chunks: any[]) => {
+    const errors = chunks.filter((c) => c.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].error.message).toMatch(SIZE_ERROR);
+    expect(chunks.at(-1)).toBe(errors[0]);
+    // As for an oversized assistant input, the stream error path closes the
+    // started tool call with no input before the error part.
+    expect(chunks.filter((c) => c.type === 'tool-call').map((c) => c.input)).toEqual(['']);
+  };
+
+  it('emits an error part for an oversized input that arrives only as fragments', async () => {
+    const chunks = await streamEvents([
+      start(),
+      delta(jsonOfLength(2 * MAX_TOOL_INPUT_SIZE)),
+      stop,
+    ]);
+    expectSizeError(chunks);
+    // The oversized fragment is never forwarded.
+    expect(inputDeltas(chunks)).toEqual([]);
+  });
+
+  it('fails as soon as the running total crosses the limit', async () => {
+    // The first three fragments total exactly the limit; the fourth crosses it.
+    const half = (MAX_TOOL_INPUT_SIZE - 6) / 2;
+    const fragments = ['{"c":"', 'x'.repeat(half), 'x'.repeat(half), 'x', '"}'];
+    const chunks = await streamEvents([start(), ...fragments.map(delta), stop]);
+    expectSizeError(chunks);
+    // Fragments within the limit were already streamed and stay streamed; the
+    // fragment that crosses it and everything after are not forwarded.
+    expect(inputDeltas(chunks)).toEqual(fragments.slice(0, 3));
+  });
+
+  it('accepts a streamed input at the size limit', async () => {
+    const input = jsonOfLength(MAX_TOOL_INPUT_SIZE);
+    const half = Math.floor(input.length / 2);
+    const fragments = [input.slice(0, half), input.slice(half)];
+    const chunks = await streamEvents([start(), ...fragments.map(delta), stop]);
+    expect(chunks.some((c) => c.type === 'error')).toBe(false);
+    expect(inputDeltas(chunks)).toEqual(fragments);
+    expect(chunks.find((c) => c.type === 'tool-call')?.input).toBe(input);
+  });
+
+  it('applies the limit to ordinary tool fragments in JSON mode', async () => {
+    const chunks = await streamEvents(
+      [start(), delta(jsonOfLength(2 * MAX_TOOL_INPUT_SIZE)), stop],
+      { answer: 42 }
+    );
+    expectSizeError(chunks);
+    expect(inputDeltas(chunks)).toEqual([]);
+  });
+
+  it('does not apply the limit to buffered internal StructuredOutput fragments', async () => {
+    const answer = oversizedObject();
+    const chunks = await streamEvents(
+      [start('StructuredOutput'), delta(JSON.stringify(answer)), stop],
+      answer
+    );
+    expect(chunks.some((c) => c.type === 'error')).toBe(false);
+    expect(chunks.some((c) => c.type === 'tool-call')).toBe(false);
+    expect(
+      chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join('')
+    ).toBe(JSON.stringify(answer));
+  });
+});

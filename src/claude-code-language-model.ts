@@ -1550,11 +1550,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
   private checkInputSize(str: string): string {
     const length = str.length;
 
-    if (length > ClaudeCodeLanguageModel.MAX_TOOL_INPUT_SIZE) {
-      throw new Error(
-        `Tool input exceeds maximum size of ${ClaudeCodeLanguageModel.MAX_TOOL_INPUT_SIZE} bytes (got ${length} bytes). This may indicate a malformed request or an attempt to process excessively large data.`
-      );
-    }
+    this.assertInputSizeLimit(length);
 
     if (length > ClaudeCodeLanguageModel.MAX_TOOL_INPUT_WARN) {
       this.logger.warn(
@@ -1563,6 +1559,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
     }
 
     return str;
+  }
+
+  private assertInputSizeLimit(length: number): void {
+    if (length > ClaudeCodeLanguageModel.MAX_TOOL_INPUT_SIZE) {
+      throw new Error(
+        `Tool input exceeds maximum size of ${ClaudeCodeLanguageModel.MAX_TOOL_INPUT_SIZE} bytes (got ${length} bytes). This may indicate a malformed request or an attempt to process excessively large data.`
+      );
+    }
   }
 
   /**
@@ -4071,6 +4075,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 if (toolId) {
                   // Accumulate and emit tool-input-delta
                   const accumulated = (toolInputAccumulators.get(toolId) ?? '') + jsonDelta;
+                  // The accumulator can become the finalized input, so it gets the same
+                  // limit. Fail before forwarding the fragment that crosses it: deltas
+                  // already emitted cannot be retracted.
+                  this.assertInputSizeLimit(accumulated.length);
                   toolInputAccumulators.set(toolId, accumulated);
 
                   controller.enqueue({
