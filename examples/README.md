@@ -255,7 +255,7 @@ npx tsx examples/message-injection.ts
 
 ## Object Generation (Structured Output)
 
-> **Native Support**: Object generation uses the SDK's native `outputFormat` option with constrained decoding, providing schema-compliant JSON for **supported** JSON Schema features.
+> **Native Support**: Object generation uses the SDK's native `outputFormat` option. The CLI validates the model's answer against the schema (asking the model to retry on a mismatch), providing schema-compliant JSON for **supported** JSON Schema features.
 >
 > **Important**: `.email()`, `.url()`, `.uuid()`, `.datetime()` work — the provider strips the JSON Schema `format` keywords they produce (the CLI would otherwise silently fall back to prose) and folds the hint into the field description, while Zod still validates the values client-side. Complex regex with lookaheads/backreferences remains a CLI limitation: `pattern` is passed through (simple patterns are genuinely enforced), so keep patterns simple and validate strictly client-side if needed.
 
@@ -287,7 +287,7 @@ npx tsx examples/generate-object-constraints.ts
 npx tsx examples/stream-object.ts
 ```
 
-**Key concepts**: Partial object streaming, real-time updates, field-by-field progress, `streamObject()` API
+**Key concepts**: Partial object streaming (opt-in via `streamStructuredOutput: true`), real-time updates, field-by-field progress, `streamObject()` API
 
 ### 24. Structured Output Repro (`structured-output-repro.ts`)
 

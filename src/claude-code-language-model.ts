@@ -37,7 +37,7 @@ import type {
  * Provider version reported to the Agent SDK via CLAUDE_AGENT_SDK_CLIENT_APP.
  * Keep in sync with package.json (kept as a constant to avoid a build step).
  */
-const PROVIDER_VERSION = '3.6.1';
+const PROVIDER_VERSION = '3.7.0';
 const DEFAULT_CLIENT_APP = `ai-sdk-provider-claude-code/${PROVIDER_VERSION}`;
 
 const CLAUDE_CODE_TRUNCATION_WARNING =
@@ -150,6 +150,17 @@ const MISSING_STRUCTURED_OUTPUT_ERROR_MESSAGE =
  * @param text - Accumulated assistant prose text
  * @returns The valid JSON text (as emitted by the model) or undefined
  */
+const INTERNAL_STRUCTURED_OUTPUT_TOOL_NAME = 'StructuredOutput';
+
+function isInternalStructuredOutputTool(
+  toolName: string,
+  options: Parameters<LanguageModelV3['doStream']>[0]
+): boolean {
+  return (
+    options.responseFormat?.type === 'json' && toolName === INTERNAL_STRUCTURED_OUTPUT_TOOL_NAME
+  );
+}
+
 function extractJsonObjectText(text: string): string | undefined {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -3165,6 +3176,39 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         const toolBlocksByIndex = new Map<number, string>();
         const toolInputAccumulators = new Map<string, string>();
 
+        // JSON mode: the CLI's internal StructuredOutput tool carries the object.
+        // Its input_json_delta fragments are provisional - the CLI validates each
+        // completed call and may reject it (the model then retries), and emitted
+        // text cannot be retracted - so by default they are buffered per call and
+        // only the CLI-validated `structured_output` is emitted at the result.
+        // `streamStructuredOutput: true` restores speculative delta streaming.
+        const streamStructuredOutput = this.settings.streamStructuredOutput === true;
+        // Block keys are scoped by parent_tool_use_id so subagent frames (which
+        // have their own block index space) never touch the root answer.
+        const structuredOutputBlockKey = (parentToolUseId: string | null, blockIndex: number) =>
+          `${parentToolUseId ?? ''}:${blockIndex}`;
+        const structuredOutputBlocks = new Map<string, string>(); // block key -> call id
+        // Root-level StructuredOutput attempts in call order, keyed by call id.
+        // `uuids` holds the owning message UUIDs so refusal-fallback retraction
+        // (evictLive) can drop attempts from superseded messages.
+        const structuredOutputCandidates = new Map<
+          string,
+          { text: string; rejected: boolean; uuids: Set<string> }
+        >();
+        // Every internal StructuredOutput call id (any scope), for verdict tracking.
+        const internalStructuredOutputToolIds = new Set<string>();
+        const getStructuredOutputCandidate = (callId: string, messageUuid: unknown) => {
+          let candidate = structuredOutputCandidates.get(callId);
+          if (!candidate) {
+            candidate = { text: '', rejected: false, uuids: new Set() };
+            structuredOutputCandidates.set(callId, candidate);
+          }
+          if (typeof messageUuid === 'string') {
+            candidate.uuids.add(messageUuid);
+          }
+          return candidate;
+        };
+
         // Track text content blocks by index for correlating text_delta with text parts
         const textBlocksByIndex = new Map<number, string>();
 
@@ -3190,6 +3234,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         // Idempotent, so supersedes + model_refusal_fallback compose safely (P1).
         const evictLive = (retracted: Set<string>): void => {
           if (retracted.size === 0) return;
+          // Structured-output attempts from retracted messages must never be
+          // recovered as the answer.
+          for (const [callId, candidate] of structuredOutputCandidates) {
+            if ([...candidate.uuids].some((uuid) => retracted.has(uuid))) {
+              structuredOutputCandidates.delete(callId);
+            }
+          }
           for (let i = textSegments.length - 1; i >= 0; i--) {
             const segmentUuid = textSegments[i]?.uuid;
             if (segmentUuid !== undefined && retracted.has(segmentUuid)) {
@@ -3275,6 +3326,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             if (message.type === 'stream_event') {
               const streamEvent = message as SDKPartialAssistantMessage;
               const event = streamEvent.event;
+              const streamParentToolUseId =
+                (message as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? null;
 
               // Check for text_delta events within content_block_delta
               if (
@@ -3311,8 +3364,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 streamedTextLength += deltaText.length;
                 emittedTextSinceLastAssistant += deltaText;
               }
-              // Handle input_json_delta events for structured output streaming
-              // The SDK uses a StructuredOutput tool internally, and JSON is streamed via input_json_delta
+              // Handle input_json_delta events for structured output and tool input streaming.
               if (
                 event.type === 'content_block_delta' &&
                 event.delta.type === 'input_json_delta' &&
@@ -3322,11 +3374,38 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 const jsonDelta = event.delta.partial_json;
                 hasReceivedStreamEvents = true;
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
+                const structuredOutputCallId = structuredOutputBlocks.get(
+                  structuredOutputBlockKey(streamParentToolUseId, blockIndex)
+                );
+                const isStructuredOutputDelta =
+                  structuredOutputCallId !== undefined ||
+                  (streamParentToolUseId === null && !toolBlocksByIndex.has(blockIndex));
 
-                // In JSON mode, prioritize streaming to text-delta for streamObject() support
-                // The SDK's internal StructuredOutput tool uses input_json_delta to stream JSON responses
-                if (options.responseFormat?.type === 'json') {
-                  // Emit text-start if this is the first JSON delta
+                // In JSON mode, only the SDK's internal StructuredOutput tool carries object
+                // JSON. Ordinary tool_use blocks still use input_json_delta for their
+                // arguments and must keep the normal tool-input lifecycle.
+                if (options.responseFormat?.type === 'json' && isStructuredOutputDelta) {
+                  // A subagent's own StructuredOutput call is never the root answer.
+                  if (streamParentToolUseId !== null) {
+                    continue;
+                  }
+
+                  // Fragments without a content_block_start have no call id, so the
+                  // CLI's verdict can never be matched to them; they are never used
+                  // as an answer (the assistant message's complete input is).
+                  if (structuredOutputCallId !== undefined) {
+                    getStructuredOutputCandidate(
+                      structuredOutputCallId,
+                      (message as { uuid?: unknown }).uuid
+                    ).text += jsonDelta;
+                  }
+
+                  if (!streamStructuredOutput) {
+                    // Buffered: the CLI-validated structured_output is emitted at the result.
+                    continue;
+                  }
+
+                  // Opt-in speculative streaming: forward each fragment as text.
                   if (!textPartId) {
                     textPartId = generateId();
                     controller.enqueue({
@@ -3346,7 +3425,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   continue;
                 }
 
-                // In non-JSON mode, route to tool-input-delta if we have a tracked tool
+                // Route to tool-input-delta if we have a tracked tool block.
                 const toolId = toolBlocksByIndex.get(blockIndex);
                 if (toolId) {
                   // Accumulate and emit tool-input-delta
@@ -3360,7 +3439,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   });
                   continue;
                 }
-                // input_json_delta without tool context in non-JSON mode is ignored
+                // input_json_delta without tool context is ignored
               }
 
               // Handle content_block_start for tool_use - emit tool-input-start immediately
@@ -3385,6 +3464,21 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     : ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
 
                 hasReceivedStreamEvents = true;
+
+                const structuredOutputKey = structuredOutputBlockKey(
+                  streamParentToolUseId,
+                  blockIndex
+                );
+                if (isInternalStructuredOutputTool(toolName, options)) {
+                  structuredOutputBlocks.set(structuredOutputKey, toolId);
+                  internalStructuredOutputToolIds.add(toolId);
+                  if (streamParentToolUseId === null) {
+                    getStructuredOutputCandidate(toolId, (message as { uuid?: unknown }).uuid);
+                  }
+                } else {
+                  // A reused index cannot still belong to a structured-output block.
+                  structuredOutputBlocks.delete(structuredOutputKey);
+                }
 
                 // Close any active text part before tool starts
                 if (textPartId) {
@@ -3552,6 +3646,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               if (event.type === 'content_block_stop') {
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
                 hasReceivedStreamEvents = true;
+                structuredOutputBlocks.delete(
+                  structuredOutputBlockKey(streamParentToolUseId, blockIndex)
+                );
 
                 // Check if this is a tool block
                 const toolId = toolBlocksByIndex.get(blockIndex);
@@ -3657,6 +3754,19 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
               const content = message.message.content;
               const tools = this.extractToolUses(content);
+              for (const tool of tools) {
+                if (!isInternalStructuredOutputTool(tool.name, options)) continue;
+                internalStructuredOutputToolIds.add(tool.id);
+                // A subagent's own StructuredOutput call is never the root answer.
+                if ((sdkParentToolUseId ?? null) !== null) continue;
+                const candidate = getStructuredOutputCandidate(tool.id, message.uuid);
+                // The assistant message carries the call's complete input; prefer it
+                // over the streamed fragments.
+                const completeInput = this.serializeToolInput(tool.input);
+                if (completeInput) {
+                  candidate.text = completeInput;
+                }
+              }
 
               // Close any active text part before tool calls start.
               // This ensures tool calls split text into separate parts.
@@ -3744,20 +3854,24 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 const serializedInput = this.serializeToolInput(tool.input);
                 if (serializedInput) {
                   let deltaPayload = '';
+                  // The SDK delivers the completed assistant block before its
+                  // content_block_stop. Account for input bytes already emitted
+                  // through stream events when calculating this block's delta.
+                  const previousInput =
+                    state.lastSerializedInput ?? toolInputAccumulators.get(toolId);
 
                   // First input: emit full delta only if small enough
-                  if (state.lastSerializedInput === undefined) {
+                  if (previousInput === undefined) {
                     if (serializedInput.length <= ClaudeCodeLanguageModel.MAX_DELTA_CALC_SIZE) {
                       deltaPayload = serializedInput;
                     }
                   } else if (
                     serializedInput.length <= ClaudeCodeLanguageModel.MAX_DELTA_CALC_SIZE &&
-                    state.lastSerializedInput.length <=
-                      ClaudeCodeLanguageModel.MAX_DELTA_CALC_SIZE &&
-                    serializedInput.startsWith(state.lastSerializedInput)
+                    previousInput.length <= ClaudeCodeLanguageModel.MAX_DELTA_CALC_SIZE &&
+                    serializedInput.startsWith(previousInput)
                   ) {
-                    deltaPayload = serializedInput.slice(state.lastSerializedInput.length);
-                  } else if (serializedInput !== state.lastSerializedInput) {
+                    deltaPayload = serializedInput.slice(previousInput.length);
+                  } else if (serializedInput !== previousInput) {
                     // Non-prefix updates or large inputs - defer to the final tool-call payload
                     deltaPayload = '';
                   }
@@ -3978,6 +4092,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 if (this.isRetractedToolFrame(result.id, retractedStreamToolIds, 'result')) {
                   continue;
                 }
+                if (result.isError && internalStructuredOutputToolIds.has(result.id)) {
+                  // The CLI rejected this StructuredOutput attempt; never use it as the answer.
+                  const candidate = structuredOutputCandidates.get(result.id);
+                  if (candidate) {
+                    candidate.rejected = true;
+                  }
+                }
                 let state = toolStates.get(result.id);
                 const toolName =
                   result.name ?? state?.name ?? ClaudeCodeLanguageModel.UNKNOWN_TOOL_NAME;
@@ -4053,6 +4174,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               for (const error of this.extractToolErrors(content)) {
                 if (this.isRetractedToolFrame(error.id, retractedStreamToolIds, 'error')) {
                   continue;
+                }
+                if (internalStructuredOutputToolIds.has(error.id)) {
+                  const candidate = structuredOutputCandidates.get(error.id);
+                  if (candidate) {
+                    candidate.rejected = true;
+                  }
                 }
                 let state = toolStates.get(error.id);
                 const toolName =
@@ -4204,7 +4331,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 // accumulated prose; otherwise fail with a descriptive,
                 // non-retryable error instead of streaming prose that ends in
                 // an opaque AI_NoObjectGeneratedError downstream.
-                const recoveredJsonText = extractJsonObjectText(accumulatedText);
+                // Prefer the latest StructuredOutput attempt the CLI did not
+                // reject, then fall back to the last turn's prose.
+                let recoveredJsonText: string | undefined;
+                for (const candidate of [...structuredOutputCandidates.values()].reverse()) {
+                  if (candidate.rejected) continue;
+                  recoveredJsonText = extractJsonObjectText(candidate.text);
+                  if (recoveredJsonText !== undefined) break;
+                }
+                recoveredJsonText ??= extractJsonObjectText(accumulatedText);
                 if (recoveredJsonText === undefined) {
                   throw createAPICallError({
                     message: MISSING_STRUCTURED_OUTPUT_ERROR_MESSAGE,

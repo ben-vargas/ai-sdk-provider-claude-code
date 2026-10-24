@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2026-10-24
+
+### Fixed
+
+- **Ordinary tool input deltas are emitted only once** - When the SDK delivers a complete assistant tool block before its `content_block_stop`, the provider now accounts for input bytes already streamed instead of emitting the full input a second time. This keeps incremental tool-input previews valid while preserving the final tool-call payload.
+- **`streamObject()` no longer fails when the model submits more than one structured answer** ([#175](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/175)) - Backported from 4.4.0. `doStream` forwarded each `input_json_delta` as response text the moment it arrived. When the CLI rejected a first `StructuredOutput` attempt for a schema mismatch and the model retried, both attempts had already been streamed and the AI SDK parsed them as one string (`{"answer":"forty-two"}{"answer":42}`), throwing `NoObjectGeneratedError` even though the CLI's `result` carried the valid `structured_output`. Two schema-valid attempts hit the same failure. `doStream` now buffers each attempt and emits the CLI-validated `structured_output` once at the result, matching `doGenerate`.
+- **Ordinary tool input no longer leaks into the object in JSON mode** - On this line, every `input_json_delta` in JSON mode was treated as structured output, so the arguments of any tool the model called during a `streamObject()` run (e.g. `Read`) were streamed into the object text. Only the internal `StructuredOutput` tool's input now counts; other tools keep the normal `tool-input-delta` lifecycle.
+- **Subagent `StructuredOutput` frames no longer leak into the answer** - Structured-output block tracking is now scoped by `parent_tool_use_id`, so a subagent's own `StructuredOutput` call, or an untracked subagent `input_json_delta`, can no longer be emitted as (or mixed into) the root object.
+- **Missing-`structured_output` recovery skips rejected attempts** - When the CLI returns a successful result without `structured_output`, streaming recovery now prefers the latest `StructuredOutput` attempt the CLI did not reject before falling back to prose, and never recovers an attempt the CLI rejected or one from a message retracted by a refusal fallback. JSON fragments that arrive without a tool-call id (no `content_block_start`) cannot be matched to the CLI's verdict, so they are never used as the answer by default. A truncated stream no longer flushes a half-written attempt as output.
+
+### Added
+
+- **`streamStructuredOutput` setting** - Opt back in to speculative partial-object streaming (`partialObjectStream` updating field by field, as before this release). Already-streamed text cannot be retracted, so with this enabled a run in which the model submits more than one structured answer still fails with `NoObjectGeneratedError`. Defaults to `false`.
+
+### Changed
+
+- **Structured output streams in one piece by default** - With `streamObject()`, `partialObjectStream` now yields the complete object when the run finishes instead of incremental partials. Tool progress and reasoning still stream live, and `includePartialMessages` is still enabled by default. Set `streamStructuredOutput: true` to restore incremental partials. The README no longer describes structured output as "constrained decoding"; the CLI validates the answer against the schema and asks the model to retry on a mismatch.
+
 ## [3.6.1] - 2026-09-28
 
 ### Added
