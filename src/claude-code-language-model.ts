@@ -164,6 +164,27 @@ function isNonTextToolUseContentBlockType(type: unknown): boolean {
   return type === 'server_tool_use' || type === 'mcp_tool_use';
 }
 
+/** Structural JSON equality: object key order is ignored, array order is not. */
+function isSameJsonValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, index) => isSameJsonValue(item, b[index]))
+    );
+  }
+  const aRecord = a as Record<string, unknown>;
+  const bRecord = b as Record<string, unknown>;
+  const keys = Object.keys(aRecord);
+  return (
+    keys.length === Object.keys(bRecord).length &&
+    keys.every((key) => Object.hasOwn(bRecord, key) && isSameJsonValue(aRecord[key], bRecord[key]))
+  );
+}
+
 /**
  * Attempts to recover a JSON object/array from prose text returned when the
  * CLI silently skipped structured output. Tries the trimmed text first, then
@@ -828,6 +849,8 @@ function convertClaudeCodeUsage(usage: ClaudeCodeUsage): LanguageModelV4Usage {
  *
  * @property name - Tool name from SDK (e.g., "Bash", "Read")
  * @property lastSerializedInput - Most recent serialized input, used for delta calculation
+ * @property lastInputIsString - True when the assistant snapshot behind `lastSerializedInput`
+ *                              was a pass-through string rather than a serialized value
  * @property inputStarted - True after `tool-input-start` emitted; prevents duplicate start events
  * @property inputClosed - True after `tool-input-end` emitted; ensures proper event ordering
  * @property callEmitted - True after `tool-call` emitted; prevents duplicate call events when
@@ -836,6 +859,7 @@ function convertClaudeCodeUsage(usage: ClaudeCodeUsage): LanguageModelV4Usage {
 type ToolStreamState = {
   name: string;
   lastSerializedInput?: string;
+  lastInputIsString?: boolean;
   inputStarted: boolean;
   inputClosed: boolean;
   callEmitted: boolean;
@@ -1539,6 +1563,46 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
     }
 
     return str;
+  }
+
+  /**
+   * Chooses the input finalized at content_block_stop. Streamed wire bytes are kept when they
+   * encode the same value as the complete assistant snapshot (whitespace, escapes, and key
+   * order may differ); an incomplete or divergent accumulator yields to the snapshot.
+   */
+  private resolveFinalToolInput(
+    streamedInput: string,
+    completeInput: string | undefined,
+    completeInputIsString = false
+  ): string {
+    if (!streamedInput || !completeInput || streamedInput === completeInput) {
+      return streamedInput || completeInput || '';
+    }
+
+    let streamedValue: unknown;
+    try {
+      streamedValue = JSON.parse(streamedInput);
+    } catch {
+      // Incomplete accumulator; the complete snapshot is authoritative.
+      return completeInput;
+    }
+
+    // A pass-through string snapshot is the decoded value; wire JSON encoding that same
+    // string is complete (wire '"null"' for string 'null' must not become null).
+    if (completeInputIsString && streamedValue === completeInput) {
+      return streamedInput;
+    }
+
+    let completeValue: unknown;
+    try {
+      completeValue = JSON.parse(completeInput);
+    } catch {
+      // Non-JSON snapshot (pass-through string input or serialization fallback);
+      // keep the valid wire JSON.
+      return streamedInput;
+    }
+
+    return isSameJsonValue(streamedValue, completeValue) ? streamedInput : completeInput;
   }
 
   private normalizeToolResult(result: unknown): unknown {
@@ -4257,7 +4321,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                       id: toolId,
                     });
                     state.inputClosed = true;
-                    const effectiveInput = accumulatedInput || state.lastSerializedInput || '';
+                    const effectiveInput = this.resolveFinalToolInput(
+                      accumulatedInput,
+                      state.lastSerializedInput,
+                      state.lastInputIsString
+                    );
                     state.lastSerializedInput = effectiveInput;
 
                     // Emit tool-call immediately when input is complete (don't wait for result)
@@ -4494,6 +4562,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                     });
                   }
                   state.lastSerializedInput = serializedInput;
+                  state.lastInputIsString = typeof tool.input === 'string';
                 }
               }
 
