@@ -1271,11 +1271,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
   private checkInputSize(str: string): string {
     const length = str.length;
 
-    if (length > ClaudeCodeLanguageModel.MAX_TOOL_INPUT_SIZE) {
-      throw new Error(
-        `Tool input exceeds maximum size of ${ClaudeCodeLanguageModel.MAX_TOOL_INPUT_SIZE} bytes (got ${length} bytes). This may indicate a malformed request or an attempt to process excessively large data.`
-      );
-    }
+    this.assertInputSizeLimit(length);
 
     if (length > ClaudeCodeLanguageModel.MAX_TOOL_INPUT_WARN) {
       this.logger.warn(
@@ -1284,6 +1280,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     }
 
     return str;
+  }
+
+  private assertInputSizeLimit(length: number): void {
+    if (length > ClaudeCodeLanguageModel.MAX_TOOL_INPUT_SIZE) {
+      throw new Error(
+        `Tool input exceeds maximum size of ${ClaudeCodeLanguageModel.MAX_TOOL_INPUT_SIZE} bytes (got ${length} bytes). This may indicate a malformed request or an attempt to process excessively large data.`
+      );
+    }
   }
 
   /**
@@ -3462,10 +3466,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   // CLI's verdict can never be matched to them; they are never used
                   // as an answer (the assistant message's complete input is).
                   if (structuredOutputCallId !== undefined) {
-                    getStructuredOutputCandidate(
+                    const candidate = getStructuredOutputCandidate(
                       structuredOutputCallId,
                       (message as { uuid?: unknown }).uuid
-                    ).text += jsonDelta;
+                    );
+                    // This line emits StructuredOutput as a visible tool call, so its
+                    // streamed input gets the tool input size limit like any tool's.
+                    this.assertInputSizeLimit(candidate.text.length + jsonDelta.length);
+                    candidate.text += jsonDelta;
                   }
 
                   if (!streamStructuredOutput) {
@@ -3498,6 +3506,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 if (toolId) {
                   // Accumulate and emit tool-input-delta
                   const accumulated = (toolInputAccumulators.get(toolId) ?? '') + jsonDelta;
+                  // The accumulator can become the finalized input, so it gets the same
+                  // limit. Fail before forwarding the fragment that crosses it: deltas
+                  // already emitted cannot be retracted.
+                  this.assertInputSizeLimit(accumulated.length);
                   toolInputAccumulators.set(toolId, accumulated);
 
                   controller.enqueue({
