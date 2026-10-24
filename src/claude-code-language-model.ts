@@ -1499,21 +1499,28 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
   }
 
   private serializeToolInput(input: unknown): string {
+    return this.checkInputSize(this.stringifyToolInput(input));
+  }
+
+  private stringifyToolInput(input: unknown): string {
     if (typeof input === 'string') {
-      return this.checkInputSize(input);
+      return input;
     }
 
     if (input === undefined) {
       return '';
     }
 
+    // Only serialization failures (cycles, BigInt, throwing toJSON) and values
+    // JSON cannot represent fall back to String(input). The size check stays
+    // in serializeToolInput so its error is not swallowed here.
+    let serialized: string | undefined;
     try {
-      const serialized = JSON.stringify(input);
-      return this.checkInputSize(serialized);
+      serialized = JSON.stringify(input);
     } catch {
-      const fallback = String(input);
-      return this.checkInputSize(fallback);
+      // Fall back to String(input) below.
     }
+    return serialized ?? String(input);
   }
 
   private checkInputSize(str: string): string {
@@ -4362,8 +4369,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 if ((sdkParentToolUseId ?? null) !== null) continue;
                 const candidate = getStructuredOutputCandidate(tool.id, message.uuid);
                 // The assistant message carries the call's complete input; prefer it
-                // over the streamed fragments.
-                const completeInput = this.serializeToolInput(tool.input);
+                // over the streamed fragments. The call is internal and never emitted
+                // as a tool call, so the tool input size limit does not apply (as in
+                // doGenerate, which skips it entirely).
+                const completeInput = this.stringifyToolInput(tool.input);
                 if (completeInput) {
                   candidate.text = completeInput;
                 }
