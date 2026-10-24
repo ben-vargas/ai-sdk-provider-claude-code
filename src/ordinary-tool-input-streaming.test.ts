@@ -157,3 +157,120 @@ describe('ordinary tool input deduplication', () => {
     expect(inputDeltas(chunks, 'b')).toEqual([JSON.stringify(second)]);
   });
 });
+
+describe('ordinary tool input finalization (#179)', () => {
+  const toolCall = (chunks: any[], id: string) =>
+    chunks.find((c) => c.type === 'tool-call' && c.toolCallId === id);
+  const deltasAfterCall = (chunks: any[], id: string) =>
+    chunks
+      .slice(chunks.indexOf(toolCall(chunks, id)))
+      .filter((c) => c.type === 'tool-input-delta' && c.id === id);
+
+  it.each([false, true])(
+    'finalizes the complete assistant input over a partial accumulator (JSON mode %s)',
+    async (json) => {
+      const input = { file_path: '/tmp/a', limit: 5 };
+      const chunks = await collect(
+        [start('read'), delta('{"file_path":'), assistant('read', input), stop()],
+        json
+      );
+      expect(toolCall(chunks, 'read')?.input).toBe(JSON.stringify(input));
+      expect(inputDeltas(chunks, 'read').join('')).toBe(JSON.stringify(input));
+      expect(deltasAfterCall(chunks, 'read')).toEqual([]);
+    }
+  );
+  it('finalizes the complete assistant input when the accumulator parses to a different value', async () => {
+    const input = { file_path: '/tmp/a', limit: 5 };
+    // A dropped middle fragment (',"limit":5') still leaves valid JSON.
+    const chunks = await collect([
+      start('read'),
+      delta('{"file_path":"/tmp/a"'),
+      delta('}'),
+      assistant('read', input),
+      stop(),
+    ]);
+    expect(toolCall(chunks, 'read')?.input).toBe(JSON.stringify(input));
+    expect(inputDeltas(chunks, 'read')).toEqual(['{"file_path":"/tmp/a"', '}']);
+    expect(deltasAfterCall(chunks, 'read')).toEqual([]);
+  });
+  it.each(['{ "file_path" : "/tmp/a" }', '{"file_path":"/tmp/\\u0061"}'])(
+    'keeps complete wire input %s byte-for-byte',
+    async (wire) => {
+      const chunks = await collect([
+        start('read'),
+        delta(wire),
+        assistant('read', JSON.parse(wire)),
+        stop(),
+      ]);
+      expect(toolCall(chunks, 'read')?.input).toBe(wire);
+    }
+  );
+  it('keeps complete wire input whose object keys are ordered differently', async () => {
+    const wire = '{ "options": { "b": 2, "a": 1 }, "file_path": "/tmp/a" }';
+    const chunks = await collect([
+      start('read'),
+      delta(wire),
+      assistant('read', { file_path: '/tmp/a', options: { a: 1, b: 2 } }),
+      stop(),
+    ]);
+    expect(toolCall(chunks, 'read')?.input).toBe(wire);
+  });
+  it('finalizes the complete assistant input when array order differs', async () => {
+    const input = { paths: ['/b', '/a'] };
+    const chunks = await collect([
+      start('read'),
+      delta('{"paths":["/a","/b"]}'),
+      assistant('read', input),
+      stop(),
+    ]);
+    expect(toolCall(chunks, 'read')?.input).toBe(JSON.stringify(input));
+  });
+  it.each(['hello', 'null', '42', 'true', '{"x":1}'])(
+    'keeps wire JSON encoding the pass-through string assistant input %s',
+    async (value) => {
+      const wire = JSON.stringify(value);
+      const chunks = await collect([start('read'), delta(wire), assistant('read', value), stop()]);
+      expect(toolCall(chunks, 'read')?.input).toBe(wire);
+    }
+  );
+  it('keeps wire JSON matching a pre-serialized string assistant input', async () => {
+    const wire = '{ "x": 1 }';
+    const chunks = await collect([
+      start('read'),
+      delta(wire),
+      assistant('read', '{"x":1}'),
+      stop(),
+    ]);
+    expect(toolCall(chunks, 'read')?.input).toBe(wire);
+  });
+  it('finalizes a non-string assistant input over a wire string of the same text', async () => {
+    const chunks = await collect([start('read'), delta('"42"'), assistant('read', 42), stop()]);
+    expect(toolCall(chunks, 'read')?.input).toBe('42');
+  });
+  it('keeps the accumulator when no assistant snapshot precedes block_stop', async () => {
+    const chunks = await collect([start('read'), delta('{"file_path":'), stop()]);
+    expect(toolCall(chunks, 'read')?.input).toBe('{"file_path":');
+  });
+  it('keeps the internal StructuredOutput tool lifecycle on the complete snapshot', async () => {
+    const input = { answer: 42 };
+    const chunks = await collect(
+      [
+        event({
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'tool_use', id: 'so', name: 'StructuredOutput', input: {} },
+        }),
+        delta('{"answer":'),
+        {
+          ...assistant('so', input),
+          message: { content: [{ type: 'tool_use', id: 'so', name: 'StructuredOutput', input }] },
+        },
+        stop(),
+      ],
+      true
+    );
+    expect(inputDeltas(chunks, 'so')).toEqual([JSON.stringify(input)]);
+    expect(toolCall(chunks, 'so')?.input).toBe(JSON.stringify(input));
+    expect(deltasAfterCall(chunks, 'so')).toEqual([]);
+  });
+});
