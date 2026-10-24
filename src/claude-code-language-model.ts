@@ -3795,9 +3795,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
           hookEvents: [],
         };
 
-        // Content block streaming: Map block indices to tool IDs and accumulated JSON
-        const toolBlocksByIndex = new Map<number, string>();
-        const nonTextToolBlockIndexes = new Set<number>();
+        // Content block streaming: Map block keys to tool IDs and accumulated JSON.
+        // Block keys are scoped by parent_tool_use_id: subagent frames have their
+        // own block index space, so a bare index can collide with a root block.
+        const streamBlockKey = (parentToolUseId: string | null, blockIndex: number) =>
+          `${parentToolUseId ?? ''}:${blockIndex}`;
+        const toolBlocksByIndex = new Map<string, string>(); // block key -> tool id
+        const nonTextToolBlockIndexes = new Set<string>(); // block keys
 
         // JSON mode: the CLI's internal StructuredOutput tool carries the object.
         // Its input_json_delta fragments are provisional - the CLI validates each
@@ -3806,10 +3810,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
         // only the CLI-validated `structured_output` is emitted at the result.
         // `streamStructuredOutput: true` restores speculative delta streaming.
         const streamStructuredOutput = this.settings.streamStructuredOutput === true;
-        // Block keys are scoped by parent_tool_use_id so subagent frames (which
-        // have their own block index space) never touch the root answer.
-        const structuredOutputBlockKey = (parentToolUseId: string | null, blockIndex: number) =>
-          `${parentToolUseId ?? ''}:${blockIndex}`;
+        // Scoped block keys (streamBlockKey) mean subagent frames never touch the
+        // root answer.
         const structuredOutputBlocks = new Map<string, string>(); // block key -> call id
         // Root-level StructuredOutput attempts in call order, keyed by call id.
         // `uuids` holds the owning message UUIDs so refusal-fallback retraction
@@ -3834,14 +3836,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
         };
         const toolInputAccumulators = new Map<string, string>();
 
-        // Track text content blocks by index for correlating text_delta with text parts
-        const textBlocksByIndex = new Map<number, string>();
+        // Track text content blocks by block key for correlating text_delta with text parts
+        const textBlocksByIndex = new Map<string, string>(); // block key -> text part id
 
         // Track if text was streamed via content blocks to prevent double emission in result handler
         let textStreamedViaContentBlock = false;
 
-        // Extended thinking: Map block indices to reasoning part IDs
-        const reasoningBlocksByIndex = new Map<number, string>();
+        // Extended thinking: Map block keys to reasoning part IDs
+        const reasoningBlocksByIndex = new Map<string, string>(); // block key -> reasoning id
         let currentReasoningPartId: string | undefined;
 
         // evictLive: the doStream half of the shared retraction policy (P1-P5,
@@ -3897,9 +3899,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
               toolStates.delete(toolId);
               retractedStreamToolIds.add(toolId);
               toolInputAccumulators.delete(toolId);
-              for (const [blockIndex, mappedId] of toolBlocksByIndex) {
+              for (const [blockKey, mappedId] of toolBlocksByIndex) {
                 if (mappedId === toolId) {
-                  toolBlocksByIndex.delete(blockIndex);
+                  toolBlocksByIndex.delete(blockKey);
                 }
               }
               this.logger.debug(
@@ -4012,14 +4014,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 const jsonDelta = event.delta.partial_json;
                 hasReceivedStreamEvents = true;
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
-                const structuredOutputCallId = structuredOutputBlocks.get(
-                  structuredOutputBlockKey(streamParentToolUseId, blockIndex)
-                );
+                const blockKey = streamBlockKey(streamParentToolUseId, blockIndex);
+                const structuredOutputCallId = structuredOutputBlocks.get(blockKey);
                 const isStructuredOutputDelta =
                   structuredOutputCallId !== undefined ||
                   (streamParentToolUseId === null &&
-                    !toolBlocksByIndex.has(blockIndex) &&
-                    !nonTextToolBlockIndexes.has(blockIndex));
+                    !toolBlocksByIndex.has(blockKey) &&
+                    !nonTextToolBlockIndexes.has(blockKey));
 
                 // In JSON mode, only the SDK's internal StructuredOutput tool carries object
                 // JSON. Ordinary tool_use blocks still use input_json_delta for their
@@ -4066,7 +4067,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 }
 
                 // Route to tool-input-delta if we have a tracked tool block.
-                const toolId = toolBlocksByIndex.get(blockIndex);
+                const toolId = toolBlocksByIndex.get(blockKey);
                 if (toolId) {
                   // Accumulate and emit tool-input-delta
                   const accumulated = (toolInputAccumulators.get(toolId) ?? '') + jsonDelta;
@@ -4091,11 +4092,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 isNonTextToolUseContentBlockType(event.content_block?.type)
               ) {
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
+                const blockKey = streamBlockKey(streamParentToolUseId, blockIndex);
                 hasReceivedStreamEvents = true;
-                nonTextToolBlockIndexes.add(blockIndex);
-                structuredOutputBlocks.delete(
-                  structuredOutputBlockKey(streamParentToolUseId, blockIndex)
-                );
+                nonTextToolBlockIndexes.add(blockKey);
+                structuredOutputBlocks.delete(blockKey);
                 continue;
               }
 
@@ -4106,6 +4106,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 event.content_block?.type === 'tool_use'
               ) {
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
+                const blockKey = streamBlockKey(streamParentToolUseId, blockIndex);
                 const toolBlock = event.content_block as {
                   type: string;
                   id?: string;
@@ -4122,13 +4123,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
 
                 hasReceivedStreamEvents = true;
                 // A reused index cannot still belong to a non-text tool block.
-                nonTextToolBlockIndexes.delete(blockIndex);
+                nonTextToolBlockIndexes.delete(blockKey);
 
                 if (isInternalStructuredOutputTool(toolName, options)) {
-                  structuredOutputBlocks.set(
-                    structuredOutputBlockKey(streamParentToolUseId, blockIndex),
-                    toolId
-                  );
+                  structuredOutputBlocks.set(blockKey, toolId);
                   internalStructuredOutputToolIds.add(toolId);
                   if (streamParentToolUseId === null) {
                     getStructuredOutputCandidate(toolId, (message as { uuid?: unknown }).uuid);
@@ -4136,9 +4134,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                   continue;
                 }
                 // A reused index cannot still belong to a structured-output block.
-                structuredOutputBlocks.delete(
-                  structuredOutputBlockKey(streamParentToolUseId, blockIndex)
-                );
+                structuredOutputBlocks.delete(blockKey);
 
                 // Close any active text part before tool starts
                 if (textPartId) {
@@ -4158,7 +4154,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 }
 
                 // Track this block for later delta/stop events
-                toolBlocksByIndex.set(blockIndex, toolId);
+                toolBlocksByIndex.set(blockKey, toolId);
                 toolInputAccumulators.set(toolId, '');
 
                 // Create tool state if not exists
@@ -4221,11 +4217,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 event.content_block?.type === 'text'
               ) {
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
+                const blockKey = streamBlockKey(streamParentToolUseId, blockIndex);
                 hasReceivedStreamEvents = true;
 
                 // Generate text part ID early and map to block index
                 const partId = generateId();
-                textBlocksByIndex.set(blockIndex, partId);
+                textBlocksByIndex.set(blockKey, partId);
                 textPartId = partId;
 
                 this.logger.debug(
@@ -4247,6 +4244,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 event.content_block?.type === 'thinking'
               ) {
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
+                const blockKey = streamBlockKey(streamParentToolUseId, blockIndex);
                 hasReceivedStreamEvents = true;
 
                 // Close any active text part before reasoning starts
@@ -4267,7 +4265,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 }
 
                 const reasoningPartId = generateId();
-                reasoningBlocksByIndex.set(blockIndex, reasoningPartId);
+                reasoningBlocksByIndex.set(blockKey, reasoningPartId);
                 currentReasoningPartId = reasoningPartId;
 
                 this.logger.debug(
@@ -4288,8 +4286,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 event.delta.thinking
               ) {
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
+                const blockKey = streamBlockKey(streamParentToolUseId, blockIndex);
                 const reasoningPartId =
-                  reasoningBlocksByIndex.get(blockIndex) ?? currentReasoningPartId;
+                  reasoningBlocksByIndex.get(blockKey) ?? currentReasoningPartId;
                 hasReceivedStreamEvents = true;
 
                 if (reasoningPartId) {
@@ -4305,10 +4304,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
               // Handle content_block_stop - finalize tool input, text, or reasoning
               if (event.type === 'content_block_stop') {
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
+                const blockKey = streamBlockKey(streamParentToolUseId, blockIndex);
                 hasReceivedStreamEvents = true;
 
                 // Check if this is a tool block
-                const toolId = toolBlocksByIndex.get(blockIndex);
+                const toolId = toolBlocksByIndex.get(blockKey);
                 if (toolId) {
                   const state = toolStates.get(toolId);
                   if (state && !state.inputClosed) {
@@ -4342,25 +4342,21 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                       state.callEmitted = true;
                     }
                   }
-                  toolBlocksByIndex.delete(blockIndex);
+                  toolBlocksByIndex.delete(blockKey);
                   toolInputAccumulators.delete(toolId);
                   continue;
                 }
 
-                if (
-                  structuredOutputBlocks.delete(
-                    structuredOutputBlockKey(streamParentToolUseId, blockIndex)
-                  )
-                ) {
+                if (structuredOutputBlocks.delete(blockKey)) {
                   continue;
                 }
 
-                if (nonTextToolBlockIndexes.delete(blockIndex)) {
+                if (nonTextToolBlockIndexes.delete(blockKey)) {
                   continue;
                 }
 
                 // Check if this is a text block
-                const textId = textBlocksByIndex.get(blockIndex);
+                const textId = textBlocksByIndex.get(blockKey);
                 if (textId) {
                   this.logger.debug(
                     `[claude-code] Text content block stopped - Index: ${blockIndex}, ID: ${textId}`
@@ -4369,7 +4365,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                     type: 'text-end',
                     id: textId,
                   });
-                  textBlocksByIndex.delete(blockIndex);
+                  textBlocksByIndex.delete(blockKey);
                   if (textPartId === textId) {
                     textPartId = undefined;
                   }
@@ -4377,7 +4373,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 }
 
                 // Check if this is a reasoning block
-                const reasoningPartId = reasoningBlocksByIndex.get(blockIndex);
+                const reasoningPartId = reasoningBlocksByIndex.get(blockKey);
                 if (reasoningPartId) {
                   this.logger.debug(
                     `[claude-code] Reasoning ended (content_block) - ID: ${reasoningPartId}`
@@ -4386,7 +4382,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                     type: 'reasoning-end',
                     id: reasoningPartId,
                   });
-                  reasoningBlocksByIndex.delete(blockIndex);
+                  reasoningBlocksByIndex.delete(blockKey);
                   if (currentReasoningPartId === reasoningPartId) {
                     currentReasoningPartId = undefined;
                   }
@@ -4743,9 +4739,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 });
                 textPartId = undefined;
                 // Prevent a later content_block_stop from closing the same text part twice.
-                for (const [blockIndex, blockTextId] of textBlocksByIndex) {
+                for (const [blockKey, blockTextId] of textBlocksByIndex) {
                   if (blockTextId === closedTextId) {
-                    textBlocksByIndex.delete(blockIndex);
+                    textBlocksByIndex.delete(blockKey);
                     break;
                   }
                 }

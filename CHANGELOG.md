@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Subagent and root tool blocks at the same stream index no longer swap input** ([#183](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/183)) - `doStream` tracked content blocks by their bare stream `index`, but subagent stream events (`parent_tool_use_id` set) have their own index space. When a subagent block and a root block shared an index, one block's `input_json_delta` fragments were routed to the other's tool call, and a `content_block_stop` could close the wrong tool, text, or reasoning part. Tool, text, and reasoning block tracking is now scoped by `parent_tool_use_id`, like structured-output block tracking.
+
 ## [4.4.0] - 2026-10-24
 
 ### Fixed
