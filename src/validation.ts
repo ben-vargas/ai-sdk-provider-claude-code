@@ -513,13 +513,6 @@ export function validateSettings(settings: unknown): {
       );
     }
 
-    // Check if both allowedTools and disallowedTools are specified
-    if (validSettings.allowedTools && validSettings.disallowedTools) {
-      warnings.push(
-        'Both allowedTools and disallowedTools are specified. Only allowedTools will be used.'
-      );
-    }
-
     // Validate tool name format
     const validateToolNames = (tools: string[], type: string) => {
       tools.forEach((tool) => {

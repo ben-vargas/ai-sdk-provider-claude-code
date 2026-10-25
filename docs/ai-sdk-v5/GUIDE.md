@@ -260,8 +260,8 @@ If you abort with a reason (`controller.abort(new Error('...'))`), `generateText
 | `maxTurns`                   | `number`                                  | `undefined` | Maximum conversation turns                                         |
 | `maxThinkingTokens`          | `number`                                  | `undefined` | Maximum thinking tokens                                            |
 | `permissionMode`             | `string`                                  | `'default'` | Permission mode for tools                                          |
-| `allowedTools`               | `string[]`                                | `undefined` | Tools to explicitly allow                                          |
-| `disallowedTools`            | `string[]`                                | `undefined` | Tools to restrict                                                  |
+| `allowedTools`               | `string[]`                                | `undefined` | Tools to pre-approve (run without prompting); not an allowlist     |
+| `disallowedTools`            | `string[]`                                | `undefined` | Tools to deny; takes precedence over `allowedTools`                |
 | `mcpServers`                 | `object`                                  | `undefined` | MCP server configuration                                           |
 | `env`                        | `Record<string, string>`                  | `undefined` | Environment variables passed to CLI                                |
 | `resume`                     | `string`                                  | `undefined` | Resume an existing session                                         |
@@ -458,59 +458,109 @@ const model = claudeCode('sonnet', {
 
 ### Tool Management
 
-Control which tools Claude Code can use with either `allowedTools` (allowlist) or `disallowedTools` (denylist). These flags work for **both built-in Claude tools and MCP tools**, providing session-only permission overrides.
+Three settings control tools, and they can be combined:
+
+- `tools` sets which **built-in** tools exist (`[]` disables all built-in tools). MCP tools are controlled separately, through `mcpServers` and permission rules.
+- `allowedTools` **pre-approves** tools: matching calls run without a permission prompt. It is not an allowlist. Unlisted tools stay available and go through `permissionMode`, `canUseTool`, and hooks as usual.
+- `disallowedTools` **denies** tools. A bare tool name removes the tool; a rule with a specifier, such as `Bash(rm:*)`, denies only matching calls. Deny rules take precedence over allow rules.
+
+`allowedTools` and `disallowedTools` work for **both built-in Claude tools and MCP tools**, providing session-only permission rules.
 
 #### Tool Types
 
 - **Built-in tools**: `Bash`, `Edit`, `Read`, `Write`, `LS`, `Grep`, etc.
 - **MCP tools**: `mcp__serverName__toolName` format
 
-#### Using allowedTools (Allowlist)
+#### Restricting built-in tools with tools
 
 ```typescript
 import { createClaudeCode } from 'ai-sdk-provider-claude-code';
 
-// Only allow specific built-in tools
+// Only these built-in tools exist in the session
 const readOnlyClaude = createClaudeCode({
-  allowedTools: ['Read', 'LS', 'Grep'],
+  defaultSettings: {
+    tools: ['Read', 'LS', 'Grep'],
+  },
 });
 
-// Allow specific Bash commands using specifiers
-const gitOnlyClaude = createClaudeCode({
-  allowedTools: ['Bash(git log:*)', 'Bash(git diff:*)', 'Bash(git status)'],
+// No built-in tools at all (MCP tools are unaffected)
+const noBuiltinsClaude = createClaudeCode({
+  defaultSettings: {
+    tools: [],
+  },
+});
+```
+
+#### Pre-approving tools with allowedTools
+
+```typescript
+// Run these without prompting; other tools still follow normal permissions
+const gitClaude = createClaudeCode({
+  defaultSettings: {
+    allowedTools: ['Bash(git log:*)', 'Bash(git diff:*)', 'Bash(git status)'],
+  },
 });
 
 // Mix built-in and MCP tools
 const mixedClaude = createClaudeCode({
-  allowedTools: ['Read', 'Bash(npm test:*)', 'mcp__filesystem__read_text_file', 'mcp__git__status'],
+  defaultSettings: {
+    allowedTools: [
+      'Read',
+      'Bash(npm test:*)',
+      'mcp__filesystem__read_text_file',
+      'mcp__git__status',
+    ],
+  },
 });
 ```
 
-#### Using disallowedTools (Denylist)
+#### Denying tools with disallowedTools
 
 ```typescript
 // Block dangerous operations
 const safeClaude = createClaudeCode({
-  disallowedTools: ['Write', 'Edit', 'Delete', 'Bash(rm:*)', 'Bash(sudo:*)'],
+  defaultSettings: {
+    disallowedTools: ['Write', 'Edit', 'Delete', 'Bash(rm:*)', 'Bash(sudo:*)'],
+  },
 });
 
 // Block all Bash and MCP write operations
 const restrictedClaude = createClaudeCode({
-  disallowedTools: ['Bash', 'mcp__filesystem__write_file', 'mcp__git__commit', 'mcp__git__push'],
+  defaultSettings: {
+    disallowedTools: ['Bash', 'mcp__filesystem__write_file', 'mcp__git__commit', 'mcp__git__push'],
+  },
 });
 ```
+
+#### Combining allowedTools and disallowedTools
+
+```typescript
+// Pre-approve Read and Bash, except Bash calls that match the deny rule
+const combinedClaude = createClaudeCode({
+  defaultSettings: {
+    allowedTools: ['Read', 'Bash'],
+    disallowedTools: ['Bash(rm:*)'], // denies calls matching this rule
+  },
+});
+```
+
+Scoped Bash rules match the command as written, so `Bash(rm:*)` does not match forms such as `/bin/rm` or `bash -c 'rm ...'`; those still fall under the broad `Bash` pre-approval. For a hard boundary, deny the whole tool (`disallowedTools: ['Bash']`) or use sandboxing.
+
+A tool that appears in both lists is denied: `allowedTools: ['Bash', 'Read']` with `disallowedTools: ['Read']` removes Read, while Bash stays pre-approved.
 
 #### Model-Specific Overrides
 
 ```typescript
 const baseClaude = createClaudeCode({
-  disallowedTools: ['Write', 'Edit'],
+  defaultSettings: {
+    disallowedTools: ['Write', 'Edit'],
+  },
 });
 
 // Override for a specific call
 const result = await generateText({
   model: baseClaude('opus', {
-    disallowedTools: [], // Allow everything for this call
+    disallowedTools: [], // Clear the provider-level deny list for this call
   }),
   prompt: 'Create a simple config file...',
 });
@@ -518,11 +568,12 @@ const result = await generateText({
 
 **Key Points**:
 
-- These are **session-only permission overrides** (same syntax as settings.json)
-- Higher priority than settings files
+- These are **session-only permission rules** (same syntax as settings.json), added to the rules from your settings files
+- Deny rules take precedence over allow rules from any source, so `allowedTools` cannot override a matching deny rule
 - Works for both built-in tools AND MCP tools
-- Cannot use both `allowedTools` and `disallowedTools` together
-- Empty `allowedTools: []` = Explicit empty allowlist (no tools allowed)
+- `allowedTools` and `disallowedTools` can be used together
+- `allowedTools` does not restrict which tools exist; use `tools` for built-in tools
+- Empty `allowedTools: []` = no tools pre-approved (not "no tools allowed")
 - Omitting the flags entirely = Falls back to normal permission system
 - Use `/permissions` in Claude to see all available tool names
 
@@ -537,9 +588,12 @@ const result = await generateText({
 | Configuration | CLI Flag Behavior | Result |
 |--------------|-------------------|---------|
 | No config | No `--allowedTools` or `--disallowedTools` | Falls back to settings.json and interactive prompts |
-| `allowedTools: []` | `--allowedTools` (empty) | Explicit empty allowlist - blocks all tools |
-| `allowedTools: ['Read']` | `--allowedTools Read` | Only allows Read tool |
-| `disallowedTools: []` | `--disallowedTools` (empty) | No effect - normal permissions apply |
+| `allowedTools: []` | No flag (empty lists are not passed) | No tools pre-approved - normal permissions apply |
+| `allowedTools: ['Read']` | `--allowedTools Read` | Read runs without prompting; other tools follow normal permissions |
+| `allowedTools: ['Bash', 'Read']` + `disallowedTools: ['Read']` | `--allowedTools Bash,Read --disallowedTools Read` | Read is denied (deny wins); Bash runs without prompting |
+| `tools: []` | `--tools` (empty) | No built-in tools available; MCP tools are unaffected |
+| `tools: ['Read']` | `--tools Read` | Only the Read built-in tool is available |
+| `disallowedTools: []` | No flag (empty lists are not passed) | No effect - normal permissions apply |
 | `disallowedTools: ['Write']` | `--disallowedTools Write` | Blocks Write tool, others follow normal permissions |
 
 ## Advanced Configuration
