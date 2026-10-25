@@ -577,18 +577,32 @@ type ProviderToolResultPart = LanguageModelV3ToolResult & { providerExecuted: tr
  * drop already-collected parts (text, thinking, AND tool calls) instead of
  * duplicating or orphaning them.
  */
+// `subagent` marks text and tool results from a subagent (parent_tool_use_id
+// set): missing-structured_output recovery uses root text and turns only (#202).
 type GenerateContentSegment =
-  | { kind: 'text'; uuid?: string; text: string }
+  | { kind: 'text'; uuid?: string; subagent?: true; text: string }
   | { kind: 'reasoning'; uuid?: string; text: string }
   | { kind: 'tool-call'; uuid?: string; toolCallId: string; part: LanguageModelV3ToolCall }
-  | { kind: 'tool-result'; uuid?: string; toolCallId: string; part: ProviderToolResultPart }
+  | {
+      kind: 'tool-result';
+      uuid?: string;
+      subagent?: true;
+      toolCallId: string;
+      part: ProviderToolResultPart;
+    }
   // tool_error blocks carry a V3 `tool-result` part with `isError: true`:
   // the V3 CONTENT union has no `tool-error` member and AI SDK core's
   // asContent() silently drops unknown part types, whereas an isError
   // tool-result round-trips into a proper tool-error content part visible
   // in generateText steps content. (doStream keeps the provider-extension
   // tool-error STREAM part, which AI SDK core handles natively.)
-  | { kind: 'tool-error'; uuid?: string; toolCallId: string; part: ProviderToolResultPart };
+  | {
+      kind: 'tool-error';
+      uuid?: string;
+      subagent?: true;
+      toolCallId: string;
+      part: ProviderToolResultPart;
+    };
 
 type ContentBlock = { type: string; [key: string]: unknown };
 
@@ -2454,23 +2468,30 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         .filter((segment) => segment.kind === 'text')
         .map((segment) => segment.text)
         .join('');
-    // Text of the final assistant turn only: segments after the last
-    // user-message-derived segment (tool-result/tool-error). Mirrors
-    // doStream's accumulator reset on user messages, so JSON recovery in
-    // multi-turn tool runs is not defeated by earlier-turn chatter.
+    // Root-scope text for JSON recovery: a subagent's text is never the root
+    // answer (#202).
+    const joinRootTextSegments = (segments: GenerateContentSegment[]) =>
+      segments
+        .filter((segment) => segment.kind === 'text' && !segment.subagent)
+        .map((segment) => (segment as { text: string }).text)
+        .join('');
+    // Root text of the final assistant turn only: segments after the last root
+    // user-message-derived segment (tool-result/tool-error). Mirrors doStream's
+    // per-scope accumulator reset on user messages, so JSON recovery in
+    // multi-turn tool runs is not defeated by earlier-turn chatter, and a
+    // subagent's tool result does not end the root turn.
     const joinFinalTurnTextSegments = () => {
       let start = 0;
       for (let i = 0; i < contentSegments.length; i++) {
-        const kind = contentSegments[i]?.kind;
-        if (kind === 'tool-result' || kind === 'tool-error') {
+        const segment = contentSegments[i];
+        if (
+          (segment?.kind === 'tool-result' || segment?.kind === 'tool-error') &&
+          !segment.subagent
+        ) {
           start = i + 1;
         }
       }
-      return contentSegments
-        .slice(start)
-        .filter((segment) => segment.kind === 'text')
-        .map((segment) => segment.text)
-        .join('');
+      return joinRootTextSegments(contentSegments.slice(start));
     };
     // Known tools by ID so tool_result/tool_error blocks can resolve the tool
     // name and parent context (mirrors doStream's toolStates).
@@ -2672,6 +2693,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   contentSegments.push({
                     kind: 'text',
                     ...(messageUuid !== undefined && { uuid: messageUuid }),
+                    ...((sdkParentToolUseId ?? null) !== null && { subagent: true as const }),
                     text: block.text,
                   });
                 }
@@ -2781,6 +2803,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             contentSegments.push({
               kind: 'tool-result',
               ...(resultMessageUuid !== undefined && { uuid: resultMessageUuid }),
+              ...((sdkParentToolUseIdForResults ?? null) !== null && { subagent: true as const }),
               toolCallId: result.id,
               part: this.buildToolResultPart(
                 result.id,
@@ -2832,6 +2855,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             contentSegments.push({
               kind: 'tool-error',
               ...(resultMessageUuid !== undefined && { uuid: resultMessageUuid }),
+              ...((sdkParentToolUseIdForResults ?? null) !== null && { subagent: true as const }),
               toolCallId: error.id,
               part: this.buildToolErrorResultPart(
                 error.id,
@@ -2993,12 +3017,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       !wasTruncated &&
       finishReason.unified === 'stop'
     ) {
-      // Prefer the final assistant turn's prose (matches doStream, which
-      // resets its accumulator on user messages), then fall back to all
-      // turns joined (doGenerate never resets text segments).
+      // Prefer the final root turn's prose (matches doStream, which resets
+      // its root accumulator on root user messages), then fall back to all
+      // root turns joined (doGenerate never resets text segments).
       const recoveredJsonText =
         extractJsonObjectText(joinFinalTurnTextSegments()) ??
-        extractJsonObjectText(joinTextSegments());
+        extractJsonObjectText(joinRootTextSegments(contentSegments));
       if (recoveredJsonText !== undefined) {
         this.logger.warn(
           '[claude-code] outputFormat was requested but the CLI returned no structured_output; recovered JSON by parsing the prose response. The schema likely contains constructs the CLI cannot enforce - see the README structured-output limitations.'
@@ -3243,6 +3267,18 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         // Per-message text segments mirroring `accumulatedText` so refusal-fallback
         // `supersedes` retractions keep non-retracted text (matches doGenerate).
         const textSegments: Array<{ uuid?: string; text: string }> = [];
+        // Root text deltas not yet claimed by their completed assistant message.
+        // `accumulatedText` is always the turn's segments followed by this text.
+        let pendingRootText = '';
+        const syncAccumulatedText = () => {
+          accumulatedText = textSegments.map((segment) => segment.text).join('') + pendingRootText;
+        };
+        // A completed root assistant message claims the deltas streamed for it.
+        const claimPendingRootText = (text: string) => {
+          pendingRootText = pendingRootText.startsWith(text)
+            ? pendingRootText.slice(text.length)
+            : '';
+        };
         // Latest open text part per scope, for untracked deltas and complete-message
         // text. A block start, tool call, or tool result only closes its own
         // scope's part (#201).
@@ -3385,7 +3421,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           // Recompute alongside every textSegments mutation so JSON-mode final
           // extraction never sees retracted text (kept in lockstep with the
           // other textSegments writers below).
-          accumulatedText = textSegments.map((segment) => segment.text).join('');
+          pendingRootText = '';
+          syncAccumulatedText();
 
           // P2/P3 policy: derive tombstoned tool ids from each live toolState's
           // owning messageUuid (the doStream descriptor shape).
@@ -3475,6 +3512,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 hasReceivedStreamEvents = true;
                 const scope = textScope(streamParentToolUseId);
                 if (scope === '') {
+                  pendingRootText += deltaText;
                   accumulatedText += deltaText;
                 }
                 streamedTextLengths.set(
@@ -3550,6 +3588,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
                   // Opt-in speculative streaming: forward each fragment as text.
                   emitTextDelta(currentTextPartIds.get('') ?? openTextPart(''), jsonDelta);
+                  pendingRootText += jsonDelta;
                   accumulatedText += jsonDelta;
                   streamedTextLengths.set(
                     '',
@@ -4028,11 +4067,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   // replacement text so kept text from earlier assistant
                   // messages survives in the accumulators (matches doGenerate).
                   if (scope === '') {
+                    claimPendingRootText(text);
                     textSegments.push({
                       ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
                       text,
                     });
-                    accumulatedText = textSegments.map((segment) => segment.text).join('');
+                    syncAccumulatedText();
                   }
 
                   if (emittedText === text) {
@@ -4079,14 +4119,16 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   const deltaText =
                     text.length > streamedTextLength ? text.slice(streamedTextLength) : '';
 
-                  // Always accumulate for final result tracking
+                  // Always accumulate for final result tracking. Each completed
+                  // block is its own assistant message, so it is appended to the
+                  // turn's earlier blocks and claims its streamed deltas (#202).
                   if (scope === '') {
-                    accumulatedText = text; // Replace with full text (assistant msg contains full content)
-                    textSegments.length = 0;
+                    claimPendingRootText(text);
                     textSegments.push({
                       ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
                       text,
                     });
+                    syncAccumulatedText();
                   }
 
                   // In JSON mode, we accumulate the text and extract JSON at the end
@@ -4144,6 +4186,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               if (scope === '') {
                 accumulatedText = '';
                 textSegments.length = 0;
+                pendingRootText = '';
               }
               streamedTextLengths.delete(scope);
               emittedTextSinceLastAssistant.delete(scope);
@@ -4393,14 +4436,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 // non-retryable error instead of streaming prose that ends in
                 // an opaque AI_NoObjectGeneratedError downstream.
                 // Prefer the latest StructuredOutput attempt the CLI did not
-                // reject, then fall back to the last turn's prose.
+                // reject, then fall back to the last turn's prose: all of its
+                // root blocks joined, then its last root block alone.
                 let recoveredJsonText: string | undefined;
                 for (const candidate of [...structuredOutputCandidates.values()].reverse()) {
                   if (candidate.rejected) continue;
                   recoveredJsonText = extractJsonObjectText(candidate.text);
                   if (recoveredJsonText !== undefined) break;
                 }
-                recoveredJsonText ??= extractJsonObjectText(accumulatedText);
+                recoveredJsonText ??=
+                  extractJsonObjectText(accumulatedText) ??
+                  extractJsonObjectText(textSegments[textSegments.length - 1]?.text ?? '');
                 if (recoveredJsonText === undefined) {
                   throw createAPICallError({
                     message: MISSING_STRUCTURED_OUTPUT_ERROR_MESSAGE,
