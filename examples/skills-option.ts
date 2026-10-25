@@ -74,10 +74,11 @@ async function runWithSkills(tempDir: string, skills: string[]) {
     if (part.type === 'tool-call' && part.toolName === 'Skill') {
       skillToolInput = JSON.stringify(part.input);
     } else if (part.type === 'tool-result' && part.toolName === 'Skill') {
-      skillToolResult =
-        'isError' in part && part.isError === true
-          ? `ERROR: ${JSON.stringify(part.output)}`
-          : JSON.stringify(part.output);
+      skillToolResult = JSON.stringify(part.output);
+    } else if (part.type === 'tool-error' && part.toolName === 'Skill') {
+      // Allowlist rejections are failed tool results; streamText surfaces
+      // them as `tool-error` parts rather than `tool-result`.
+      skillToolResult = `ERROR: ${JSON.stringify(part.error)}`;
     } else if (part.type === 'text-delta') {
       text += part.text;
     }
@@ -124,7 +125,14 @@ async function main() {
     // The model may still ATTEMPT the Skill call (the skill name is right
     // there in the prompt), but the SDK rejects it at the allowlist.
     console.log(`   Skill tool-call attempted: ${disabled.skillToolInput ?? 'NONE'}`);
-    console.log(`   Skill tool result: ${disabled.skillToolResult ?? 'NONE'}`);
+    console.log(
+      `   Skill tool result: ${
+        disabled.skillToolResult ??
+        (disabled.skillToolInput === undefined
+          ? 'NONE (the model did not attempt the Skill tool this run)'
+          : 'NONE')
+      }`
+    );
     console.log(`   Final text: ${disabled.text}`);
 
     const blocked = !disabled.text.includes('<cipher>');

@@ -4,13 +4,20 @@
  * Demonstrates how to access extended thinking (reasoning) traces
  * in both streaming and non-streaming modes.
  *
+ * Two things matter for actually seeing reasoning text:
+ * - `display: 'summarized'`: current Claude models return thinking blocks with
+ *   empty text unless a summarized display is requested.
+ * - A prompt that needs reasoning: trivial prompts often get no thinking.
+ *
  * Usage: npx tsx examples/thinking-traces.ts
  */
 
 import { generateText, streamText } from 'ai';
 import { claudeCode } from '../dist/index.js';
 
-const PROMPT = 'What is 27 * 43? Think through it step by step.';
+const PROMPT =
+  'How many positive integers less than 1000 are divisible by 7 but by neither 11 nor 13? ' +
+  'Work it out carefully, then give the final count.';
 
 async function nonStreamingExample() {
   console.log('=== Non-Streaming (generateText) ===\n');

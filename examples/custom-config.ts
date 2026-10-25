@@ -40,7 +40,7 @@ async function main() {
     const { text: response2 } = await generateText({
       model: customProvider('opus', {
         // These settings override the provider defaults
-        permissionMode: 'default', // Ask for permissions
+        permissionMode: 'default', // No bypass: tools that need approval are not auto-approved
         maxTurns: 5, // Limit conversation turns
       }),
       prompt: 'Name three popular programming languages. Just list them.',
@@ -50,10 +50,11 @@ async function main() {
     // Example 3: Using tool restrictions
     console.log('\n3️⃣ Model with tool restrictions:');
     const safeModel = customProvider('opus', {
-      // Only allow read operations
-      allowedTools: ['Read', 'LS', 'Grep', 'Glob'],
-      // Explicitly block write operations
-      disallowedTools: ['Write', 'Edit', 'Delete', 'Bash'],
+      // Block tools that can modify files or run commands. Deny rules are
+      // enforced even under the provider-level 'bypassPermissions' default,
+      // whereas `allowedTools` only pre-approves tools and would not restrict
+      // anything here.
+      disallowedTools: ['Write', 'Edit', 'NotebookEdit', 'Bash'],
     });
 
     const { text: response3 } = await generateText({
