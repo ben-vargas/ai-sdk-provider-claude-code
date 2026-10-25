@@ -1,22 +1,24 @@
 #!/usr/bin/env tsx
 
 /**
- * Minimal Reproduction: Claude Code CLI Structured Output Silent Fallback
+ * Regression Check: Claude Code CLI Structured Output for JSON Schema Features
  *
- * This script demonstrates that the Claude Code CLI silently falls back to
- * unstructured prose output when JSON schemas contain certain features,
- * instead of returning `structured_output` or `error_max_structured_output_retries`.
+ * Calls the Claude Agent SDK directly (bypassing this provider's schema
+ * sanitizer) with `outputFormat` schemas that use features which older Claude
+ * Code CLI releases mishandled.
  *
- * EXPECTED BEHAVIOR (per SDK docs):
- * - Schemas with supported features → result.structured_output contains JSON
- * - Schemas with unsupported features → result.subtype === 'error_max_structured_output_retries'
+ * HISTORY:
+ * - Older CLI releases silently fell back to unstructured prose (subtype
+ *   "success", no `structured_output`) for `format` constraints (email, uri,
+ *   date-time, ...) and for complex regex patterns with lookaheads. This is
+ *   why the provider strips `format` keywords before calling the CLI.
  *
- * ACTUAL BEHAVIOR:
- * - Schemas with unsupported features → Silent fallback to prose text, no error
+ * CURRENT BEHAVIOR (verified with Claude Code CLI 2.1.283 and 2.1.310):
+ * - Every case below returns `structured_output`.
  *
- * Affected features:
- * - `format` constraints (email, uri, date-time, etc.)
- * - Complex regex patterns (lookaheads, lookbehinds, backreferences)
+ * This script now acts as a regression check: it prints the CLI version and a
+ * per-case PASS/FAIL table, and exits non-zero if any case falls back to
+ * prose (or errors) again.
  *
  * Run: npx tsx examples/structured-output-repro.ts
  */
@@ -26,7 +28,6 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 interface TestCase {
   name: string;
   schema: Record<string, unknown>;
-  expectedToWork: boolean;
 }
 
 const testCases: TestCase[] = [
@@ -41,7 +42,6 @@ const testCases: TestCase[] = [
       required: ['name', 'email'],
       additionalProperties: false,
     },
-    expectedToWork: true,
   },
   {
     name: 'format: "email" only',
@@ -54,7 +54,6 @@ const testCases: TestCase[] = [
       required: ['name', 'email'],
       additionalProperties: false,
     },
-    expectedToWork: false, // Docs say supported, but CLI fails silently
   },
   {
     name: 'format: "uri"',
@@ -67,7 +66,6 @@ const testCases: TestCase[] = [
       required: ['name', 'website'],
       additionalProperties: false,
     },
-    expectedToWork: false,
   },
   {
     name: 'Simple pattern (no lookahead)',
@@ -80,7 +78,6 @@ const testCases: TestCase[] = [
       required: ['name', 'email'],
       additionalProperties: false,
     },
-    expectedToWork: true,
   },
   {
     name: 'Pattern with lookahead (Zod .email() style)',
@@ -97,9 +94,10 @@ const testCases: TestCase[] = [
       required: ['name', 'email'],
       additionalProperties: false,
     },
-    expectedToWork: false,
   },
 ];
+
+let cliVersion = 'unknown';
 
 async function runTest(testCase: TestCase): Promise<{
   name: string;
@@ -125,6 +123,9 @@ async function runTest(testCase: TestCase): Promise<{
         maxTurns: 3,
       },
     })) {
+      if (message.type === 'system' && message.subtype === 'init') {
+        cliVersion = message.claude_code_version;
+      }
       if (message.type === 'result') {
         subtype = message.subtype;
         const structuredOutput = (message as { structured_output?: unknown }).structured_output;
@@ -164,7 +165,7 @@ async function main() {
   for (const testCase of testCases) {
     process.stdout.write(`Testing: ${testCase.name}... `);
     const result = await runTest(testCase);
-    results.push({ ...result, expectedToWork: testCase.expectedToWork });
+    results.push(result);
     console.log(
       result.hasStructuredOutput
         ? 'structured_output'
@@ -200,28 +201,30 @@ async function main() {
     console.log(`  ${r.name}: ${r.outputPreview}...`);
   }
 
+  const regressions = results.filter((r) => !r.hasStructuredOutput);
+
   console.log();
   console.log('='.repeat(80));
-  console.log('BUG SUMMARY');
+  console.log(`REGRESSION CHECK (Claude Code CLI ${cliVersion})`);
   console.log('='.repeat(80));
   console.log();
-  console.log('EXPECTED: Unsupported schema features should return:');
-  console.log('  - subtype: "error_max_structured_output_retries"');
-  console.log('  - OR: An error indicating the schema is not supported');
+  for (const r of results) {
+    console.log(`  ${r.hasStructuredOutput ? 'PASS' : 'FAIL'}  ${r.name}`);
+  }
   console.log();
-  console.log('ACTUAL: Unsupported schema features cause:');
-  console.log('  - Silent fallback to unstructured prose');
-  console.log('  - subtype: "success" (misleading)');
-  console.log('  - No structured_output field');
+
+  if (regressions.length === 0) {
+    console.log('All cases returned structured_output. No prose fallback detected.');
+    console.log();
+    return;
+  }
+
+  console.log(`${regressions.length} case(s) returned no structured_output (prose fallback).`);
+  console.log('This matches the behavior of older CLI releases. Workaround: use a');
+  console.log('simplified generation schema without these features, then validate the');
+  console.log('result client-side with the full schema.');
   console.log();
-  console.log('AFFECTED FEATURES:');
-  console.log('  - format: "email", "uri", "date-time", etc. (consistently fails)');
-  console.log('  - pattern: Complex regex may be flaky (sometimes works, sometimes fails)');
-  console.log();
-  console.log('WORKAROUND:');
-  console.log('  Use simplified schemas without format constraints for generation,');
-  console.log('  then validate with full schema client-side after receiving output.');
-  console.log();
+  process.exitCode = 1;
 }
 
 main().catch(console.error);
