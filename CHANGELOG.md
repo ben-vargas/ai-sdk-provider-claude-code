@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **No false warning when combining `allowedTools` and `disallowedTools`; tool permission docs corrected** ([#212](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/212)) - Validation warned "Both allowedTools and disallowedTools are specified. Only allowedTools will be used." That was never true: the provider forwards both lists unchanged and the CLI applies both, with matching deny rules taking precedence. The warning is removed (forwarding is unchanged). The README, `ClaudeCodeSettings` JSDoc, guides, and `tool-management.ts` example no longer say the lists can't be combined or that `allowedTools` is an allowlist. `allowedTools` only pre-approves tools (they run without prompting); use `tools` to restrict which built-in tools exist (`tools: []` disables them all), and control MCP tools separately.
+
 ## [3.7.1] - 2026-10-25
 
 ### Changed

@@ -356,6 +356,22 @@ const model = claudeCode('sonnet', {
 
 The `OnUserDialog`, `UserDialogRequest`, and `UserDialogResult` types are re-exported. Note that `UserDialogResult.result` is typed `unknown` — the CLI validates it against the dialog kind's own result schema at runtime, and a result that doesn't match (e.g. the wrong shape or an unknown string) is **silently** replaced by the dialog's default (for `'refusal_fallback_prompt'`, `'cancelled'`), so double-check the result values for each kind you handle.
 
+### Tool availability and pre-approval (`tools`, `allowedTools`, `disallowedTools`)
+
+These three settings do different jobs, and you can combine them:
+
+- `tools` sets which built-in tools exist (`['Read', 'Grep']`; `[]` disables all built-in tools). MCP tools are controlled separately, through `mcpServers` and permission rules.
+- `allowedTools` only **pre-approves** tools, so they run without a permission prompt. It is not an allowlist: unlisted tools stay available and go through `permissionMode`, `canUseTool`, and hooks as usual.
+- `disallowedTools` denies tools (or matching calls, such as `'Bash(rm:*)'`). Deny rules take precedence, so a tool listed in both lists is denied.
+
+```ts
+const model = claudeCode('sonnet', {
+  tools: ['Read', 'Grep', 'Bash'], // only these built-in tools exist
+  allowedTools: ['Read', 'Grep', 'Bash(git log:*)'], // run without prompting
+  disallowedTools: ['Bash(rm:*)'], // calls matching this rule are always denied
+});
+```
+
 ### Permission decisions (`canUseTool` extras)
 
 SDK 0.3.x enriched the `canUseTool` callback (no provider change needed — these arrive on the existing `options` argument):

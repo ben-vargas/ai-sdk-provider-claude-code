@@ -431,17 +431,31 @@ describe('validateSettings', () => {
     expect(result.warnings[0]).toContain('Very high maxThinkingTokens (80000)');
   });
 
-  it('should warn when both allowedTools and disallowedTools are specified', () => {
-    const settings = {
-      allowedTools: ['Read'],
-      disallowedTools: ['Write'],
-    };
-    const result = validateSettings(settings);
+  // #212: the two lists combine (matching deny rules take precedence), so
+  // specifying both is valid and must not produce a warning.
+  it.each([
+    {
+      name: 'top-level settings',
+      settings: { allowedTools: ['Read'], disallowedTools: ['Write'] },
+    },
+    {
+      name: 'sdkOptions overrides',
+      settings: { sdkOptions: { allowedTools: ['Read'], disallowedTools: ['Write'] } },
+    },
+    {
+      name: 'mixed settings and sdkOptions',
+      settings: { allowedTools: ['Bash', 'Read'], sdkOptions: { disallowedTools: ['Read'] } },
+    },
+  ])(
+    'should accept both allowedTools and disallowedTools without warning ($name)',
+    ({ settings }) => {
+      const result = validateSettings(settings);
 
-    expect(result.valid).toBe(true);
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toContain('Both allowedTools and disallowedTools are specified');
-  });
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+      expect(result.warnings).toEqual([]);
+    }
+  );
 
   it('should validate tool name formats', () => {
     const settings = {

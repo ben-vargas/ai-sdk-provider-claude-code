@@ -1,15 +1,23 @@
 /**
  * Example: Tool Management
  *
- * This example demonstrates how to manage tool permissions for Claude Code.
- * The allowedTools and disallowedTools flags work for BOTH:
- * - Built-in Claude tools (Bash, Edit, Read, Write, etc.)
- * - MCP tools (mcp__serverName__toolName format)
+ * This example demonstrates how to manage tool access for Claude Code:
+ * - `tools` sets which built-in tools exist (`[]` = none). MCP tools are
+ *   controlled separately (mcpServers and permission rules).
+ * - `allowedTools` pre-approves tools so they run without a permission
+ *   prompt. It does NOT restrict which tools are available.
+ * - `disallowedTools` denies tools. The two lists can be combined, and
+ *   matching deny rules take precedence.
  *
- * These are session-only permission overrides that use the same rule syntax
- * as settings.json permissions.
+ * allowedTools and disallowedTools work for BOTH built-in Claude tools
+ * (Bash, Edit, Read, Write, etc.) and MCP tools (mcp__serverName__toolName).
+ * They are session-only permission rules that use the same rule syntax as
+ * settings.json permissions.
  */
 
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { streamText } from 'ai';
 import { createClaudeCode } from '../dist/index.js';
 // NOTE: Migrating to Claude Agent SDK:
@@ -19,11 +27,23 @@ import { createClaudeCode } from '../dist/index.js';
 //   systemPrompt: { type: 'preset', preset: 'claude_code' }
 //   settingSources: ['user', 'project', 'local']
 
+// Stream a response and record the names of the tools Claude called.
+async function collect(result: ReturnType<typeof streamText>) {
+  let text = '';
+  const toolCalls: string[] = [];
+  for await (const part of result.fullStream) {
+    if (part.type === 'text-start' && text) text += '\n';
+    if (part.type === 'text-delta') text += part.text;
+    if (part.type === 'tool-call') toolCalls.push(part.toolName);
+  }
+  return { text: text.trim(), toolCalls };
+}
+
 async function testToolManagement() {
   console.log('🔧 Testing Claude Code Tool Management\n');
 
-  // 1. Default behavior - all tools allowed
-  console.log('1️⃣  Default (all tools allowed)');
+  // 1. Default behavior - no tool settings
+  console.log('1️⃣  Default (no tool settings)');
   const defaultClaude = createClaudeCode();
 
   try {
@@ -38,13 +58,13 @@ async function testToolManagement() {
       response1 += chunk;
     }
     console.log('Response:', response1.trim());
-    console.log('   (All built-in and MCP tools would be allowed)');
+    console.log('   (All default tools are available; normal permissions apply)');
   } catch (error) {
     console.error('Error:', error);
   }
 
-  console.log('\n2️⃣  Built-in tools: Allow only Bash commands');
-  // 2. Allow only specific Bash commands
+  console.log('\n2️⃣  Built-in tools: Pre-approve specific Bash commands');
+  // 2. Pre-approve specific Bash commands (other tools still follow normal permissions)
   const bashOnlyClaude = createClaudeCode({
     defaultSettings: {
       allowedTools: ['Bash(echo:*)', 'Bash(date)', 'Bash(pwd)'],
@@ -63,7 +83,7 @@ async function testToolManagement() {
       response2 += chunk;
     }
     console.log('Response:', response2.trim());
-    console.log('   (Only allowed specific Bash commands)');
+    console.log('   (These Bash commands run without prompting; other tools are not removed)');
   } catch (error) {
     console.error('Error:', error);
   }
@@ -94,7 +114,7 @@ async function testToolManagement() {
   }
 
   console.log('\n4️⃣  Mixed: Built-in tools + MCP tools');
-  // 4. Allow specific built-in tools and MCP tools
+  // 4. Pre-approve specific built-in tools and MCP tools
   const mixedClaude = createClaudeCode({
     defaultSettings: {
       allowedTools: [
@@ -120,38 +140,65 @@ async function testToolManagement() {
       response4 += chunk;
     }
     console.log('Response:', response4.trim());
-    console.log('   (Only allowed read operations and git status)');
+    console.log('   (Listed tools run without prompting; this does not restrict other tools)');
   } catch (error) {
     console.error('Error:', error);
   }
 
-  console.log('\n5️⃣  Security lockdown: No tools at all');
-  // 5. Maximum security - explicit empty allowlist blocks all tools
+  console.log('\n5️⃣  Security lockdown: No built-in tools');
+  // 5. Remove every built-in tool with `tools: []`. (`allowedTools: []` would
+  // only pre-approve nothing; it would not remove any tools.)
   const noToolsClaude = createClaudeCode({
     defaultSettings: {
-      allowedTools: [], // Empty array = explicit empty allowlist = NO tools allowed
+      tools: [], // Empty array = no built-in tools; MCP tools are controlled separately
     },
   });
 
   try {
-    const result5 = streamText({
-      model: noToolsClaude('opus'),
-      prompt: 'What programming language is this: console.log("Hello")?',
-    });
-
-    // Collect text from stream
-    let response5 = '';
-    for await (const chunk of result5.textStream) {
-      response5 += chunk;
-    }
-    console.log('Response:', response5.trim());
-    console.log('   (No tools allowed - explicit empty allowlist blocks everything)');
+    const result5 = await collect(
+      streamText({
+        model: noToolsClaude('opus'),
+        prompt:
+          'Use the Bash tool to run `pwd`. If you have no tools, say so in one sentence instead.',
+      })
+    );
+    console.log('Response:', result5.text);
+    console.log('Tool calls:', result5.toolCalls.length ? result5.toolCalls.join(', ') : 'none');
+    console.log('   (No built-in tools exist, so Claude cannot run Bash)');
   } catch (error) {
     console.error('Error:', error);
   }
 
-  console.log('\n6️⃣  Model-specific override');
-  // 6. Model-specific settings override provider settings
+  console.log('\n6️⃣  Combining allowedTools and disallowedTools');
+  // 6. Both lists apply together and matching deny rules win: Read is
+  // pre-approved AND denied, so it is removed; Bash stays pre-approved.
+  const workDir = mkdtempSync(join(tmpdir(), 'tool-management-'));
+  writeFileSync(join(workDir, 'note.txt'), 'hello from note.txt\n');
+  const combinedClaude = createClaudeCode({
+    defaultSettings: {
+      cwd: workDir,
+      allowedTools: ['Bash', 'Read'],
+      disallowedTools: ['Read'],
+    },
+  });
+
+  try {
+    const result6 = await collect(
+      streamText({
+        model: combinedClaude('opus'),
+        prompt:
+          'Show me the contents of note.txt. Use the Read tool if you have it; otherwise run `cat note.txt` with Bash.',
+      })
+    );
+    console.log('Response:', result6.text);
+    console.log('Tool calls:', result6.toolCalls.length ? result6.toolCalls.join(', ') : 'none');
+    console.log('   (Read is denied even though it is pre-approved; Bash still runs)');
+  } catch (error) {
+    console.error('Error:', error);
+  }
+
+  console.log('\n7️⃣  Model-specific override');
+  // 7. Model-specific settings override provider settings
   const baseClaude = createClaudeCode({
     defaultSettings: {
       disallowedTools: ['Bash', 'Write'], // Provider blocks these
@@ -159,21 +206,21 @@ async function testToolManagement() {
   });
 
   try {
-    const result6 = streamText({
+    const result7 = streamText({
       model: baseClaude('opus', {
-        // Override to allow everything for this specific call
+        // Clear the provider-level deny list for this specific call
         disallowedTools: [],
       }),
       prompt: 'Name a popular web framework.',
     });
 
     // Collect text from stream
-    let response6 = '';
-    for await (const chunk of result6.textStream) {
-      response6 += chunk;
+    let response7 = '';
+    for await (const chunk of result7.textStream) {
+      response7 += chunk;
     }
-    console.log('Response:', response6.trim());
-    console.log('   (Model override allows all tools for this call)');
+    console.log('Response:', response7.trim());
+    console.log('   (Model override clears the deny list; normal permissions apply)');
   } catch (error) {
     console.error('Error:', error);
   }
@@ -183,9 +230,11 @@ async function testToolManagement() {
   console.log('\n📝 Key Points:');
   console.log('- Flags work for BOTH built-in tools AND MCP tools');
   console.log('- Same rule syntax as settings.json permissions');
-  console.log('- Session-only overrides (higher priority than settings files)');
+  console.log('- Session-only rules, added to settings-file rules; deny rules always win');
   console.log('- Use specifiers for fine-grained control: Bash(git:*)');
-  console.log('- Empty allowedTools ([]) = Explicit empty allowlist = No tools allowed');
+  console.log('- allowedTools pre-approves tools; it does not restrict which tools exist');
+  console.log('- tools restricts built-in tools (tools: [] = none); MCP tools are separate');
+  console.log('- allowedTools and disallowedTools can be combined; deny wins');
   console.log('- Omitting flags entirely = Falls back to normal permission system');
 
   console.log('\n🛠️  Built-in tool names:');
