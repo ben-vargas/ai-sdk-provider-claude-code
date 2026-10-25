@@ -93,7 +93,7 @@ console.log(result.object);
 >
 > If you request JSON output without providing a schema:
 >
-> - An `unsupported-setting` warning will be emitted
+> - An `unsupported` warning (`feature: 'responseFormat'`) will be emitted
 > - The response content is returned as-is (no JSON parsing or enforcement)
 > - **Streaming note**: The response will be buffered and emitted as a single chunk at the end, not streamed token-by-token. If you need true incremental streaming, omit `responseFormat` entirely or provide a schema.
 >
@@ -123,8 +123,9 @@ try {
   clearTimeout(timeoutId);
   console.log(result.text);
 } catch (error) {
-  if (error.name === 'AbortError') {
-    console.log('Request was cancelled');
+  if (controller.signal.aborted) {
+    // The reason passed to abort() is rethrown as the error.
+    console.log('Request was cancelled:', error.message);
   }
 }
 ```
@@ -243,6 +244,8 @@ const result = await generateText({
   abortSignal: controller.signal,
 });
 ```
+
+If you abort with a reason (`controller.abort(new Error('...'))`), `generateText` rejects with that reason, and `streamText` reports an `abort` part. With a bare `controller.abort()`, or a reason whose `name` is `'AbortError'` (or whose `code` is `'ABORT_ERR'`), `generateText` rejects with the provider's `APICallError` instead. Its message depends on when the abort lands, for example "Claude Code process aborted by user".
 
 **For Long-Running Tasks**: Claude Opus 4's extended thinking may require longer timeouts than typical HTTP requests. See the "Handling Long-Running Tasks" section above for implementing custom timeouts using AbortSignal.
 
@@ -776,11 +779,11 @@ const promise = generateText({
 // Cancel the request
 controller.abort();
 
-// The promise rejects with AbortError
+// The promise rejects once the request is cancelled
 try {
   await promise;
 } catch (error) {
-  if (error.name === 'AbortError') {
+  if (controller.signal.aborted) {
     console.log('Request was cancelled');
   }
 }

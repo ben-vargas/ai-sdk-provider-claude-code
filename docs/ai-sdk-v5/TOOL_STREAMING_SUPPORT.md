@@ -27,7 +27,8 @@ Text streaming (`text-start`/`text-delta`/`text-end`), response metadata, and fi
 
 This guide describes the v5-era provider. For the current 4.x (AI SDK v7) line, the [README](../../README.md#content-block-streaming) is authoritative. In short:
 
-- Text and reasoning deltas go to the part for their own content block. Blocks are tracked per `parent_tool_use_id`, so root and subagent blocks stay apart. A delta for an untracked block falls back to the global current text part, or to the current open reasoning part in the same scope.
+- Text and reasoning deltas go to the part for their own content block. Blocks are tracked per `parent_tool_use_id`, so root and subagent blocks stay apart. A delta for an untracked block falls back to the current text or reasoning part of the same scope.
+- Duplicate-text checks and text-part closing also work per scope. A subagent's assistant message, block start, or tool result does not re-emit, close, or reset the root's text. In JSON mode the text is buffered. Missing-`structured_output` recovery and the schema-less plain-text fallback use only the root's text.
 - `tool-input-delta` stops once a tool's input is closed (`tool-input-end`) or its `tool-call` is emitted. Later fragments and assistant snapshots for that tool produce no further deltas.
 - For ordinary tools, if `content_block_stop` arrives before the complete assistant tool block, the `tool-call` is emitted at the stop with the streamed input. A complete input that arrives later does not replace it.
 - A pending tool call retracted by a superseding (refusal-fallback) message is not re-emitted, even if its block or message is replayed. Retracted `StructuredOutput` attempts are never recovered as the answer.

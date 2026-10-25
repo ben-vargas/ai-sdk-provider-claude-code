@@ -283,7 +283,7 @@ console.log(output); // Matches the schema above
 - ✅ **No prompt engineering** - Schema enforcement is native to the SDK
 - ✅ **Better performance** - No retry/extraction logic needed
 
-> **Note:** Schema-less JSON output (AI SDK v7 `Output.json()`) is not supported by Claude Code; use `Output.object()` / `Output.array()` / `Output.choice()` with a schema or choices. The provider emits a V4 `unsupported` warning with `feature: 'responseFormat'` and treats the call as plain text.
+> **Note:** Schema-less JSON output (AI SDK v7 `Output.json()`) is not supported by Claude Code; use `Output.object()` / `Output.array()` / `Output.choice()` with a schema or choices. The provider emits a V4 `unsupported` warning with `feature: 'responseFormat'` and treats the call as plain text. In `streamText`, the text is buffered and emitted once when the response completes.
 >
 > **Current CLI limitation:** Some JSON Schema features can cause the Claude Code CLI to silently fall back to prose (no `structured_output`). The provider mitigates the most common case: `format` keywords (`date-time`, `email`, `uri`, `uuid`, ... — produced by Zod's `.datetime()`, `.email()`, `.url()`, `.uuid()`) are stripped client-side before the schema is sent, with the hint folded into the field's `description` (e.g., `(expected format: email)`). Server-side enforcement of `format` still does not exist in the CLI, but the AI SDK validates `output` against your original Zod schema client-side, so nothing is lost. Complex regex `pattern`s (lookaheads/backreferences) remain unmitigated — `pattern` is passed through untouched because the CLI genuinely rejects some patterns. Keep generation schemas simple and enforce stricter invariants after generation.
 >
