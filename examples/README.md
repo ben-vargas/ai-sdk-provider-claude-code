@@ -167,7 +167,7 @@ npx tsx examples/custom-config.ts
 npx tsx examples/tool-management.ts
 ```
 
-**Key concepts**: Allow/deny lists, tool security, MCP server tools, built-in tools
+**Key concepts**: `tools` to restrict built-in tools, `allowedTools` pre-approval (not an allowlist), `disallowedTools` deny rules, combining both lists (deny wins), MCP server tools
 
 ### 12. Long-Running Tasks (`long-running-tasks.ts`)
 

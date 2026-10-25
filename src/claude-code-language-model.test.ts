@@ -1154,6 +1154,50 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(overriddenCall?.options?.perTaskStopAffordance).toBe(true);
     });
 
+    // #212: both lists are forwarded unchanged; the CLI combines them and
+    // matching deny rules take precedence. Neither list may be dropped.
+    it.each([
+      {
+        name: 'top-level settings',
+        settings: { allowedTools: ['Bash', 'Read'], disallowedTools: ['Read'] },
+      },
+      {
+        name: 'sdkOptions overrides',
+        settings: {
+          allowedTools: ['Glob'],
+          disallowedTools: ['Write'],
+          sdkOptions: { allowedTools: ['Bash', 'Read'], disallowedTools: ['Read'] },
+        },
+      },
+      {
+        name: 'mixed settings and sdkOptions',
+        settings: { allowedTools: ['Bash', 'Read'], sdkOptions: { disallowedTools: ['Read'] } },
+      },
+    ])(
+      'should forward allowedTools and disallowedTools unchanged ($name)',
+      async ({ settings }) => {
+        const model = new ClaudeCodeLanguageModel({ id: 'sonnet', settings: settings as any });
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 's-tool-lists',
+              usage: { input_tokens: 0, output_tokens: 0 },
+            };
+          },
+        } as any);
+
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+
+        const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        expect(call?.options?.allowedTools).toEqual(['Bash', 'Read']);
+        expect(call?.options?.disallowedTools).toEqual(['Read']);
+      }
+    );
+
     describe.each(['doGenerate', 'doStream'] as const)('%s SDK passthroughs', (method) => {
       const resultMessage = () => ({
         async *[Symbol.asyncIterator]() {
