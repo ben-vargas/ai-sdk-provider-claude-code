@@ -23,6 +23,17 @@ Claude Code now emits full tool streaming events when used through the AI SDK v5
 
 Text streaming (`text-start`/`text-delta`/`text-end`), response metadata, and finish parts continue to behave as before.
 
+## Current streaming semantics
+
+This guide describes the v5-era provider. For the current 4.x (AI SDK v7) line, the [README](../../README.md#content-block-streaming) is authoritative. In short:
+
+- Text and reasoning deltas go to the part for their own content block. Blocks are tracked per `parent_tool_use_id`, so root and subagent blocks stay apart. A delta for an untracked block falls back to the global current text part, or to the current open reasoning part in the same scope.
+- `tool-input-delta` stops once a tool's input is closed (`tool-input-end`) or its `tool-call` is emitted. Later fragments and assistant snapshots for that tool produce no further deltas.
+- For ordinary tools, if `content_block_stop` arrives before the complete assistant tool block, the `tool-call` is emitted at the stop with the streamed input. A complete input that arrives later does not replace it.
+- A pending tool call retracted by a superseding (refusal-fallback) message is not re-emitted, even if its block or message is replayed. Retracted `StructuredOutput` attempts are never recovered as the answer.
+- The 1 MB tool-input cap counts JavaScript string length (UTF-16 code units), not UTF-8 bytes. It also applies to the running total of streamed fragments.
+- `streamStructuredOutput: true` is best-effort; see [Streaming structured output](../../README.md#streaming-structured-output). The default buffered mode emits the CLI-validated object once, when the CLI supplies it.
+
 ## Usage Example
 
 Run the new example to observe the events:
