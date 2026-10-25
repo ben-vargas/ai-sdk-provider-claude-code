@@ -89,16 +89,18 @@ async function testToolManagement() {
   }
 
   console.log('\n3️⃣  Built-in tools: Block dangerous operations');
-  // 3. Block file modifications but allow reading
-  const readOnlyClaude = createClaudeCode({
+  // 3. Remove the file-editing tools and deny matching rm/sudo commands.
+  // Bash itself stays available, so this is not read-only (see the
+  // "Security patterns" list below for a read-only setup).
+  const safeClaude = createClaudeCode({
     defaultSettings: {
-      disallowedTools: ['Write', 'Edit', 'Delete', 'Bash(rm:*)', 'Bash(sudo:*)'],
+      disallowedTools: ['Write', 'Edit', 'NotebookEdit', 'Bash(rm:*)', 'Bash(sudo:*)'],
     },
   });
 
   try {
     const result3 = streamText({
-      model: readOnlyClaude('opus'),
+      model: safeClaude('opus'),
       prompt: 'What is the capital of France? Just the city name.',
     });
 
@@ -108,7 +110,9 @@ async function testToolManagement() {
       response3 += chunk;
     }
     console.log('Response:', response3.trim());
-    console.log('   (Can read files but not write/edit/delete)');
+    console.log(
+      '   (Write, Edit and NotebookEdit are removed; Bash calls matching rm/sudo are denied)'
+    );
   } catch (error) {
     console.error('Error:', error);
   }
@@ -119,7 +123,7 @@ async function testToolManagement() {
     defaultSettings: {
       allowedTools: [
         'Read',
-        'LS',
+        'Glob',
         'Bash(git log:*)',
         'Bash(git status)',
         'mcp__filesystem__read_text_file',
@@ -238,8 +242,8 @@ async function testToolManagement() {
   console.log('- Omitting flags entirely = Falls back to normal permission system');
 
   console.log('\n🛠️  Built-in tool names:');
-  console.log('- Bash, Edit, Read, Write, Delete, LS, Grep, Glob');
-  console.log('- WebFetch, NotebookRead, NotebookEdit');
+  console.log('- Bash, Edit, Read, Write, Grep, Glob');
+  console.log('- WebFetch, WebSearch, NotebookEdit');
   console.log('- Use /permissions in Claude to see all available tools');
 
   console.log('\n🔌 MCP tool format:');
@@ -247,7 +251,8 @@ async function testToolManagement() {
   console.log('- mcp__<serverName>__<toolName> (specific tool)');
 
   console.log('\n🔒 Security patterns:');
-  console.log('- Read-only: disallowedTools: ["Write", "Edit", "Delete"]');
+  console.log('- Read-only built-ins: tools: ["Read", "Grep", "Glob"] (MCP tools are separate)');
+  console.log('- Denying only Write/Edit is not read-only: Bash can still write files');
   console.log('- No shell: disallowedTools: ["Bash"]');
   console.log('- Safe git: allowedTools: ["Bash(git log:*)", "Bash(git diff:*)"]');
 }
