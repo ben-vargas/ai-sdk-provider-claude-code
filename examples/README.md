@@ -211,7 +211,7 @@ npx tsx examples/sdk-tools-callbacks.ts
 
 ### 16. External MCP Server (`mcp-filesystem.ts`)
 
-**Purpose**: Run an external MCP server over stdio using the official `@modelcontextprotocol/server-filesystem` package.
+**Purpose**: Run an external MCP server over stdio using the official `@modelcontextprotocol/server-filesystem` package, restricted to read-only access. The run ends with a `write_file` attempt that should be denied.
 
 ```bash
 npx tsx examples/mcp-filesystem.ts
@@ -223,7 +223,7 @@ Optional: pass a specific directory to scope filesystem access:
 npx tsx examples/mcp-filesystem.ts /absolute/path/to/inspect
 ```
 
-**Key concepts**: `mcpServers` stdio config, external MCP transport, MCP tool allowlists, read-only MCP permissions, streamed MCP tool parts
+**Key concepts**: `mcpServers` stdio config, external MCP transport, read-only MCP access via `permissionMode: 'dontAsk'` plus `allowedTools` pre-approving only the read tools (`bypassPermissions` would approve every tool, including MCP writes), streamed MCP tool parts
 
 Tip: examples run with concise logs by default. Set `CLAUDE_EXAMPLE_VERBOSE=1` to see low-level provider debug traces.
 

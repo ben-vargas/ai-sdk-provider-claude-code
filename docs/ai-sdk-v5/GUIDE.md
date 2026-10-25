@@ -468,18 +468,19 @@ Three settings control tools, and they can be combined:
 
 #### Tool Types
 
-- **Built-in tools**: `Bash`, `Edit`, `Read`, `Write`, `LS`, `Grep`, etc.
+- **Built-in tools**: `Bash`, `Edit`, `Read`, `Write`, `Grep`, `Glob`, `NotebookEdit`, `WebFetch`, etc.
 - **MCP tools**: `mcp__serverName__toolName` format
 
-#### Restricting built-in tools with tools
+#### Restricting built-in tools with tools (provider 2.3.0+ on 2.x, or 3.1.0+)
 
 ```typescript
 import { createClaudeCode } from 'ai-sdk-provider-claude-code';
 
-// Only these built-in tools exist in the session
+// Read-only built-ins: only these built-in tools exist in the session
+// (MCP tools are controlled separately)
 const readOnlyClaude = createClaudeCode({
   defaultSettings: {
-    tools: ['Read', 'LS', 'Grep'],
+    tools: ['Read', 'Grep', 'Glob'],
   },
 });
 
@@ -517,14 +518,15 @@ const mixedClaude = createClaudeCode({
 #### Denying tools with disallowedTools
 
 ```typescript
-// Block dangerous operations
+// Remove the file-editing tools and deny matching rm/sudo commands
+// (Bash itself stays available, so this is not read-only)
 const safeClaude = createClaudeCode({
   defaultSettings: {
-    disallowedTools: ['Write', 'Edit', 'Delete', 'Bash(rm:*)', 'Bash(sudo:*)'],
+    disallowedTools: ['Write', 'Edit', 'NotebookEdit', 'Bash(rm:*)', 'Bash(sudo:*)'],
   },
 });
 
-// Block all Bash and MCP write operations
+// Remove Bash and specific MCP write tools
 const restrictedClaude = createClaudeCode({
   defaultSettings: {
     disallowedTools: ['Bash', 'mcp__filesystem__write_file', 'mcp__git__commit', 'mcp__git__push'],
@@ -579,7 +581,7 @@ const result = await generateText({
 
 **Common Patterns**:
 
-- Read-only mode: `disallowedTools: ['Write', 'Edit', 'Delete']`
+- Read-only built-in tools (provider 2.3.0+ on 2.x, or 3.1.0+): `tools: ['Read', 'Grep', 'Glob']`. Denying only the file tools (`disallowedTools: ['Write', 'Edit']`) is not read-only, because tools that run shell commands, such as `Bash`, can still write files. `tools` does not restrict MCP tools; restrict those separately by listing the server's write tools in `disallowedTools` (for example `mcp__filesystem__write_file`). On provider 3.2.0+ you can instead use `permissionMode: 'dontAsk'` with only the MCP read tools in `allowedTools`, which denies any other call that would require approval (see `examples/mcp-filesystem.ts`)
 - No shell access: `disallowedTools: ['Bash']`
 - Safe git: `allowedTools: ['Bash(git log:*)', 'Bash(git diff:*)']`
 - No MCP: `disallowedTools: ['mcp__*']`
