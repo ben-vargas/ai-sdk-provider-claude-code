@@ -9,8 +9,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 // doStream text accounting, text-part closing, and recovery are scoped by
-// parent_tool_use_id (#200, #201, #202); schema-less JSON falls back to the
-// buffered text (#203).
+// parent_tool_use_id (#200, #201, #202), and recovery joins the root's blocks of
+// the turn (#202); schema-less JSON falls back to the buffered text (#203).
 const SUB = 'toolu_task';
 const event = (event: unknown, parent: string | null = null) => ({
   type: 'stream_event',
@@ -284,6 +284,85 @@ describe('missing structured_output recovery uses root text only (#202)', () => 
     );
     expect(chunks.filter((c) => c.type === 'error')).toEqual([]);
     expect(body(chunks)).toBe('{"answer":42}');
+  });
+});
+
+describe('doStream recovery joins the root blocks of the turn (#202)', () => {
+  const rootBlock = (value: string, index = 0) => [
+    blockStart('text', index),
+    text(value, index),
+    textMessage(value),
+    stop(index),
+  ];
+
+  it('recovers JSON split across two root text blocks', async () => {
+    const chunks = await collect(
+      [...rootBlock('{"answer":'), ...rootBlock('42}', 1)],
+      schemaFormat
+    );
+    expect(chunks.filter((c) => c.type === 'error')).toEqual([]);
+    expect(body(chunks)).toBe('{"answer":42}');
+  });
+
+  it('still recovers JSON from the last block after a prose block', async () => {
+    const chunks = await collect(
+      [...rootBlock('Here is the answer:'), ...rootBlock('{"answer":42}', 1)],
+      schemaFormat
+    );
+    expect(body(chunks)).toBe('{"answer":42}');
+  });
+
+  it('still discards root prose from before a tool call', async () => {
+    const chunks = await collect(
+      [
+        ...rootBlock('{"answer":'),
+        toolStart('a', 1),
+        json('{}', 1),
+        toolMessage('a', {}),
+        stop(1),
+        toolResult('a'),
+        ...rootBlock('42}'),
+      ],
+      schemaFormat
+    );
+    expect(chunks.find((c) => c.type === 'error')?.error.message).toContain('structured_output');
+  });
+});
+
+describe('doGenerate recovery uses root text only (#202)', () => {
+  async function generate(events: unknown[]) {
+    mockQuery([...events, result()]);
+    return model().doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'test' }] }],
+      responseFormat: schemaFormat,
+    });
+  }
+  const fenced = (value: string) => '```json\n' + value + '\n```';
+
+  it('does not recover a subagent answer as the root answer', async () => {
+    const response = await generate([
+      ...launchSubagent(),
+      textMessage(fenced('{"answer":42}')),
+      textMessage(fenced('{"answer":7}'), SUB),
+    ]);
+    expect(response.content.filter((c) => c.type === 'text')).toEqual([
+      { type: 'text', text: '{"answer":42}' },
+    ]);
+  });
+
+  it('a subagent tool result does not end the root turn', async () => {
+    const response = await generate([
+      textMessage('Checking.'),
+      toolMessage('a', {}),
+      toolResult('a'),
+      ...launchSubagent(),
+      toolMessage('read', {}, SUB),
+      textMessage('{"answer":42}'),
+      toolResult('read', SUB),
+    ]);
+    expect(response.content.filter((c) => c.type === 'text')).toEqual([
+      { type: 'text', text: '{"answer":42}' },
+    ]);
   });
 });
 
