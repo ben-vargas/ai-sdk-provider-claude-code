@@ -592,9 +592,10 @@ export interface ClaudeCodeSettings {
    * Include partial message events from the SDK stream.
    *
    * With partial messages, `doStream` emits each `tool-call` at the tool block's
-   * `content_block_stop` so UIs can show the tool as running. If the stop arrives
-   * before the complete assistant tool block, the call carries the streamed input;
-   * a complete input that arrives later cannot replace an emitted call.
+   * `content_block_stop` so UIs can show the tool as running. For ordinary tools,
+   * if the stop arrives before the complete assistant tool block, the call carries
+   * the streamed input; a complete input that arrives later cannot replace an
+   * emitted call.
    */
   includePartialMessages?: boolean;
 
