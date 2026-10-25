@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Examples refreshed for current CLI behavior** ([#205](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/205)) - `structured-output-repro.ts` is now a regression check (current CLIs return `structured_output` for `format` and lookahead schemas), and `limitations.ts` no longer claims tool calling and image inputs are unsupported and reports output tokens separately from total tokens. `tool-streaming.ts` and `mid-stream-injection.ts` drop the `canUseTool` + `bypassPermissions` combination that the SDK never consults. `message-injection.ts` writes into a scratch directory and counts the files written, `custom-config.ts` uses a real deny list, and the `hooks-callbacks.ts` header and README entry no longer mention a `canUseTool` callback it doesn't use. `thinking-traces.ts` uses a prompt that reliably produces summarized thinking, and `skills-option.ts` explains an empty Skill result. The examples README gains a thinking-traces section and a note on running examples in isolation from auto memory and claude.ai connectors.
+
 ### Fixed
 
 - **Subagent and root tool blocks at the same stream index no longer swap input** ([#183](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/183)) - `doStream` tracked content blocks by their bare stream `index`, but subagent stream events (`parent_tool_use_id` set) have their own index space. When a subagent block and a root block shared an index, one block's `input_json_delta` fragments were routed to the other's tool call, and a `content_block_stop` could close the wrong tool, text, or reasoning part. On this line that includes the visible root `StructuredOutput` tool call in JSON mode. Tool, text, and reasoning block tracking is now scoped by `parent_tool_use_id`, like structured-output block tracking.

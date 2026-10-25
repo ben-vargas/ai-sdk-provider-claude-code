@@ -25,7 +25,7 @@ import {
 //   settingSources: ['user', 'project', 'local']
 
 async function testBasicGeneration() {
-  console.log('🧪 Test 1: Basic text generation with Haiku...');
+  console.log('🧪 Test 1: Basic text generation with Opus...');
   try {
     const { text } = await generateText({
       model: claudeCode('opus'),

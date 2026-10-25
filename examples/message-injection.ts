@@ -7,6 +7,9 @@
  * Usage: npx tsx examples/message-injection.ts
  */
 
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { streamText } from 'ai';
 import { createClaudeCode } from '../dist/index.js';
 import type { ClaudeCodeSettings, MessageInjector } from '../src/types.js';
@@ -29,30 +32,25 @@ async function multipleToolCalls() {
   console.log(`\n${CYAN}═══════════════════════════════════════════════════════════${RESET}`);
   console.log(`${CYAN}  EXAMPLE 1: Multiple Tool Calls${RESET}`);
   console.log(`${CYAN}═══════════════════════════════════════════════════════════${RESET}`);
-  console.log(`${DIM}Task: Write 5 files. Inject after 3 seconds.${RESET}\n`);
+  console.log(`${DIM}Task: Write 5 files. Inject "STOP" after the 2nd file is written.${RESET}\n`);
 
-  let injector: MessageInjector | null = null;
+  // Scratch working directory, so the demo never writes into your project.
+  const demoDir = await mkdtemp(join(tmpdir(), 'inj-demo-'));
+  // Held in an object so TypeScript doesn't narrow it to `null` across the
+  // onStreamStart callback.
+  const injectionState: { injector: MessageInjector | null } = { injector: null };
 
   const defaultSettings: ClaudeCodeSettings = {
     streamingInput: 'always',
-    permissionMode: 'bypassPermissions',
-    allowDangerouslySkipPermissions: true,
-    allowedTools: ['Write'],
+    cwd: demoDir,
+    // acceptEdits auto-approves file edits inside cwd (the scratch dir). It
+    // also auto-approves filesystem Bash commands such as `touch` or `cp`, so
+    // deny Bash to make Write the only way to create the files.
+    permissionMode: 'acceptEdits',
+    disallowedTools: ['Bash'],
     onStreamStart: (inj: MessageInjector) => {
-      injector = inj;
+      injectionState.injector = inj;
       console.log(`${timestamp()} ${GREEN}SESSION STARTED${RESET}`);
-
-      setTimeout(() => {
-        console.log(`${timestamp()} ${YELLOW}>>> INJECT QUEUED: "STOP!"${RESET}`);
-        injector!.inject(
-          'STOP! Do not write more files. Say how many you created.',
-          (delivered) => {
-            console.log(
-              `${timestamp()} ${delivered ? GREEN + '✓ DELIVERED' : RED + '✗ NOT DELIVERED'}${RESET}`
-            );
-          }
-        );
-      }, 3000);
     },
   };
 
@@ -60,41 +58,67 @@ async function multipleToolCalls() {
 
   const result = streamText({
     model: provider('haiku'),
-    prompt: 'Write 5 files: /tmp/inj-demo/a.txt through e.txt. Each with "hello". One at a time.',
+    prompt:
+      'Write 5 files in the current directory: a.txt, b.txt, c.txt, d.txt and e.txt, ' +
+      'each containing "hello". Write them one at a time, one tool call per file.',
   });
 
   let inText = false;
-  for await (const part of result.fullStream) {
-    if (part.type === 'text-delta') {
-      if (!inText) {
-        process.stdout.write(`${timestamp()} ${CYAN}TEXT:${RESET} `);
-        inText = true;
-      }
-      process.stdout.write(part.text);
-    } else if (part.type === 'tool-call') {
-      if (inText) {
-        console.log('');
-        inText = false;
-      }
-      console.log(`${timestamp()} ${CYAN}TOOL-CALL: ${part.toolName}${RESET}`);
-    } else if (part.type === 'tool-result') {
-      console.log(`${timestamp()} ${CYAN}TOOL-RESULT${RESET}`);
-    } else if (part.type === 'finish') {
-      if (inText) {
-        console.log('');
-        inText = false;
-      }
-      console.log(`${timestamp()} ${GREEN}FINISH${RESET}`);
-    }
-  }
-
-  console.log('');
-  const { execSync } = await import('child_process');
+  let filesWritten = 0;
   try {
-    execSync('rm -rf /tmp/inj-demo');
-  } catch {
-    // Cleanup is best-effort, ignore errors
+    for await (const part of result.fullStream) {
+      if (part.type === 'text-delta') {
+        if (!inText) {
+          process.stdout.write(`${timestamp()} ${CYAN}TEXT:${RESET} `);
+          inText = true;
+        }
+        process.stdout.write(part.text);
+      } else if (part.type === 'tool-call') {
+        if (inText) {
+          console.log('');
+          inText = false;
+        }
+        console.log(`${timestamp()} ${CYAN}TOOL-CALL: ${part.toolName}${RESET}`);
+      } else if (part.type === 'tool-result' || part.type === 'tool-error') {
+        console.log(`${timestamp()} ${CYAN}${part.type.toUpperCase()}${RESET}`);
+        // Count only successful Write results, i.e. files actually written.
+        if (part.type === 'tool-result' && part.toolName === 'Write') {
+          filesWritten += 1;
+        }
+        if (filesWritten === 2 && part.type === 'tool-result' && part.toolName === 'Write') {
+          const activeInjector = injectionState.injector;
+          console.log(`${timestamp()} ${YELLOW}>>> INJECT QUEUED: "STOP!"${RESET}`);
+          if (activeInjector === null) {
+            console.log(`${timestamp()} ${RED}✗ INJECTOR NOT READY${RESET}`);
+          } else {
+            activeInjector.inject(
+              'STOP! Do not write more files. Say how many you created.',
+              (delivered: boolean) => {
+                console.log(
+                  `${timestamp()} ${delivered ? GREEN + '✓ DELIVERED' : RED + '✗ NOT DELIVERED'}${RESET}`
+                );
+              }
+            );
+          }
+        }
+      } else if (part.type === 'finish') {
+        if (inText) {
+          console.log('');
+          inText = false;
+        }
+        console.log(`${timestamp()} ${GREEN}FINISH${RESET}`);
+      }
+    }
+
+    // The files on disk show whether the agent actually stopped early.
+    const written = (await readdir(demoDir)).filter((name) => name.endsWith('.txt')).sort();
+    console.log(
+      `${timestamp()} ${GREEN}Files on disk: ${written.length} of 5${RESET} ${DIM}(${written.join(', ') || 'none'})${RESET}`
+    );
+  } finally {
+    await rm(demoDir, { recursive: true, force: true });
   }
+  console.log('');
 }
 
 /**
@@ -111,8 +135,7 @@ async function tooLateWithRecovery() {
 
   const defaultSettings: ClaudeCodeSettings = {
     streamingInput: 'always',
-    permissionMode: 'bypassPermissions',
-    allowDangerouslySkipPermissions: true,
+    // Pre-approve Read so the agent can read /etc/hosts without a prompt.
     allowedTools: ['Read'],
     onStreamStart: (inj: MessageInjector) => {
       injector = inj;

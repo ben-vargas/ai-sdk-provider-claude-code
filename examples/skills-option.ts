@@ -124,7 +124,14 @@ async function main() {
     // The model may still ATTEMPT the Skill call (the skill name is right
     // there in the prompt), but the SDK rejects it at the allowlist.
     console.log(`   Skill tool-call attempted: ${disabled.skillToolInput ?? 'NONE'}`);
-    console.log(`   Skill tool result: ${disabled.skillToolResult ?? 'NONE'}`);
+    console.log(
+      `   Skill tool result: ${
+        disabled.skillToolResult ??
+        (disabled.skillToolInput === undefined
+          ? 'NONE (the model did not attempt the Skill tool this run)'
+          : 'NONE')
+      }`
+    );
     console.log(`   Final text: ${disabled.text}`);
 
     const blocked = !disabled.text.includes('<cipher>');

@@ -6,7 +6,6 @@
  */
 
 import { streamText } from 'ai';
-import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import { claudeCode, type Query } from '../dist/index.js';
 
 type SdkUserMessage = {
@@ -33,12 +32,10 @@ const toSdkUserMessage = (text: string, sessionId = ''): SdkUserMessage => ({
 
 async function* singleMessage(text: string, sessionId = '') {
   yield toSdkUserMessage(text, sessionId);
+  // The SDK resumes this generator only after the message above has been
+  // written to the CLI, so this is the moment the injection is delivered.
+  console.log('\n\n[Injected a mid-stream update]\n');
 }
-
-const allowAllTools: CanUseTool = async (_toolName, input) => ({
-  behavior: 'allow',
-  updatedInput: input,
-});
 
 async function main() {
   let activeQuery: Query | undefined;
@@ -52,13 +49,15 @@ async function main() {
     await sleep(400);
 
     try {
+      // streamInput() writes the message right away, but its promise may stay
+      // pending until the turn finishes, so log delivery from the generator
+      // instead of after this await.
       await activeQuery.streamInput(
         singleMessage(
           'Mid-stream update: switch to nautical metaphors and add a short 3-bullet list of benefits.',
           sessionId ?? ''
         )
       );
-      console.log('\n\n[Injected a mid-stream update]\n');
     } catch (error) {
       console.error('\n[Failed to inject mid-stream update]', error);
     }
@@ -66,13 +65,12 @@ async function main() {
 
   const model = claudeCode('sonnet', {
     streamingInput: 'always',
-    canUseTool: allowAllTools,
-    permissionMode: 'bypassPermissions',
-    allowedTools: ['Bash'],
+    // Pre-approve only the `sleep` command the prompt asks for.
+    allowedTools: ['Bash(sleep:*)'],
     cwd: process.cwd(),
     onQueryCreated: (query) => {
+      // Only capture the Query here; inject once output is actually streaming.
       activeQuery = query;
-      void tryInject();
     },
   });
 
@@ -97,7 +95,6 @@ async function main() {
 
     if (typed.type === 'response-metadata') {
       sessionId = typed.id;
-      void tryInject();
     }
 
     if (typed.type === 'tool-call') {
