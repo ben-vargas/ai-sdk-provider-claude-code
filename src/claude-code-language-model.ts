@@ -1214,7 +1214,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
   // Fallback/magic string constants
   static readonly UNKNOWN_TOOL_NAME = 'unknown-tool';
 
-  // Tool input safety limits
+  // Tool input safety limits. These are coarse caps on JavaScript string length
+  // (UTF-16 code units), not UTF-8 byte counts.
   private static readonly MAX_TOOL_INPUT_SIZE = 1_048_576; // 1MB hard limit
   private static readonly MAX_TOOL_INPUT_WARN = 102_400; // 100KB warning threshold
   private static readonly MAX_DELTA_CALC_SIZE = 10_000; // 10KB delta computation threshold
@@ -1786,16 +1787,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
 
   /**
    * Policy (P3): late-frame drop guard, shared by all four tool_result/tool_error
-   * sites (doGenerate result+error, doStream result+error). When a frame's tool
+   * sites (doGenerate result+error, doStream result+error) and doStream's two
+   * tool_use sites (assistant message + content_block_start). When a frame's tool
    * id is tombstoned (its tool-call was retracted by a supersede/refusal-fallback
    * signal), the frame must be DROPPED rather than re-synthesized into an orphan
-   * tool-call. Centralizing the predicate + debug message keeps the four sites in
+   * tool-call. Centralizing the predicate + debug message keeps the sites in
    * lockstep so a future tombstone change can't be applied to only some of them.
    */
   private isRetractedToolFrame(
     id: string,
     tombstone: Set<string>,
-    frameKind: 'result' | 'error'
+    frameKind: 'tool_use' | 'result' | 'error'
   ): boolean {
     if (!tombstone.has(id)) {
       return false;
@@ -3827,7 +3829,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
         // Every internal StructuredOutput call id (any scope), so its
         // tool_result/tool_error frames are suppressed like its tool_use.
         const internalStructuredOutputToolIds = new Set<string>();
+        // Candidates evicted by retraction: late fragments or a replayed call for
+        // these ids must not recreate them (#195).
+        const retractedStructuredOutputIds = new Set<string>();
         const getStructuredOutputCandidate = (callId: string, messageUuid: unknown) => {
+          if (retractedStructuredOutputIds.has(callId)) return undefined;
           let candidate = structuredOutputCandidates.get(callId);
           if (!candidate) {
             candidate = { text: '', rejected: false, uuids: new Set() };
@@ -3848,7 +3854,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
 
         // Extended thinking: Map block keys to reasoning part IDs
         const reasoningBlocksByIndex = new Map<string, string>(); // block key -> reasoning id
-        let currentReasoningPartId: string | undefined;
+        // Latest open reasoning part per parent_tool_use_id scope, for untracked deltas.
+        const currentReasoningPartIds = new Map<string, string>(); // scope -> reasoning id
 
         // evictLive: the doStream half of the shared retraction policy (P1-P5,
         // see computeRetractedToolCallIds). MECHANISM = drop live state, since
@@ -3870,6 +3877,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
           for (const [callId, candidate] of structuredOutputCandidates) {
             if ([...candidate.uuids].some((uuid) => retracted.has(uuid))) {
               structuredOutputCandidates.delete(callId);
+              retractedStructuredOutputIds.add(callId);
             }
           }
           for (let i = textSegments.length - 1; i >= 0; i--) {
@@ -3990,18 +3998,27 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                   continue;
                 }
 
-                // Emit text-start if this is the first text
-                if (!textPartId) {
-                  textPartId = generateId();
-                  controller.enqueue({
-                    type: 'text-start',
-                    id: textPartId,
-                  });
+                // Route to the delta's own block: a root and a subagent text block can be
+                // open at once. Untracked (legacy or index-less) deltas use the current part.
+                const blockIndex = 'index' in event ? (event.index as number) : -1;
+                let deltaTextId = textBlocksByIndex.get(
+                  streamBlockKey(streamParentToolUseId, blockIndex)
+                );
+                if (!deltaTextId) {
+                  // Emit text-start if this is the first text
+                  if (!textPartId) {
+                    textPartId = generateId();
+                    controller.enqueue({
+                      type: 'text-start',
+                      id: textPartId,
+                    });
+                  }
+                  deltaTextId = textPartId;
                 }
 
                 controller.enqueue({
                   type: 'text-delta',
-                  id: textPartId,
+                  id: deltaTextId,
                   delta: deltaText,
                 });
                 accumulatedText += deltaText;
@@ -4039,10 +4056,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                   // CLI's verdict can never be matched to them; they are never used
                   // as an answer (the assistant message's complete input is).
                   if (structuredOutputCallId !== undefined) {
-                    getStructuredOutputCandidate(
+                    const candidate = getStructuredOutputCandidate(
                       structuredOutputCallId,
                       (message as { uuid?: unknown }).uuid
-                    ).text += jsonDelta;
+                    );
+                    // Late fragments of a retracted call are ignored.
+                    if (!candidate) continue;
+                    candidate.text += jsonDelta;
                   }
 
                   if (!streamStructuredOutput) {
@@ -4073,6 +4093,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 // Route to tool-input-delta if we have a tracked tool block.
                 const toolId = toolBlocksByIndex.get(blockKey);
                 if (toolId) {
+                  const state = toolStates.get(toolId);
+                  // Drop fragments for a retracted tool, or one whose input is closed or
+                  // whose call was already emitted: they would extend a finished input.
+                  if (!state || state.inputClosed || state.callEmitted) continue;
                   // Accumulate and emit tool-input-delta
                   const accumulated = (toolInputAccumulators.get(toolId) ?? '') + jsonDelta;
                   // The accumulator can become the finalized input, so it gets the same
@@ -4143,6 +4167,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 }
                 // A reused index cannot still belong to a structured-output block.
                 structuredOutputBlocks.delete(blockKey);
+
+                if (this.isRetractedToolFrame(toolId, retractedStreamToolIds, 'tool_use')) {
+                  // Keep the block mapped (with no tool state) so its fragments and stop
+                  // are absorbed rather than read as untracked StructuredOutput JSON.
+                  toolBlocksByIndex.set(blockKey, toolId);
+                  continue;
+                }
 
                 // Close any active text part before tool starts
                 if (textPartId) {
@@ -4274,7 +4305,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
 
                 const reasoningPartId = generateId();
                 reasoningBlocksByIndex.set(blockKey, reasoningPartId);
-                currentReasoningPartId = reasoningPartId;
+                currentReasoningPartIds.set(streamParentToolUseId ?? '', reasoningPartId);
 
                 this.logger.debug(
                   `[claude-code] Reasoning started (content_block) - ID: ${reasoningPartId}`
@@ -4296,7 +4327,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
                 const blockKey = streamBlockKey(streamParentToolUseId, blockIndex);
                 const reasoningPartId =
-                  reasoningBlocksByIndex.get(blockKey) ?? currentReasoningPartId;
+                  reasoningBlocksByIndex.get(blockKey) ??
+                  currentReasoningPartIds.get(streamParentToolUseId ?? '');
                 hasReceivedStreamEvents = true;
 
                 if (reasoningPartId) {
@@ -4337,7 +4369,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                     state.lastSerializedInput = effectiveInput;
 
                     // Emit tool-call immediately when input is complete (don't wait for result)
-                    // This allows UI to show "running" state while tool executes
+                    // This allows UI to show "running" state while tool executes. By design,
+                    // if the complete assistant block has not arrived yet, this uses the
+                    // streamed input, and a complete input that arrives later cannot replace it.
                     if (!state.callEmitted) {
                       controller.enqueue(
                         this.buildToolCallPart(
@@ -4391,8 +4425,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                     id: reasoningPartId,
                   });
                   reasoningBlocksByIndex.delete(blockKey);
-                  if (currentReasoningPartId === reasoningPartId) {
-                    currentReasoningPartId = undefined;
+                  if (
+                    currentReasoningPartIds.get(streamParentToolUseId ?? '') === reasoningPartId
+                  ) {
+                    currentReasoningPartIds.delete(streamParentToolUseId ?? '');
                   }
                   continue;
                 }
@@ -4432,6 +4468,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
               const content = message.message.content;
               const tools: ClaudeToolUse[] = [];
               for (const tool of this.extractToolUses(content)) {
+                if (this.isRetractedToolFrame(tool.id, retractedStreamToolIds, 'tool_use')) {
+                  continue;
+                }
                 if (!isInternalStructuredOutputTool(tool.name, options)) {
                   tools.push(tool);
                   continue;
@@ -4440,6 +4479,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
                 // A subagent's own StructuredOutput call is never the root answer.
                 if ((sdkParentToolUseId ?? null) !== null) continue;
                 const candidate = getStructuredOutputCandidate(tool.id, message.uuid);
+                if (!candidate) continue;
                 // The assistant message carries the call's complete input; prefer it
                 // over the streamed fragments. The call is internal and never emitted
                 // as a tool call, so the tool input size limit does not apply (as in
