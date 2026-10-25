@@ -269,6 +269,8 @@ for await (const partial of partialObjectStream) {
 
 With the opt-in, a run in which the model submits more than one structured answer fails with `NoObjectGeneratedError`, and `partialObjectStream` can show fields from an attempt the CLI later rejected. Use it only where a live preview is worth an occasional failed run.
 
+The opt-in mode is best-effort. If the CLI's stop event arrives before all of the JSON fragments (a non-standard ordering), the text already streamed can stay truncated even though the final `structured_output` is valid. The default buffered mode is not affected.
+
 ## Core Features
 
 - 🚀 Vercel AI SDK compatibility
@@ -687,6 +689,8 @@ Authentication and timeout failures are also classified when the only evidence i
 This provider handles Anthropic `content_block_*` stream events directly for more responsive UIs:
 
 - **Tool input streaming** — `tool-input-delta` streams arguments incrementally; `tool-call` emits when the tool input block completes (before results), enabling “running” state in UIs.
+  - If `content_block_stop` arrives before the complete assistant tool block, the `tool-call` is emitted at the stop with the streamed input, so the UI can show the tool as running. A complete input that arrives later cannot replace a `tool-call` that was already emitted. This is by design.
+  - Tool input is capped at 1 MB (`1_048_576`) as a coarse safety limit. The cap counts JavaScript string length (UTF-16 code units), not UTF-8 bytes, so multi-byte text can exceed 1 MB on the wire before it trips.
 - **Text streaming** — `text-start/delta/end` emitted from content blocks with proper lifecycle management.
 - **Extended thinking** — `reasoning-start/delta/end` emitted from `thinking` content blocks in streaming mode; `reasoning` content parts returned from `doGenerate` in non-streaming mode (availability depends on model and request).
 

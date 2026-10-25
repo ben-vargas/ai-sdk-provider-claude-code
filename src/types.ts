@@ -590,6 +590,11 @@ export interface ClaudeCodeSettings {
 
   /**
    * Include partial message events from the SDK stream.
+   *
+   * With partial messages, `doStream` emits each `tool-call` at the tool block's
+   * `content_block_stop` so UIs can show the tool as running. If the stop arrives
+   * before the complete assistant tool block, the call carries the streamed input;
+   * a complete input that arrives later cannot replace an emitted call.
    */
   includePartialMessages?: boolean;
 
@@ -609,6 +614,11 @@ export interface ClaudeCodeSettings {
    * (e.g. the CLI rejects the first for a schema mismatch and the model
    * retries), the attempts are concatenated and the AI SDK fails to parse the
    * object (`NoObjectGeneratedError`).
+   *
+   * This mode is best-effort: if the CLI's stop event arrives before all JSON
+   * fragments (a non-standard ordering), the already-streamed text can stay
+   * truncated even though the final `structured_output` is valid. The default
+   * buffered mode is unaffected.
    *
    * @default false
    */
