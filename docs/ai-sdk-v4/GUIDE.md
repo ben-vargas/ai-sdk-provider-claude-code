@@ -279,14 +279,15 @@ const mixedClaude = createClaudeCode({
 #### Denying tools with disallowedTools
 
 ```typescript
-// Block dangerous operations
+// Remove Write, Edit and MultiEdit, and deny matching rm/sudo commands
+// (Bash and NotebookEdit stay available, so this is not read-only)
 const safeClaude = createClaudeCode({
   defaultSettings: {
-    disallowedTools: ['Write', 'Edit', 'Delete', 'Bash(rm:*)', 'Bash(sudo:*)'],
+    disallowedTools: ['Write', 'Edit', 'MultiEdit', 'Bash(rm:*)', 'Bash(sudo:*)'],
   },
 });
 
-// Block all Bash and MCP write operations
+// Remove Bash and specific MCP write tools
 const restrictedClaude = createClaudeCode({
   defaultSettings: {
     disallowedTools: ['Bash', 'mcp__filesystem__write_file', 'mcp__git__commit', 'mcp__git__push'],
@@ -336,7 +337,7 @@ const { text } = await generateText({
 
 **Common Patterns**:
 
-- Read-only mode: `disallowedTools: ['Write', 'Edit', 'Delete']`
+- Read-only built-in tools: `disallowedTools: ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Bash']` removes the built-in tools of that CLI generation that can modify files. Bash must be included, because shell commands can write files. MCP tools are not covered; deny their write tools separately
 - No shell access: `disallowedTools: ['Bash']`
 - Safe git: `allowedTools: ['Bash(git log:*)', 'Bash(git diff:*)']`
 - No MCP: `disallowedTools: ['mcp__*']`
