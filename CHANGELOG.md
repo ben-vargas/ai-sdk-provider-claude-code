@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Subagent and root tool blocks at the same stream index no longer swap input** ([#183](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/183)) - `doStream` tracked content blocks by their bare stream `index`, but subagent stream events (`parent_tool_use_id` set) have their own index space. When a subagent block and a root block shared an index, one block's `input_json_delta` fragments were routed to the other's tool call, and a `content_block_stop` could close the wrong tool, text, or reasoning part. Tool, text, and reasoning block tracking is now scoped by `parent_tool_use_id`, like structured-output block tracking.
+- **No tool input delta after the tool call when the assistant message arrives after `content_block_stop`** ([#186](https://github.com/ben-vargas/ai-sdk-provider-claude-code/issues/186)) - `doStream` closes the tool input and emits the `tool-call` at `content_block_stop`. When the complete assistant `tool_use` message arrived after that stop, its input was still diffed against the streamed input and the remainder (e.g. `1}` after `{"x":`) was emitted as a `tool-input-delta` after the `tool-call`, out of lifecycle order. Snapshots that arrive after the input is closed no longer emit deltas; the already-emitted `tool-call` is unchanged.
 
 ## [4.4.0] - 2026-10-24
 
