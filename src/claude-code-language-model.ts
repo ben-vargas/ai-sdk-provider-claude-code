@@ -4122,6 +4122,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   // Always accumulate for final result tracking. Each completed
                   // block is its own assistant message, so it is appended to the
                   // turn's earlier blocks and claims its streamed deltas (#202).
+                  // The real CLI sends one block per message, each with its own
+                  // uuid. A re-sent or cumulative message would be appended too,
+                  // and recovery would fall back to it as the last block: the same
+                  // text the earlier replace-only accumulator recovered from.
                   if (scope === '') {
                     claimPendingRootText(text);
                     textSegments.push({

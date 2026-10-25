@@ -329,6 +329,105 @@ describe('doStream recovery joins the root blocks of the turn (#202)', () => {
   });
 });
 
+describe('root block accounting matches the real CLI shape (#202)', () => {
+  // Captured from the real CLI (SDK 0.3.283, includePartialMessages): each
+  // completed block is its own assistant message with its own uuid, the blocks
+  // of one API message share message.id, and the message precedes its stop.
+  const block = (value: string, index: number, uuid: string, id = 'msg_1') => [
+    blockStart('text', index),
+    text(value, index),
+    { ...textMessage(value), uuid, message: { id, content: [{ type: 'text', text: value }] } },
+    stop(index),
+  ];
+  const resent = (value: string, uuid: string, id = 'msg_1') => ({
+    ...textMessage(value),
+    uuid,
+    message: { id, content: [{ type: 'text', text: value }] },
+  });
+
+  it('joins the blocks of one API message', async () => {
+    const chunks = await collect(
+      [...block('{"answer":', 0, 'u1'), ...block('42}', 1, 'u2')],
+      schemaFormat
+    );
+    expect(chunks.filter((c) => c.type === 'error')).toEqual([]);
+    expect(body(chunks)).toBe('{"answer":42}');
+  });
+
+  it('recovers when a complete JSON block is re-sent after a later block', async () => {
+    const chunks = await collect(
+      [
+        ...block('{"answer":42}', 0, 'u1'),
+        ...block('Done.', 1, 'u2'),
+        resent('{"answer":42}', 'u1'),
+      ],
+      schemaFormat
+    );
+    expect(chunks.filter((c) => c.type === 'error')).toEqual([]);
+    expect(body(chunks)).toBe('{"answer":42}');
+  });
+
+  it('keeps distinct blocks with the same text', async () => {
+    const chunks = await collect([...block('OK', 0, 'u1'), ...block('OK', 1, 'u2')], {
+      type: 'json',
+    });
+    expect(body(chunks)).toBe('OKOK');
+  });
+
+  it('recovers the JSON of a cumulative snapshot that reuses a uuid', async () => {
+    const chunks = await collect(
+      [...block('{"answer":', 0, 'u1'), ...block('42}', 1, 'u2'), resent('{"answer":42}', 'u1')],
+      schemaFormat
+    );
+    expect(chunks.filter((c) => c.type === 'error')).toEqual([]);
+    expect(body(chunks)).toBe('{"answer":42}');
+  });
+
+  it('joins blocks whose messages arrive after the next block starts', async () => {
+    const chunks = await collect(
+      [
+        blockStart('text', 0),
+        text('{"answer":', 0),
+        stop(0),
+        blockStart('text', 1),
+        text('42}', 1),
+        resent('{"answer":', 'u1'),
+        resent('42}', 'u2'),
+        stop(1),
+      ],
+      schemaFormat
+    );
+    expect(chunks.filter((c) => c.type === 'error')).toEqual([]);
+    expect(body(chunks)).toBe('{"answer":42}');
+  });
+
+  it('recovers the JSON of a snapshot after a superseding block', async () => {
+    const [start0, delta0, message0, stop0] = block('{"answer":', 0, 'u1');
+    const chunks = await collect(
+      [
+        start0,
+        delta0,
+        { ...(message0 as object), supersedes: ['old'] },
+        stop0,
+        ...block('42}', 1, 'u2'),
+        resent('{"answer":42}', 'u1'),
+      ],
+      schemaFormat
+    );
+    expect(chunks.filter((c) => c.type === 'error')).toEqual([]);
+    expect(body(chunks)).toBe('{"answer":42}');
+  });
+
+  it('recovers the JSON of a cumulative snapshot with a new uuid', async () => {
+    const chunks = await collect(
+      [...block('{"answer":', 0, 'u1'), ...block('42}', 1, 'u2'), resent('{"answer":42}', 'u3')],
+      schemaFormat
+    );
+    expect(chunks.filter((c) => c.type === 'error')).toEqual([]);
+    expect(body(chunks)).toBe('{"answer":42}');
+  });
+});
+
 describe('doGenerate recovery uses root text only (#202)', () => {
   async function generate(events: unknown[]) {
     mockQuery([...events, result()]);
@@ -379,6 +478,22 @@ describe('schema-less JSON falls back to the buffered text (#203)', () => {
     // No empty text part for the buffered block.
     expect(ids(chunks, 'text-start')).toHaveLength(1);
     expect(ids(chunks, 'text-end')).toHaveLength(1);
+  });
+
+  it('emits only the root text when a subagent message is present', async () => {
+    const chunks = await collect(
+      [
+        ...launchSubagent(),
+        blockStart('text', 0),
+        text('{"answer":42}', 0),
+        textMessage('{"answer":42}'),
+        stop(0),
+        textMessage('child prose', SUB),
+      ],
+      { type: 'json' }
+    );
+    expect(body(chunks)).toBe('{"answer":42}');
+    expect(ids(chunks, 'text-start')).toHaveLength(1);
   });
 
   it('emits the buffered text when only complete messages arrive', async () => {
