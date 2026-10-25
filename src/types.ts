@@ -221,7 +221,11 @@ export interface Logger {
  *   maxTurns: 10,
  *   permissionMode: 'auto',
  *   cwd: '/path/to/project',
- *   allowedTools: ['Read', 'LS'],
+ *   // Pre-approve these tools (no permission prompt); this does not restrict
+ *   // which tools exist. Use `tools` to limit the built-in tool set.
+ *   allowedTools: ['Read', 'LS', 'Bash'],
+ *   // Matching deny rules take precedence over allowedTools, so Bash stays
+ *   // pre-approved except for calls that match `Bash(rm:*)`.
  *   disallowedTools: ['Bash(rm:*)']
  * };
  * ```
@@ -363,14 +367,25 @@ export interface ClaudeCodeSettings {
   sessionId?: string;
 
   /**
-   * Tools to explicitly allow during execution
+   * Tools to pre-approve: matching calls run without a permission prompt.
    * Examples: ['Read', 'LS', 'Bash(git log:*)']
+   *
+   * This is not an allowlist. Tools not listed here stay available and go
+   * through `permissionMode`, `canUseTool`, and hooks as usual. To restrict
+   * which built-in tools exist, use `tools`; MCP tools are controlled
+   * separately (via `mcpServers` and permission rules).
+   *
+   * Can be combined with `disallowedTools`; matching deny rules take precedence.
    */
   allowedTools?: string[];
 
   /**
-   * Tools to disallow during execution
+   * Tools to deny. Tool names remove the tool entirely; rules with a
+   * specifier, such as 'Bash(rm:*)', deny only matching calls.
    * Examples: ['Write', 'Edit', 'Bash(rm:*)']
+   *
+   * Can be combined with `allowedTools`; matching deny rules take precedence,
+   * so a tool denied here cannot be used even if it is pre-approved there.
    */
   disallowedTools?: string[];
 
