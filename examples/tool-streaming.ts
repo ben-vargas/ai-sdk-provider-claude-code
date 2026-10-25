@@ -11,15 +11,9 @@
  */
 
 import { streamText } from 'ai';
-import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import { claudeCode } from '../dist/index.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-
-const allowAllTools: CanUseTool = async (_toolName, input) => ({
-  behavior: 'allow',
-  updatedInput: input,
-});
 
 async function main() {
   const exampleRoot = dirname(fileURLToPath(import.meta.url));
@@ -28,9 +22,10 @@ async function main() {
 
   const result = streamText({
     model: claudeCode('opus', {
-      streamingInput: 'always',
-      canUseTool: allowAllTools,
-      permissionMode: 'bypassPermissions',
+      // Pre-approve the two built-in tools this prompt needs. (A `canUseTool`
+      // callback would never run for them: bare allowedTools entries and
+      // `permissionMode: 'bypassPermissions'` both approve calls before the
+      // callback is consulted.)
       allowedTools: ['Bash', 'Read'],
       cwd: workspaceRoot,
     }),

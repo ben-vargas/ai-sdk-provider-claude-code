@@ -25,6 +25,24 @@ npm run build
 npx tsx examples/check-cli.ts
 ```
 
+### Running examples in isolation
+
+The provider defaults to `settingSources: []`, so examples do not load your `CLAUDE.md` or settings files. That is not full isolation:
+
+- **Auto memory stays on.** Claude Code loads, and can write to, the per-project auto-memory store for the example's working directory (`~/.claude/projects/<project>/memory/`). If you run an example from inside your checkout (or one of its git worktrees), it uses the same store as your own Claude Code sessions for this repo. An example that shares personal details, such as `conversation-history.ts` ("My name is Helen and I'm a data scientist"), can then save a test memory there.
+- **claude.ai connectors still load.** MCP connectors from your claude.ai account add tools and context, and the model may mention them in its answers (for example, asking you to authorize a connector).
+
+To keep examples away from your real memory store, run them from a scratch directory with auto memory turned off:
+
+```bash
+mkdir -p /tmp/claude-code-examples && cd /tmp/claude-code-examples
+CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 npx tsx /path/to/ai-sdk-provider-claude-code/examples/conversation-history.ts
+```
+
+- `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` reaches the CLI from your shell because the provider forwards `CLAUDE_*` variables.
+- Examples that do not set `cwd` (or use `process.cwd()`) then run in the scratch directory. Examples that set `cwd` themselves, such as `tool-streaming.ts` (repo root) or `skills-option.ts` (temp project), keep using that directory.
+- To turn off claude.ai connectors, pass `env: { ENABLE_CLAUDEAI_MCP_SERVERS: 'false' }` in the model settings. The provider forwards only an allowlist of shell variables and this one is not on it, so exporting it in your shell has no effect.
+
 ## Quick Start Examples
 
 ### 1. Basic Usage (`basic-usage.ts`)
@@ -173,13 +191,13 @@ npx tsx examples/abort-signal.ts
 
 ### 14. Hooks & Callbacks (`hooks-callbacks.ts`)
 
-**Purpose**: Use lifecycle hooks and dynamic permission callbacks.
+**Purpose**: Use lifecycle hooks to observe and allow Claude Code built-in tool use.
 
 ```bash
 npx tsx examples/hooks-callbacks.ts
 ```
 
-**Key concepts**: PreToolUse/PostToolUse hooks, canUseTool callback, permission control, event lifecycle
+**Key concepts**: PreToolUse/PostToolUse hooks, hook-specific `permissionDecision`, built-in tool lifecycle logging
 
 ### 15. SDK Tools (`sdk-tools-callbacks.ts`)
 
@@ -241,6 +259,8 @@ npx tsx examples/mid-stream-injection.ts
 
 **Key concepts**: streaming input, `onQueryCreated`, `query.streamInput()`, live prompt updates
 
+**What you'll see**: The first paragraph streams, then `[Injected a mid-stream update]` appears at the point the message is written to the CLI, and the rest of the pitch switches to nautical metaphors with a 3-bullet list.
+
 ### 20. Message Injection (`message-injection.ts`)
 
 **Purpose**: Inject messages mid-session to interrupt, redirect, or provide feedback to the agent.
@@ -251,13 +271,13 @@ npx tsx examples/message-injection.ts
 
 **Key concepts**: `onStreamStart` callback, `MessageInjector`, delivery tracking, supervisor patterns, recovery from failed injection
 
-**What you'll see**: Two examples demonstrating successful injection (agent stops writing files) and failed injection with recovery (detecting when injection arrives too late and retrying).
+**What you'll see**: Two examples. Example 1 asks the agent to write 5 files into a scratch directory (`permissionMode: 'acceptEdits'`, so writes inside `cwd` are auto-approved), injects "STOP" after the 2nd file is written, and reports how many files ended up on disk (typically 2 of 5). Example 2 injects after the session has finished, detects the failed delivery, and recovers by sending the message as a new prompt.
 
 ## Object Generation (Structured Output)
 
 > **Native Support**: Object generation uses the SDK's native `outputFormat` option. The CLI validates the model's answer against the schema (asking the model to retry on a mismatch), providing schema-compliant JSON for **supported** JSON Schema features.
 >
-> **Important**: `.email()`, `.url()`, `.uuid()`, `.datetime()` work — the provider strips the JSON Schema `format` keywords they produce (the CLI would otherwise silently fall back to prose) and folds the hint into the field description, while Zod still validates the values client-side. Complex regex with lookaheads/backreferences remains a CLI limitation: `pattern` is passed through (simple patterns are genuinely enforced), so keep patterns simple and validate strictly client-side if needed.
+> **Important**: `.email()`, `.url()`, `.uuid()`, `.datetime()` work. The provider strips the JSON Schema `format` keywords they produce and folds the hint into the field description, while Zod still validates the values client-side. (Older CLI releases silently fell back to prose for `format`; current CLIs return structured output either way.) `pattern` is passed through unchanged. Older CLI releases also fell back to prose for complex regex with lookaheads; current CLIs return structured output for the lookahead case in `structured-output-repro.ts`, but keep validating complex patterns client-side. Run `structured-output-repro.ts` to check your CLI.
 
 ### 21. Object Generation (`generate-object.ts`)
 
@@ -291,13 +311,13 @@ npx tsx examples/stream-object.ts
 
 ### 24. Structured Output Repro (`structured-output-repro.ts`)
 
-**Purpose**: Reproduce CLI structured output fallbacks for certain JSON Schema features.
+**Purpose**: Regression check for CLI structured output with `format` constraints and lookahead regex patterns. Older CLI releases silently fell back to prose for these; current CLIs return `structured_output` for every case.
 
 ```bash
 npx tsx examples/structured-output-repro.ts
 ```
 
-**Key concepts**: `format` constraints, regex limitations, fallback behavior
+**Key concepts**: Raw Agent SDK `outputFormat` (bypasses the provider's schema sanitizer), `format` constraints, lookahead patterns, per-case PASS/FAIL with a non-zero exit code on prose fallback
 
 ## Testing & Troubleshooting
 
@@ -323,13 +343,13 @@ npx tsx examples/check-cli.ts
 
 ### 27. Limitations (`limitations.ts`)
 
-**Purpose**: Understand what AI SDK features are not supported by the CLI.
+**Purpose**: Understand which AI SDK features are unsupported or only partially supported by the CLI.
 
 ```bash
 npx tsx examples/limitations.ts
 ```
 
-**Key concepts**: Unsupported parameters, workarounds, provider constraints
+**Key concepts**: Ignored sampling/length parameters (with AI SDK warnings), output vs. total token usage, tool calling via Claude Code tools or `createAiSdkMcpServer` (not the `tools` option), image inputs with streaming input (the CLI needs inline data; the AI SDK downloads http(s) image URLs first), workarounds
 
 ## Session Management
 
@@ -418,6 +438,20 @@ npx tsx examples/skills-option.ts
 ```
 
 **Key concepts**: `skills` option as a one-line enablement allowlist (no `allowedTools: ['Skill']` needed), `settingSources` still required for filesystem skill discovery, `skills` filters enablement, not a sandbox — omitted skills are rejected at invocation ("not in this session's skills allowlist") but their files remain readable on disk
+
+## Thinking Traces
+
+### 35. Thinking Traces (`thinking-traces.ts`)
+
+**Purpose**: Read extended thinking (reasoning) text with `generateText` and `streamText`.
+
+```bash
+npx tsx examples/thinking-traces.ts
+```
+
+**Key concepts**: `thinking: { type: 'enabled', budgetTokens, display: 'summarized' }` (current models return empty thinking text without `display: 'summarized'`), reasoning content parts, `reasoning-start`/`reasoning-delta`/`reasoning-end` stream parts, `thinkingTraces` in provider metadata
+
+**What you'll see**: A short reasoning summary followed by the answer (120), once without streaming and once streamed. The prompt is a counting puzzle because trivial prompts often produce no thinking at all.
 
 ## Common Patterns
 
@@ -574,8 +608,9 @@ const result4 = streamText({
 | generate-object             | Object generation      | Core patterns & nesting |
 | generate-object-constraints | Validation             | Regex, ranges, enums    |
 | stream-object               | Real-time UI           | Partial object updates  |
-| structured-output-repro     | Troubleshooting        | Schema fallback repro   |
+| structured-output-repro     | Troubleshooting        | Schema regression check |
 | limitations                 | Constraints overview   | Unsupported features    |
+| thinking-traces             | Reasoning visibility   | Summarized thinking     |
 
 ## Learning Path
 

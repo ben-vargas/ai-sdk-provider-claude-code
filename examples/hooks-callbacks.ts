@@ -1,7 +1,10 @@
 /**
- * Example: Hooks and canUseTool
+ * Example: Lifecycle hooks
  *
- * Demonstrates lifecycle hooks and dynamic permission callback.
+ * Demonstrates PreToolUse/PostToolUse hooks: the PreToolUse hook logs each
+ * built-in tool call and allows it with a hook-specific `permissionDecision`,
+ * and the PostToolUse hook logs completion. For a `canUseTool` callback, see
+ * hooks-permission-denied.ts.
  * Requires Claude Code CLI authentication and environment setup.
  */
 

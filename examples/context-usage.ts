@@ -8,8 +8,9 @@
  *
  * Why the hook? `getContextUsage()` is a control-protocol round-trip to the
  * CLI subprocess. By the time `generateText`/`streamText` resolves, that
- * subprocess has exited, so a "late" call rejects with
- * `ProcessTransport is not ready for writing`. A Stop hook fires at the end
+ * subprocess has exited, so a "late" call rejects (with Agent SDK 0.3.x the
+ * error is `Query closed before response received`; older SDKs reported
+ * `ProcessTransport is not ready for writing`). A Stop hook fires at the end
  * of the turn while the process is still running — the last moment the data
  * is reachable. Step 3 below demonstrates the failure mode on purpose.
  *
