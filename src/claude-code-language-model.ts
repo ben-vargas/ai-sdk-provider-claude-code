@@ -26,7 +26,7 @@ import { validateModelId, validatePrompt, validateSessionId, isBlankResume } fro
 import { sanitizeJsonSchemaForOutputFormat } from './sanitize-json-schema.js';
 import { getLogger, createVerboseLogger } from './logger.js';
 
-import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
+import { AbortError as SdkAbortError, query, type Options } from '@anthropic-ai/claude-agent-sdk';
 import type {
   SDKMessage,
   SDKUserMessage,
@@ -233,6 +233,22 @@ function isAbortError(err: unknown): boolean {
     if (typeof e.code === 'string' && e.code.toUpperCase() === 'ABORT_ERR') return true;
   }
   return false;
+}
+
+/**
+ * Whether `err` is the SDK's abort for a caller abort with a custom reason, so
+ * the reason can be rethrown. The SDK's AbortError does not set
+ * name = 'AbortError', so isAbortError misses it (#204). A reason-less abort()
+ * leaves the platform's default AbortError as the reason; the SDK error is then
+ * handled as before.
+ */
+function isSdkAbortWithCallerReason(err: unknown, signal: AbortSignal | undefined): boolean {
+  return (
+    signal?.aborted === true &&
+    !isAbortError(signal.reason) &&
+    typeof SdkAbortError === 'function' &&
+    err instanceof SdkAbortError
+  );
 }
 
 const DEFAULT_INHERITED_ENV_VARS =
@@ -2937,7 +2953,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       );
 
       // Special handling for AbortError to preserve abort signal reason
-      if (isAbortError(error)) {
+      if (isAbortError(error) || isSdkAbortWithCallerReason(error, options.abortSignal)) {
         this.logger.debug('[claude-code] Request aborted by user');
         throw options.abortSignal?.aborted ? options.abortSignal.reason : error;
       }
@@ -3218,21 +3234,33 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         };
 
         let usage: LanguageModelV3Usage = createEmptyUsage();
+        // Text accounting is kept per parent_tool_use_id scope ('' = root), so a
+        // subagent's messages and tool results never disturb the root's (#200).
+        const textScope = (parentToolUseId: string | null | undefined) => parentToolUseId ?? '';
+        // Root-scope prose of the current root turn, used for JSON recovery and
+        // the plain-text fallbacks. Subagent text never enters it (#202).
         let accumulatedText = '';
         // Per-message text segments mirroring `accumulatedText` so refusal-fallback
         // `supersedes` retractions keep non-retracted text (matches doGenerate).
         const textSegments: Array<{ uuid?: string; text: string }> = [];
-        let textPartId: string | undefined;
-        let streamedTextLength = 0; // Track text already emitted via stream_events to avoid duplication
-        // Model text delivered to the client as text-delta parts (non-JSON mode)
-        // SINCE THE LAST ASSISTANT MESSAGE was processed. Each assistant message
-        // "claims" the stream-event deltas that preceded it, so this window holds
-        // exactly the deltas attributable to the upcoming assistant message. Used
-        // to decide whether a superseding message's replacement text was already
-        // streamed or must be emitted as a new part — scoping the check to this
-        // window prevents false positives when the replacement happens to be a
-        // substring of earlier (e.g. refused) output.
-        let emittedTextSinceLastAssistant = '';
+        // Latest open text part per scope, for untracked deltas and complete-message
+        // text. A block start, tool call, or tool result only closes its own
+        // scope's part (#201).
+        const currentTextPartIds = new Map<string, string>(); // scope -> text part id
+        // Whether any model text reached the client as text-delta parts. The
+        // result fallbacks emit `accumulatedText` only when nothing was (#203).
+        let textEmitted = false;
+        // Per scope: text already emitted via stream_events, to avoid duplication.
+        const streamedTextLengths = new Map<string, number>();
+        // Per scope: model text delivered to the client as text-delta parts
+        // (non-JSON mode) SINCE THE LAST ASSISTANT MESSAGE was processed. Each
+        // assistant message "claims" the stream-event deltas that preceded it, so
+        // this window holds exactly the deltas attributable to the upcoming
+        // assistant message. Used to decide whether a superseding message's
+        // replacement text was already streamed or must be emitted as a new part —
+        // scoping the check to this window prevents false positives when the
+        // replacement happens to be a substring of earlier (e.g. refused) output.
+        const emittedTextSinceLastAssistant = new Map<string, string>();
         let hasReceivedStreamEvents = false; // Track if we've received any stream_events
         let hasStreamedJson = false; // Track if JSON has been streamed via input_json_delta
         // SDK 0.3.x structured error kind from assistant messages (e.g. 'overloaded')
@@ -3291,8 +3319,34 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         // Track text content blocks by block key for correlating text_delta with text parts
         const textBlocksByIndex = new Map<string, string>(); // block key -> text part id
 
-        // Track if text was streamed via content blocks to prevent double emission in result handler
-        let textStreamedViaContentBlock = false;
+        const openTextPart = (scope: string): string => {
+          const partId = generateId();
+          currentTextPartIds.set(scope, partId);
+          controller.enqueue({ type: 'text-start', id: partId });
+          return partId;
+        };
+        const emitTextDelta = (partId: string, delta: string) => {
+          controller.enqueue({ type: 'text-delta', id: partId, delta });
+          textEmitted = true;
+        };
+        const closeCurrentTextPart = (scope: string) => {
+          const closedTextId = currentTextPartIds.get(scope);
+          if (!closedTextId) return;
+          controller.enqueue({ type: 'text-end', id: closedTextId });
+          currentTextPartIds.delete(scope);
+          // Prevent a later content_block_stop from closing the same text part twice.
+          for (const [blockKey, blockTextId] of textBlocksByIndex) {
+            if (blockTextId === closedTextId) {
+              textBlocksByIndex.delete(blockKey);
+              break;
+            }
+          }
+        };
+        const closeAllCurrentTextParts = () => {
+          for (const scope of [...currentTextPartIds.keys()]) {
+            closeCurrentTextPart(scope);
+          }
+        };
 
         // Extended thinking: Map block keys to reasoning part IDs
         const reasoningBlocksByIndex = new Map<string, string>(); // block key -> reasoning id
@@ -3419,40 +3473,34 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               ) {
                 const deltaText = event.delta.text;
                 hasReceivedStreamEvents = true;
+                const scope = textScope(streamParentToolUseId);
+                if (scope === '') {
+                  accumulatedText += deltaText;
+                }
+                streamedTextLengths.set(
+                  scope,
+                  (streamedTextLengths.get(scope) ?? 0) + deltaText.length
+                );
 
                 // Don't emit text deltas in JSON mode - accumulate instead
                 if (options.responseFormat?.type === 'json') {
-                  accumulatedText += deltaText;
-                  streamedTextLength += deltaText.length;
                   continue;
                 }
 
                 // Route to the delta's own block: a root and a subagent text block can be
-                // open at once. Untracked (legacy or index-less) deltas use the current part.
+                // open at once. Untracked (legacy or index-less) deltas use the current
+                // part of their scope.
                 const blockIndex = 'index' in event ? (event.index as number) : -1;
-                let deltaTextId = textBlocksByIndex.get(
-                  streamBlockKey(streamParentToolUseId, blockIndex)
-                );
-                if (!deltaTextId) {
-                  // Emit text-start if this is the first text
-                  if (!textPartId) {
-                    textPartId = generateId();
-                    controller.enqueue({
-                      type: 'text-start',
-                      id: textPartId,
-                    });
-                  }
-                  deltaTextId = textPartId;
-                }
+                const deltaTextId =
+                  textBlocksByIndex.get(streamBlockKey(streamParentToolUseId, blockIndex)) ??
+                  currentTextPartIds.get(scope) ??
+                  openTextPart(scope);
 
-                controller.enqueue({
-                  type: 'text-delta',
-                  id: deltaTextId,
-                  delta: deltaText,
-                });
-                accumulatedText += deltaText;
-                streamedTextLength += deltaText.length;
-                emittedTextSinceLastAssistant += deltaText;
+                emitTextDelta(deltaTextId, deltaText);
+                emittedTextSinceLastAssistant.set(
+                  scope,
+                  (emittedTextSinceLastAssistant.get(scope) ?? '') + deltaText
+                );
               }
               // Handle input_json_delta events for structured output and tool input streaming.
               if (
@@ -3501,21 +3549,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   }
 
                   // Opt-in speculative streaming: forward each fragment as text.
-                  if (!textPartId) {
-                    textPartId = generateId();
-                    controller.enqueue({
-                      type: 'text-start',
-                      id: textPartId,
-                    });
-                  }
-
-                  controller.enqueue({
-                    type: 'text-delta',
-                    id: textPartId,
-                    delta: jsonDelta,
-                  });
+                  emitTextDelta(currentTextPartIds.get('') ?? openTextPart(''), jsonDelta);
                   accumulatedText += jsonDelta;
-                  streamedTextLength += jsonDelta.length;
+                  streamedTextLengths.set(
+                    '',
+                    (streamedTextLengths.get('') ?? 0) + jsonDelta.length
+                  );
                   hasStreamedJson = true;
                   continue;
                 }
@@ -3588,22 +3627,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   structuredOutputBlocks.delete(blockKey);
                 }
 
-                // Close any active text part before tool starts
-                if (textPartId) {
-                  const closedTextId = textPartId;
-                  controller.enqueue({
-                    type: 'text-end',
-                    id: closedTextId,
-                  });
-                  textPartId = undefined;
-                  // Prevent a later content_block_stop from closing the same text part twice.
-                  for (const [idx, blockTextId] of textBlocksByIndex) {
-                    if (blockTextId === closedTextId) {
-                      textBlocksByIndex.delete(idx);
-                      break;
-                    }
-                  }
-                }
+                // Close any active text part of this scope before tool starts
+                closeCurrentTextPart(textScope(streamParentToolUseId));
 
                 // Track this block for later delta/stop events
                 toolBlocksByIndex.set(blockKey, toolId);
@@ -3672,20 +3697,18 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 const blockKey = streamBlockKey(streamParentToolUseId, blockIndex);
                 hasReceivedStreamEvents = true;
 
+                // JSON mode buffers text, so the block gets no (empty) text part.
+                if (options.responseFormat?.type === 'json') {
+                  continue;
+                }
+
                 // Generate text part ID early and map to block index
-                const partId = generateId();
+                const partId = openTextPart(textScope(streamParentToolUseId));
                 textBlocksByIndex.set(blockKey, partId);
-                textPartId = partId;
 
                 this.logger.debug(
                   `[claude-code] Text content block started - Index: ${blockIndex}, ID: ${partId}`
                 );
-
-                controller.enqueue({
-                  type: 'text-start',
-                  id: partId,
-                });
-                textStreamedViaContentBlock = true;
                 continue;
               }
 
@@ -3699,22 +3722,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 const blockKey = streamBlockKey(streamParentToolUseId, blockIndex);
                 hasReceivedStreamEvents = true;
 
-                // Close any active text part before reasoning starts
-                if (textPartId) {
-                  const closedTextId = textPartId;
-                  controller.enqueue({
-                    type: 'text-end',
-                    id: closedTextId,
-                  });
-                  textPartId = undefined;
-                  // Prevent a later content_block_stop from closing the same text part twice.
-                  for (const [idx, blockTextId] of textBlocksByIndex) {
-                    if (blockTextId === closedTextId) {
-                      textBlocksByIndex.delete(idx);
-                      break;
-                    }
-                  }
-                }
+                // Close any active text part of this scope before reasoning starts
+                closeCurrentTextPart(textScope(streamParentToolUseId));
 
                 const reasoningPartId = generateId();
                 reasoningBlocksByIndex.set(blockKey, reasoningPartId);
@@ -3814,8 +3823,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     id: textId,
                   });
                   textBlocksByIndex.delete(blockKey);
-                  if (textPartId === textId) {
-                    textPartId = undefined;
+                  const scope = textScope(streamParentToolUseId);
+                  if (currentTextPartIds.get(scope) === textId) {
+                    currentTextPartIds.delete(scope);
                   }
                   continue;
                 }
@@ -3890,23 +3900,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 }
               }
 
-              // Close any active text part before tool calls start.
+              const scope = textScope(sdkParentToolUseId);
+
+              // Close any active text part of this scope before tool calls start.
               // This ensures tool calls split text into separate parts.
               // We only do this if there are actual tools to avoid unnecessary text-end events.
-              if (textPartId && tools.length > 0) {
-                const closedTextId = textPartId;
-                controller.enqueue({
-                  type: 'text-end',
-                  id: closedTextId,
-                });
-                textPartId = undefined; // Reset so next text gets a new ID
-                // Prevent a later content_block_stop from closing the same text part twice.
-                for (const [idx, blockTextId] of textBlocksByIndex) {
-                  if (blockTextId === closedTextId) {
-                    textBlocksByIndex.delete(idx);
-                    break;
-                  }
-                }
+              if (tools.length > 0) {
+                closeCurrentTextPart(scope);
               }
 
               for (const tool of tools) {
@@ -4020,53 +4020,45 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 // When we've received stream_events, assistant messages contain cumulative text
                 // that we've already emitted via stream_event deltas - skip duplicates
                 // When no stream_events received, assistant messages contain incremental text
+                const streamedTextLength = streamedTextLengths.get(scope) ?? 0;
+                const emittedText = emittedTextSinceLastAssistant.get(scope) ?? '';
                 if (supersedesPriorMessages) {
                   // Refusal-fallback replacement: the superseded segments were
                   // already retracted on arrival (above); record the
                   // replacement text so kept text from earlier assistant
                   // messages survives in the accumulators (matches doGenerate).
-                  textSegments.push({
-                    ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
-                    text,
-                  });
-                  accumulatedText = textSegments.map((segment) => segment.text).join('');
+                  if (scope === '') {
+                    textSegments.push({
+                      ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
+                      text,
+                    });
+                    accumulatedText = textSegments.map((segment) => segment.text).join('');
+                  }
 
-                  if (emittedTextSinceLastAssistant === text) {
+                  if (emittedText === text) {
                     // The replacement text was fully streamed via stream_event
                     // deltas attributable to THIS message (the window resets when
                     // each assistant message is processed, so matches against
                     // earlier/refused output cannot false-positive here); the
                     // deltas were emitted and cannot be un-streamed, so
                     // re-emitting the replacement here would duplicate output.
-                    streamedTextLength = Math.max(streamedTextLength, text.length);
+                    streamedTextLengths.set(scope, Math.max(streamedTextLength, text.length));
                     this.logger.debug(
                       '[claude-code] Skipping text emission for superseding assistant message (replacement already streamed)'
                     );
-                  } else if (
-                    emittedTextSinceLastAssistant.length > 0 &&
-                    text.startsWith(emittedTextSinceLastAssistant)
-                  ) {
+                  } else if (emittedText.length > 0 && text.startsWith(emittedText)) {
                     // A PREFIX of the replacement already streamed (e.g. deltas
                     // emitted 'Replace' and the final message is 'Replacement
                     // answer'). Emit only the unstreamed suffix on the SAME open
                     // part - re-emitting the full text as a new part would
                     // duplicate the prefix ('ReplaceReplacement answer').
                     if (options.responseFormat?.type !== 'json') {
-                      const suffix = text.slice(emittedTextSinceLastAssistant.length);
+                      const suffix = text.slice(emittedText.length);
                       if (suffix) {
-                        if (!textPartId) {
-                          textPartId = generateId();
-                          controller.enqueue({ type: 'text-start', id: textPartId });
-                        }
-                        controller.enqueue({
-                          type: 'text-delta',
-                          id: textPartId,
-                          delta: suffix,
-                        });
-                        emittedTextSinceLastAssistant = text;
+                        emitTextDelta(currentTextPartIds.get(scope) ?? openTextPart(scope), suffix);
                       }
                     }
-                    streamedTextLength = Math.max(streamedTextLength, text.length);
+                    streamedTextLengths.set(scope, Math.max(streamedTextLength, text.length));
                     this.logger.debug(
                       '[claude-code] Emitted unstreamed suffix of superseding assistant message'
                     );
@@ -4075,101 +4067,56 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     // emitted. The retracted text cannot be un-streamed, so close
                     // the open text part and deliver the replacement as a NEW
                     // text part instead of dropping the model's actual answer.
-                    if (textPartId) {
-                      const closedTextId = textPartId;
-                      controller.enqueue({
-                        type: 'text-end',
-                        id: closedTextId,
-                      });
-                      textPartId = undefined;
-                      // Prevent a later content_block_stop from closing the same text part twice.
-                      for (const [idx, blockTextId] of textBlocksByIndex) {
-                        if (blockTextId === closedTextId) {
-                          textBlocksByIndex.delete(idx);
-                          break;
-                        }
-                      }
-                    }
-                    textPartId = generateId();
-                    controller.enqueue({
-                      type: 'text-start',
-                      id: textPartId,
-                    });
-                    controller.enqueue({
-                      type: 'text-delta',
-                      id: textPartId,
-                      delta: text,
-                    });
-                    streamedTextLength = Math.max(streamedTextLength, text.length);
+                    closeCurrentTextPart(scope);
+                    emitTextDelta(openTextPart(scope), text);
+                    streamedTextLengths.set(scope, Math.max(streamedTextLength, text.length));
                     this.logger.debug(
                       '[claude-code] Emitted superseding assistant message as a new text part (canonical replacement)'
                     );
                   }
                 } else if (hasReceivedStreamEvents) {
                   // Calculate delta: only emit text that wasn't already streamed via stream_events
-                  const newTextStart = streamedTextLength;
-                  const deltaText = text.length > newTextStart ? text.slice(newTextStart) : '';
+                  const deltaText =
+                    text.length > streamedTextLength ? text.slice(streamedTextLength) : '';
 
                   // Always accumulate for final result tracking
-                  accumulatedText = text; // Replace with full text (assistant msg contains full content)
-                  textSegments.length = 0;
-                  textSegments.push({
-                    ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
-                    text,
-                  });
+                  if (scope === '') {
+                    accumulatedText = text; // Replace with full text (assistant msg contains full content)
+                    textSegments.length = 0;
+                    textSegments.push({
+                      ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
+                      text,
+                    });
+                  }
 
                   // In JSON mode, we accumulate the text and extract JSON at the end
                   // Otherwise, stream any new text
                   if (options.responseFormat?.type !== 'json' && deltaText) {
-                    // Emit text-start if this is the first text
-                    if (!textPartId) {
-                      textPartId = generateId();
-                      controller.enqueue({
-                        type: 'text-start',
-                        id: textPartId,
-                      });
-                    }
-
-                    controller.enqueue({
-                      type: 'text-delta',
-                      id: textPartId,
-                      delta: deltaText,
-                    });
+                    emitTextDelta(currentTextPartIds.get(scope) ?? openTextPart(scope), deltaText);
                   }
 
-                  // Update streamedTextLength to match what we now know is the full text
-                  streamedTextLength = text.length;
+                  // Update the streamed length to match what we now know is the full text
+                  streamedTextLengths.set(scope, text.length);
                 } else {
                   // No stream_events - assistant messages contain incremental text chunks
-                  accumulatedText += text;
-                  textSegments.push({
-                    ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
-                    text,
-                  });
+                  if (scope === '') {
+                    accumulatedText += text;
+                    textSegments.push({
+                      ...(typeof message.uuid === 'string' && { uuid: message.uuid }),
+                      text,
+                    });
+                  }
 
                   // In JSON mode, we accumulate the text and extract JSON at the end
                   // Otherwise, stream the text as it comes
                   if (options.responseFormat?.type !== 'json') {
-                    // Emit text-start if this is the first text
-                    if (!textPartId) {
-                      textPartId = generateId();
-                      controller.enqueue({
-                        type: 'text-start',
-                        id: textPartId,
-                      });
-                    }
-
-                    controller.enqueue({
-                      type: 'text-delta',
-                      id: textPartId,
-                      delta: text,
-                    });
+                    emitTextDelta(currentTextPartIds.get(scope) ?? openTextPart(scope), text);
                   }
                 }
               }
-              // This assistant message claims all stream-event deltas that
-              // preceded it — reset the attribution window for the next one.
-              emittedTextSinceLastAssistant = '';
+              // This assistant message claims all stream-event deltas of its scope
+              // that preceded it — reset the attribution window for the next one.
+              emittedTextSinceLastAssistant.delete(scope);
             } else if (message.type === 'user') {
               if (!message.message?.content) {
                 this.logger.warn(
@@ -4178,34 +4125,28 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 continue;
               }
 
-              // A user message signals the end of the current assistant message.
-              // Reset text state to ensure the next assistant message starts with a new text part.
-              // This prevents text from different assistant messages from being merged together.
-              if (textPartId) {
-                const closedTextId = textPartId;
-                controller.enqueue({
-                  type: 'text-end',
-                  id: closedTextId,
-                });
-                textPartId = undefined;
-                // Prevent a later content_block_stop from closing the same text part twice.
-                for (const [blockKey, blockTextId] of textBlocksByIndex) {
-                  if (blockTextId === closedTextId) {
-                    textBlocksByIndex.delete(blockKey);
-                    break;
-                  }
-                }
+              // A user message signals the end of the current assistant message in its
+              // scope. Reset that scope's text state so its next assistant message starts
+              // with a new text part. This prevents text from different assistant
+              // messages from being merged together. Other scopes are untouched (#200).
+              const scope = textScope(
+                (message as { parent_tool_use_id?: string | null }).parent_tool_use_id
+              );
+              if (currentTextPartIds.has(scope)) {
+                closeCurrentTextPart(scope);
                 this.logger.debug('[claude-code] Closed text part due to user message');
               }
               // Reset the accumulators unconditionally: in JSON mode no text
-              // part is ever opened (textPartId stays undefined), but prose
-              // accumulated before a tool call must still be discarded so the
-              // final-object extraction (and the missing-structured_output
-              // recovery) parse only the last assistant turn's text.
-              accumulatedText = '';
-              textSegments.length = 0;
-              streamedTextLength = 0;
-              emittedTextSinceLastAssistant = '';
+              // part is ever opened, but prose accumulated before a tool call
+              // must still be discarded so the final-object extraction (and the
+              // missing-structured_output recovery) parse only the last
+              // assistant turn's text.
+              if (scope === '') {
+                accumulatedText = '';
+                textSegments.length = 0;
+              }
+              streamedTextLengths.delete(scope);
+              emittedTextSinceLastAssistant.delete(scope);
 
               // Extract parent_tool_use_id from SDK message for late-arriving tool results
               const sdkParentToolUseIdForResults = (
@@ -4421,12 +4362,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
               if (alreadyStreamedJson) {
                 // We've already streamed JSON deltas; only close the text part if it's still open.
-                if (textPartId) {
-                  controller.enqueue({
-                    type: 'text-end',
-                    id: textPartId,
-                  });
-                }
+                closeAllCurrentTextParts();
               } else if (structuredOutput !== undefined) {
                 // Emit structured output as text (fallback when streaming didn't occur)
                 const jsonTextId = generateId();
@@ -4475,12 +4411,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 this.logger.warn(
                   '[claude-code] outputFormat was requested but the CLI returned no structured_output; recovered JSON by parsing the prose response. The schema likely contains constructs the CLI cannot enforce - see the README structured-output limitations.'
                 );
-                if (textPartId) {
-                  controller.enqueue({
-                    type: 'text-end',
-                    id: textPartId,
-                  });
-                }
+                closeAllCurrentTextParts();
                 const recoveredTextId = generateId();
                 controller.enqueue({
                   type: 'text-start',
@@ -4495,16 +4426,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   type: 'text-end',
                   id: recoveredTextId,
                 });
-              } else if (textPartId) {
-                // Close the text part if it was opened (non-JSON mode)
-                controller.enqueue({
-                  type: 'text-end',
-                  id: textPartId,
-                });
-              } else if (accumulatedText && !textStreamedViaContentBlock) {
+              } else if (currentTextPartIds.size > 0) {
+                // Close the text parts that are still open (non-JSON mode)
+                closeAllCurrentTextParts();
+              } else if (accumulatedText && !textEmitted) {
                 // Fallback for JSON mode without schema: emit accumulated text
                 // This handles the case where responseFormat.type === 'json' but no schema
-                // was provided, so the SDK returns plain text instead of structured_output
+                // was provided, so the SDK returns plain text instead of structured_output.
+                // JSON mode buffers text without emitting it, so the check is whether
+                // text was emitted, not whether a text block started (#203).
                 const fallbackTextId = generateId();
                 controller.enqueue({
                   type: 'text-start',
@@ -4649,12 +4579,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             };
             streamWarnings.push(truncationWarning);
 
-            if (textPartId) {
-              controller.enqueue({
-                type: 'text-end',
-                id: textPartId,
-              });
-            } else if (accumulatedText && !textStreamedViaContentBlock) {
+            if (currentTextPartIds.size > 0) {
+              closeAllCurrentTextParts();
+            } else if (accumulatedText && !textEmitted) {
               const fallbackTextId = generateId();
               controller.enqueue({
                 type: 'text-start',
@@ -4710,7 +4637,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           let errorToEmit: unknown;
 
           // Special handling for AbortError to preserve abort signal reason
-          if (isAbortError(error)) {
+          if (isAbortError(error) || isSdkAbortWithCallerReason(error, options.abortSignal)) {
             errorToEmit = options.abortSignal?.aborted ? options.abortSignal.reason : error;
           } else {
             // Use unified error handler
