@@ -219,6 +219,8 @@ The provider optimizes tool streaming with pragmatic thresholds:
 
 See Tool Streaming Support for details and event semantics: docs/ai-sdk-v5/TOOL_STREAMING_SUPPORT.md#performance-considerations
 
+For the current 3.x (AI SDK v6) streaming lifecycle (block and scope routing, when tool-input deltas stop, retraction, the UTF-16 size cap, and best-effort `streamStructuredOutput`), see [Current streaming semantics](TOOL_STREAMING_SUPPORT.md#current-streaming-semantics).
+
 ### AbortSignal Support
 
 The provider fully supports the standard AbortSignal for request cancellation, following Vercel AI SDK patterns:
