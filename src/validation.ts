@@ -321,6 +321,29 @@ export const claudeCodeSettingsSchema = z
         message: 'onQueryCreated must be a function',
       })
       .optional(),
+    continueInjectedTurns: z.boolean().optional(),
+    resumedInjectionUuids: z.array(z.string().uuid()).optional(),
+    onStreamEnd: z
+      .custom<(reason: 'completed' | 'interrupted' | 'timed_out') => void>(
+        (val) => typeof val === 'function',
+        {
+          message: 'onStreamEnd must be a function',
+        }
+      )
+      .optional(),
+    onStreamConsumption: z
+      .any()
+      .refine((val) => val === undefined || typeof val === 'function', {
+        message: 'onStreamConsumption must be a function',
+      })
+      .optional(),
+    injectionContinuationTimeoutMs: z.number().int().positive().max(300_000).optional(),
+    onStreamResult: z
+      .any()
+      .refine((val) => val === undefined || typeof val === 'function', {
+        message: 'onStreamResult must be a function',
+      })
+      .optional(),
     onStreamStart: z
       .any()
       .refine((val) => val === undefined || typeof val === 'function', {

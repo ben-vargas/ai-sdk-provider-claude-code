@@ -4,6 +4,8 @@
 
 For the current AI SDK v6 provider (3.6.0+), `resumeDropsTurn`, `perTaskStopAffordance`, `permissionPrompts`, and `pluginDelivery` are documented in the [compatibility update](../../README.md#v360-compatibility-update); guarded rewind and model reuse are covered in [session management](../sessions.md#guarded-rewinds-v360). These additions do not apply to the legacy provider versions covered by this guide.
 
+Current opt-in injected-turn continuation and stream lifecycle callbacks are documented under [Mid-Session Message Injection](../../README.md#mid-session-message-injection). They are not available in the legacy provider versions described here.
+
 ## Essential Examples
 
 ### Streaming Responses
