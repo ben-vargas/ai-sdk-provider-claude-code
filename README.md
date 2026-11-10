@@ -515,7 +515,7 @@ for await (const chunk of result.textStream) {
 - `streamingInput: 'always'` or `'auto'` with `canUseTool` set
 - Messages injected via `inject(content)` are delivered to the agent mid-turn
 
-**Important:** Injection works between tool calls, not during continuous text generation. Use tasks that involve tool usage (file operations, bash commands, etc.) for effective mid-turn interruption.
+**Important:** Tool boundaries provide immediate mid-turn uptake. Continuous text generation has no fold-in boundary; opt-in continuation mode below keeps queued follow-up output in the same SDK stream.
 
 **Use Cases:**
 
@@ -526,7 +526,7 @@ for await (const chunk of result.textStream) {
 
 **API:**
 
-- `inject(content: string, onResult?: (delivered: boolean) => void)` - Inject a user message. Optional callback reports delivery status.
+- `inject(content: string, onResult?: (delivered: boolean) => void, options?: { uuid?: string })` - Inject a user message. Optional callback reports delivery status.
 - `close()` - Signal no more messages will be injected
 
 **Delivery Tracking:**
@@ -541,6 +541,19 @@ injector.inject('STOP!', (delivered) => {
 ```
 
 See [examples/message-injection.ts](examples/message-injection.ts) for complete examples including conditional injection and supervisor approval patterns.
+
+### One stream for injected continuations
+
+`continueInjectedTurns: true` is an opt-in streaming mode for messages submitted through the `onStreamStart` MessageInjector. It requires that callback; direct `Query.streamInput()` writes are not tracked. The provider keeps reading when a native `result` leaves injected UUIDs unconfirmed, so a queued CLI continuation stays in the same AI SDK stream. It emits one final finish and sums the per-turn token usage from the native results. The latest cumulative `costUsd` and `modelUsage` snapshots are retained rather than added together.
+
+- Pass `{ uuid }` as the third argument to `injector.inject(text, onDelivery, { uuid })` to retain your message identity. The provider also UUID-stamps the initial prompt. `onDelivery(true)` confirms stdin delivery, not absorption.
+- `onStreamResult` reports confirmed and pending UUIDs. `onStreamConsumption` reports main-thread reply attribution; it is not a final absorption verdict.
+- `onStreamEnd` runs synchronously once with `completed`, `interrupted`, or `timed_out`, before queued delivery callbacks are rejected. Detach the old injector on interruption and retain unconfirmed messages for a caller-controlled recovery stream; close admission on successful completion. Callback exceptions are isolated from provider cleanup.
+- `injectionContinuationTimeoutMs` defaults to 30 seconds and is limited to 5 minutes. Its absolute budget starts at the first result with pending injections and is not reset by new messages or activity. A recovery initial-command completion can start the same budget while its matching result is still missing. At expiry the Query closes and `continuationTimedOut` is reported. A caller must invalidate native resume handles containing unconfirmed messages.
+- Interrupted streams retain only usage already confirmed by native results, using an error finish with `partial: true`. Unknown usage from unfinished calls is not estimated.
+- `resumedInjectionUuids` is an advanced recovery option, valid only with an explicit matching `resume`. Supply only immutable old IDs whose delivery and main-thread consumption were witnessed in that same native session. A matching initial-prompt success result and a duplicate completion receipt are both required. A current queued/started/cancelled or new consumption frame disables that fallback for the ID; its own result must then confirm it. New-stream IDs are never recovery candidates.
+
+This option requires streaming generation; `doGenerate` rejects it. Without the opt-in, the existing first-result completion behavior is preserved. The caller owns deduplication across streams, platform message status, and the original turn deadline.
 
 ## Image Inputs (Streaming Only)
 

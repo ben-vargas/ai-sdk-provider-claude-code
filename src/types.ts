@@ -780,6 +780,19 @@ export interface ClaudeCodeSettings {
    */
   onStreamStart?: (injector: MessageInjector) => void;
 
+  /** Streaming only: include all injected CLI turns in a single AI SDK stream. */
+  continueInjectedTurns?: boolean;
+  /** Absolute continuation budget after a result leaves injected messages pending (default 30s). */
+  injectionContinuationTimeoutMs?: number;
+  /** Native result receipts, including a bounded continuation timeout. Delivery is not absorption. */
+  onStreamResult?: (result: import('./injection-session.js').InjectionResult) => void;
+  /** Main-thread consumption identity; not itself a final absorption verdict. */
+  onStreamConsumption?: (receipt: import('./injection-session.js').InjectionConsumption) => void;
+  /** Synchronous lifecycle notification before queued delivery callbacks are rejected. */
+  onStreamEnd?: (reason: 'completed' | 'interrupted' | 'timed_out') => void;
+  /** Frozen old IDs with a main-thread consumption witness for exactly `resume`. */
+  resumedInjectionUuids?: readonly string[];
+
   /**
    * Callback invoked when the agent emits a prompt suggestion (a predicted
    * next user prompt). Suggestions are enabled when `promptSuggestions` is
@@ -838,7 +851,11 @@ export interface MessageInjector {
    * });
    * ```
    */
-  inject(content: string, onResult?: (delivered: boolean) => void): void;
+  inject(
+    content: string,
+    onResult?: (delivered: boolean) => void,
+    options?: { uuid?: string }
+  ): void;
 
   /**
    * Signal that no more messages will be injected.

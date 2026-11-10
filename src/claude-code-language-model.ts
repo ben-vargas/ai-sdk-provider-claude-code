@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { InjectionSession } from './injection-session.js';
 import type {
   LanguageModelV3,
   LanguageModelV3Content,
@@ -727,6 +729,7 @@ type ToolStreamState = {
  */
 type QueuedInjection = {
   content: string;
+  uuid: string;
   onResult?: (delivered: boolean) => void;
 };
 
@@ -738,7 +741,7 @@ type QueuedInjection = {
  * Note: getNextItem returns the full QueuedInjection so the consumer can call onResult
  * AFTER successfully yielding, avoiding a race condition with outputStreamEnded.
  */
-function createMessageInjector(): {
+function createMessageInjector(session?: InjectionSession): {
   injector: MessageInjector;
   getNextItem: () => Promise<QueuedInjection | null>;
   notifySessionEnded: () => void;
@@ -748,13 +751,14 @@ function createMessageInjector(): {
   let resolver: ((item: QueuedInjection | null) => void) | null = null;
 
   const injector: MessageInjector = {
-    inject(content, onResult) {
-      if (closed) {
+    inject(content, onResult, options) {
+      const uuid = options?.uuid ?? randomUUID();
+      if (closed || (session && !session.register(uuid))) {
         // Already closed - immediately notify not delivered
         onResult?.(false);
         return;
       }
-      const item: QueuedInjection = { content, onResult };
+      const item: QueuedInjection = { content, onResult, uuid };
       if (resolver) {
         // Consumer is waiting, resolve immediately
         const r = resolver;
@@ -819,7 +823,8 @@ function toAsyncIterablePrompt(
   outputStreamEnded: Promise<unknown>,
   sessionId?: string,
   contentParts?: SDKUserMessage['message']['content'],
-  onStreamStart?: (injector: MessageInjector) => void
+  onStreamStart?: (injector: MessageInjector) => void,
+  injectionSession?: InjectionSession
 ): AsyncIterable<SDKUserMessage> {
   const content = (
     contentParts && contentParts.length > 0
@@ -835,6 +840,9 @@ function toAsyncIterablePrompt(
     },
     parent_tool_use_id: null,
     session_id: sessionId ?? '',
+    ...(onStreamStart
+      ? { uuid: (injectionSession?.initialUuid ?? randomUUID()) as SDKUserMessage['uuid'] }
+      : {}),
   };
 
   // If no callback, use simple behavior (backwards compatible)
@@ -848,7 +856,7 @@ function toAsyncIterablePrompt(
   }
 
   // With injection support: create injector and yield messages as they arrive
-  const { injector, getNextItem, notifySessionEnded } = createMessageInjector();
+  const { injector, getNextItem, notifySessionEnded } = createMessageInjector(injectionSession);
 
   return {
     async *[Symbol.asyncIterator]() {
@@ -887,6 +895,7 @@ function toAsyncIterablePrompt(
           },
           parent_tool_use_id: null,
           session_id: sessionId ?? '',
+          uuid: item.uuid as SDKUserMessage['uuid'],
         };
         yield sdkMsg;
 
@@ -2412,6 +2421,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
   async doGenerate(
     options: Parameters<LanguageModelV3['doGenerate']>[0]
   ): Promise<Awaited<ReturnType<LanguageModelV3['doGenerate']>>> {
+    if (this.settings.continueInjectedTurns) {
+      throw new Error('continueInjectedTurns requires streaming generation');
+    }
     this.logger.debug(`[claude-code] Starting doGenerate request with model: ${this.modelId}`);
     this.logger.debug(`[claude-code] Response format: ${options.responseFormat?.type ?? 'none'}`);
 
@@ -3118,6 +3130,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
   async doStream(
     options: Parameters<LanguageModelV3['doStream']>[0]
   ): Promise<Awaited<ReturnType<LanguageModelV3['doStream']>>> {
+    if (this.settings.continueInjectedTurns && !this.settings.onStreamStart) {
+      throw new Error('continueInjectedTurns requires onStreamStart injection');
+    }
     this.logger.debug(`[claude-code] Starting doStream request with model: ${this.modelId}`);
     this.logger.debug(`[claude-code] Response format: ${options.responseFormat?.type ?? 'none'}`);
 
@@ -3201,6 +3216,27 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         const outputStreamEnded = new Promise((resolve) => {
           done = () => resolve(undefined);
         });
+        let providerFinishEmitted = false;
+        let streamEndReason: 'completed' | 'interrupted' | 'timed_out' = 'interrupted';
+        let streamEndNotified = false;
+        const notifyStreamEnd = () => {
+          if (streamEndNotified) return;
+          streamEndNotified = true;
+          try {
+            this.settings.onStreamEnd?.(injectionSession.timedOut ? 'timed_out' : streamEndReason);
+          } catch {
+            this.logger.warn('[claude-code] Stream end callback failed');
+          }
+        };
+        const injectionSession = new InjectionSession(
+          this.settings.injectionContinuationTimeoutMs ?? 30_000,
+          this.settings.onStreamResult,
+          {
+            sessionId: effectiveResume === this.settings.resume ? effectiveResume : undefined,
+            uuids: this.settings.resumedInjectionUuids,
+            onConsumption: this.settings.onStreamConsumption,
+          }
+        );
         const toolStates = new Map<string, ToolStreamState>();
         // Tombstones for pending tool calls dropped by supersede retraction:
         // late tool_result/tool_error blocks for these IDs must be discarded,
@@ -3474,7 +3510,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 outputStreamEnded,
                 effectiveResume,
                 streamingContentParts,
-                this.settings.onStreamStart
+                this.settings.onStreamStart,
+                injectionSession
               )
             : messagesPrompt;
 
@@ -3491,7 +3528,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           // like mid-stream message injection via query.streamInput()
           this.settings.onQueryCreated?.(response);
 
-          for await (const message of response) {
+          const responseMessages =
+            this.settings.continueInjectedTurns && this.settings.onStreamStart
+              ? injectionSession.messages(response, () => response.close())
+              : response;
+          for await (const message of responseMessages) {
             this.logger.debug(`[claude-code] Stream received message type: ${message.type}`);
 
             // Handle streaming events (token-by-token delivery via includePartialMessages)
@@ -4337,7 +4378,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 );
               }
             } else if (message.type === 'result') {
-              done();
               this.mergeResultPermissionDenials(message, metadataTracking);
 
               // Handle is_error flag in result message (e.g., auth failures).
@@ -4506,6 +4546,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               // Prepare JSON-safe warnings for provider metadata
               const warningsJson = this.serializeWarningsForMetadata(streamWarnings);
 
+              providerFinishEmitted = true;
               controller.enqueue({
                 type: 'finish',
                 finishReason,
@@ -4513,6 +4554,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 providerMetadata: {
                   'claude-code': {
                     sessionId: message.session_id,
+                    ...(this.settings.continueInjectedTurns
+                      ? {
+                          userMessageUuids: [...injectionSession.absorbed],
+                          unabsorbedUserMessageUuids: [...injectionSession.pending],
+                          continuationTimedOut: injectionSession.timedOut,
+                        }
+                      : {}),
                     ...(message.total_cost_usd !== undefined && {
                       costUsd: message.total_cost_usd,
                     }),
@@ -4559,6 +4607,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   },
                 },
               });
+              streamEndReason = 'completed';
+              notifyStreamEnd();
               controller.close();
 
               // The prompt_suggestion message (promptSuggestions: true) arrives
@@ -4613,13 +4663,20 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           this.logger.debug('[claude-code] Stream finalized, closing stream');
           controller.close();
         } catch (error: unknown) {
-          done();
+          if (this.settings.continueInjectedTurns && providerFinishEmitted) return;
+          const knownResult = this.settings.continueInjectedTurns
+            ? injectionSession.confirmedResult
+            : undefined;
 
           this.logger.debug(
             `[claude-code] Error during doStream: ${error instanceof Error ? error.message : String(error)}`
           );
 
-          if (isClaudeCodeTruncationError(error, accumulatedText)) {
+          if (
+            !knownResult &&
+            !(this.settings.continueInjectedTurns && injectionSession.pending.size > 0) &&
+            isClaudeCodeTruncationError(error, accumulatedText)
+          ) {
             this.logger.warn(
               `[claude-code] Detected truncated stream response, returning ${accumulatedText.length} characters of buffered text`
             );
@@ -4652,6 +4709,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
             const warningsJson = this.serializeWarningsForMetadata(streamWarnings);
 
+            providerFinishEmitted = true;
             controller.enqueue({
               type: 'finish',
               finishReason: { unified: 'length', raw: 'truncation' },
@@ -4679,6 +4737,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               },
             });
 
+            streamEndReason = 'completed';
+            notifyStreamEnd();
             controller.close();
             return;
           }
@@ -4699,9 +4759,33 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             type: 'error',
             error: errorToEmit,
           });
+          if (knownResult && !providerFinishEmitted) {
+            providerFinishEmitted = true;
+            controller.enqueue({
+              type: 'finish',
+              finishReason: { unified: 'error', raw: 'injected_stream_interrupted' },
+              usage: convertClaudeCodeUsage(knownResult.usage),
+              providerMetadata: {
+                'claude-code': {
+                  sessionId: knownResult.session_id,
+                  partial: true,
+                  ...(knownResult.total_cost_usd !== undefined && {
+                    costUsd: knownResult.total_cost_usd,
+                  }),
+                  ...(knownResult.modelUsage !== undefined && {
+                    modelUsage: knownResult.modelUsage as unknown as JSONValue,
+                  }),
+                },
+              },
+            });
+          }
 
           controller.close();
         } finally {
+          // Invalidate the caller's old channel synchronously, before done()
+          // rejects queued writes or recovery can start on another microtask.
+          notifyStreamEnd();
+          done();
           if (options.abortSignal && abortListener) {
             options.abortSignal.removeEventListener('abort', abortListener);
           }
