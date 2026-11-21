@@ -2932,7 +2932,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
       warnings: messageWarnings,
       streamingContentParts,
       hasImageParts,
-    } = convertToClaudeCodeMessages(options.prompt);
+    } = convertToClaudeCodeMessages(options.prompt, this.settings.allowSlashCommands);
 
     this.logger.debug(
       `[claude-code] Converted ${options.prompt.length} messages, hasImageParts: ${hasImageParts}`
@@ -3675,7 +3675,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
       warnings: messageWarnings,
       streamingContentParts,
       hasImageParts,
-    } = convertToClaudeCodeMessages(options.prompt);
+    } = convertToClaudeCodeMessages(options.prompt, this.settings.allowSlashCommands);
 
     this.logger.debug(
       `[claude-code] Converted ${options.prompt.length} messages for streaming, hasImageParts: ${hasImageParts}`

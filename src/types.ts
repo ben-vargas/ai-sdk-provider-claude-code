@@ -557,6 +557,14 @@ export interface ClaudeCodeSettings {
   perTaskStopAffordance?: boolean;
 
   /**
+   * Let Claude Code dispatch a standalone slash command typed by the user.
+   * Only applies to a single user message with one text part, beginning with
+   * a slash. Leave disabled for prompts assembled from external content.
+   * Defaults to false. `verbatimPrompts: true` disables CLI command dispatch.
+   */
+  allowSlashCommands?: boolean;
+
+  /**
    * Send every user message with `client_composed: true`, so Claude Code
    * delivers the prompt text as written: no `@path` file-mention expansion and
    * no slash-command dispatch. Use when prompts are assembled from content the
@@ -571,7 +579,7 @@ export interface ClaudeCodeSettings {
    * bundled binary qualifies); older CLIs ignore it. Unset keeps the SDK
    * default (`false`).
    *
-   * Provider notes: ordinary AI SDK user prompt text is prefixed with
+   * Provider notes: by default, ordinary AI SDK user prompt text is prefixed with
    * `Human:`, so a leading slash in that text does not reach the CLI as a
    * leading command. Messages sent through `MessageInjector` or
    * `Query.streamInput()` are not prefixed; this setting applies to those too.
