@@ -550,6 +550,7 @@ SDK 0.3.x treats `Options.env` as a full **replacement** for the subprocess envi
 - **Platform basics** — POSIX: `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`, `LANG`, `LC_ALL`, `TMPDIR`; Windows: `APPDATA`, `COMSPEC`, `HOMEDRIVE`, `HOMEPATH`, `LOCALAPPDATA`, `PATH`, `PATHEXT`, `SYSTEMDRIVE`, `SYSTEMROOT`, `TEMP`, `TMP`, `USERNAME`, `USERPROFILE`, `WINDIR`
 - **Prefix-matched** — any variable starting with `ANTHROPIC_`, `CLAUDE_`, `AWS_`, or `GOOGLE_` (covers `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`, Bedrock and Vertex credentials, etc.)
 - **Proxy/TLS** — `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (upper- and lowercase), `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`
+- **SSH agent** — `SSH_AUTH_SOCK`, `SSH_AGENT_PID` (so `git`/`ssh` run by the Bash tool can use the user's ssh-agent)
 - **Cloud extras** — `GCLOUD_PROJECT`, `CLOUD_ML_REGION`
 
 Variables outside this list are not inherited by the subprocess; pass them explicitly via the `env` setting if needed. The provider also sets `CLAUDE_AGENT_SDK_CLIENT_APP` to `ai-sdk-provider-claude-code/<version>` (used in the SDK's User-Agent) unless you already set it via the process environment, the `env` setting, or `sdkOptions.env`.

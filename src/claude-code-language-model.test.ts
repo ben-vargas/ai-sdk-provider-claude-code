@@ -659,7 +659,7 @@ describe('ClaudeCodeLanguageModel', () => {
       }
     });
 
-    it('should inherit prefix-matched env vars (ANTHROPIC_/CLAUDE_/AWS_/GOOGLE_) and exact network vars', async () => {
+    it('should inherit prefix-matched env vars (ANTHROPIC_/CLAUDE_/AWS_/GOOGLE_) and exact network/SSH vars', async () => {
       const testKeys = [
         'ANTHROPIC_TEST_X',
         'CLAUDE_TEST_X',
@@ -668,6 +668,8 @@ describe('ClaudeCodeLanguageModel', () => {
         'HTTPS_PROXY',
         'NO_PROXY',
         'NODE_EXTRA_CA_CERTS',
+        'SSH_AUTH_SOCK',
+        'SSH_AGENT_PID',
         'GCLOUD_PROJECT',
         'CLOUD_ML_REGION',
         'NOT_ALLOWLISTED_TEST_X',
@@ -710,6 +712,8 @@ describe('ClaudeCodeLanguageModel', () => {
         expect(env.HTTPS_PROXY).toBe('value-HTTPS_PROXY');
         expect(env.NO_PROXY).toBe('value-NO_PROXY');
         expect(env.NODE_EXTRA_CA_CERTS).toBe('value-NODE_EXTRA_CA_CERTS');
+        expect(env.SSH_AUTH_SOCK).toBe('value-SSH_AUTH_SOCK');
+        expect(env.SSH_AGENT_PID).toBe('value-SSH_AGENT_PID');
         expect(env.GCLOUD_PROJECT).toBe('value-GCLOUD_PROJECT');
         expect(env.CLOUD_ML_REGION).toBe('value-CLOUD_ML_REGION');
         // Non-allowlisted vars are not inherited
