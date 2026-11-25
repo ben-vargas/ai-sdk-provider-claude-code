@@ -71,6 +71,8 @@ export {
  * These operate on persisted session storage — the local
  * `~/.claude/projects/` JSONL files by default, or a custom `SessionStore`
  * when one is passed via each helper's `sessionStore` option (alpha).
+ * `archiveSession` and `unarchiveSession` are the exception: they work on
+ * local sessions only and reject a `sessionStore`.
  * See docs/sessions.md for a guide tying these together with the
  * session-related settings (`sessionId`, `resume`, `forkSession`, ...).
  */
@@ -82,6 +84,8 @@ export {
   deleteSession,
   renameSession,
   tagSession,
+  archiveSession,
+  unarchiveSession,
   listSubagents,
   getSubagentMessages,
   // Pure summary-folding utility for SessionStore implementers (alpha)
@@ -154,6 +158,7 @@ export type {
   FileChangedHookInput,
   DirectoryAddedHookInput,
   MessageDisplayHookInput,
+  PreSkillShellCommandHookInput,
   // Hook-specific output payloads (SyncHookJSONOutput['hookSpecificOutput'] union members)
   PreToolUseHookSpecificOutput,
   UserPromptSubmitHookSpecificOutput,
@@ -177,6 +182,7 @@ export type {
   FileChangedHookSpecificOutput,
   WorktreeCreateHookSpecificOutput,
   MessageDisplayHookSpecificOutput,
+  PreSkillShellCommandHookSpecificOutput,
   // Hook permission decision union (adds 'defer' in SDK 0.3.x)
   HookPermissionDecision,
   // Provenance of a user-role message (peer session, team lead, channel)
@@ -280,6 +286,8 @@ export type {
   RewindFilesResult,
   McpSetServersResult,
   SDKControlGetContextUsageResponse,
+  // Query.setPermissionMode() result (`{ mode? }`: the mode now in effect, when named)
+  SDKControlSetPermissionModeResponse,
   // Beta feature identifiers (`betas` setting values)
   SdkBeta,
   // Plugin configuration (`plugins` setting values)

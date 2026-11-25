@@ -877,6 +877,46 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(call.options.settingSources).toEqual([]);
     });
 
+    // SDK 0.3.286+ leaves an omitted permissionMode to Claude Code, which can
+    // start the session in 'auto' mode. The provider keeps its documented
+    // 'default' by passing it explicitly.
+    it.each<{ name: string; settings: ClaudeCodeSettings; expected: string }>([
+      { name: 'unset', settings: {}, expected: 'default' },
+      { name: 'an explicit setting', settings: { permissionMode: 'auto' }, expected: 'auto' },
+      {
+        name: 'an sdkOptions override',
+        settings: { permissionMode: 'auto', sdkOptions: { permissionMode: 'plan' } },
+        expected: 'plan',
+      },
+      {
+        name: 'an undefined sdkOptions override',
+        settings: { sdkOptions: { permissionMode: undefined } },
+        expected: 'default',
+      },
+    ])(
+      'should pass permissionMode $expected to the SDK for $name',
+      async ({ settings, expected }) => {
+        const model = new ClaudeCodeLanguageModel({ id: 'sonnet', settings });
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 's-permission-mode',
+              usage: { input_tokens: 0, output_tokens: 0 },
+            };
+          },
+        } as any);
+
+        await model.doGenerate({
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        } as any);
+
+        const call = vi.mocked(mockQuery).mock.calls[0]?.[0] as any;
+        expect(call.options.permissionMode).toBe(expected);
+      }
+    );
+
     it('should pass through Agent SDK options and allow sdkOptions overrides', async () => {
       const modelWithSdkOptions = new ClaudeCodeLanguageModel({
         id: 'sonnet',
@@ -1008,13 +1048,19 @@ describe('ClaudeCodeLanguageModel', () => {
         settings: ClaudeCodeSettings;
         permissionPrompts?: 'host' | 'none';
         pluginDelivery?: 'argv' | 'initialize';
+        mcpServersDelivery?: 'argv' | 'initialize';
       }> = [
         { name: 'unset defaults', settings: {} },
         {
           name: 'explicit defaults',
-          settings: { permissionPrompts: 'host', pluginDelivery: 'argv' },
+          settings: {
+            permissionPrompts: 'host',
+            pluginDelivery: 'argv',
+            mcpServersDelivery: 'argv',
+          },
           permissionPrompts: 'host',
           pluginDelivery: 'argv',
+          mcpServersDelivery: 'argv',
         },
         {
           name: 'headless prompts and stdin plugins',
@@ -1023,24 +1069,42 @@ describe('ClaudeCodeLanguageModel', () => {
           pluginDelivery: 'initialize',
         },
         {
+          name: 'stdin MCP servers with argv plugins',
+          settings: { pluginDelivery: 'argv', mcpServersDelivery: 'initialize' },
+          pluginDelivery: 'argv',
+          mcpServersDelivery: 'initialize',
+        },
+        {
           name: 'SDK overrides',
           settings: {
             permissionPrompts: 'host',
             pluginDelivery: 'argv',
-            sdkOptions: { permissionPrompts: 'none', pluginDelivery: 'initialize' },
+            mcpServersDelivery: 'initialize',
+            sdkOptions: {
+              permissionPrompts: 'none',
+              pluginDelivery: 'initialize',
+              mcpServersDelivery: 'argv',
+            },
           },
           permissionPrompts: 'none',
           pluginDelivery: 'initialize',
+          mcpServersDelivery: 'argv',
         },
         {
           name: 'undefined SDK overrides preserve settings',
           settings: {
             permissionPrompts: 'none',
             pluginDelivery: 'initialize',
-            sdkOptions: { permissionPrompts: undefined, pluginDelivery: undefined },
+            mcpServersDelivery: 'initialize',
+            sdkOptions: {
+              permissionPrompts: undefined,
+              pluginDelivery: undefined,
+              mcpServersDelivery: undefined,
+            },
           },
           permissionPrompts: 'none',
           pluginDelivery: 'initialize',
+          mcpServersDelivery: 'initialize',
         },
       ];
 
@@ -1076,7 +1140,7 @@ describe('ClaudeCodeLanguageModel', () => {
           }
         }
         const call = vi.mocked(mockQuery).mock.calls[0]?.[0];
-        for (const key of ['permissionPrompts', 'pluginDelivery'] as const) {
+        for (const key of ['permissionPrompts', 'pluginDelivery', 'mcpServersDelivery'] as const) {
           if (testCase[key] === undefined) expect(call?.options).not.toHaveProperty(key);
           else expect(call?.options?.[key]).toBe(testCase[key]);
         }
@@ -11249,6 +11313,152 @@ describe('ClaudeCodeLanguageModel', () => {
       expect(finish.providerMetadata['claude-code'].mirrorErrors).toEqual([
         { error: 'append failed after retries', sessionId: 'mirror-sess' },
       ]);
+    });
+
+    describe('session_writes_lost (transcript or global config not saved)', () => {
+      const writesLost = {
+        type: 'system',
+        subtype: 'session_writes_lost',
+        error_code: 'ENOSPC',
+        lost: ['transcript', 'global_config'],
+        transcript_session_ids: ['writes-lost-sess'],
+        uuid: '6f0c1d0e-5d0c-4b0e-9a57-0f2f3f1f8a11',
+        session_id: 'writes-lost-sess',
+      };
+      const result = {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'writes-lost-sess',
+        usage: { input_tokens: 5, output_tokens: 2 },
+        total_cost_usd: 0.001,
+        duration_ms: 100,
+      };
+      const expectedWarning =
+        'Session writes lost (ENOSPC) - Not saved: transcript, global_config, Transcript sessions: writes-lost-sess';
+
+      async function run(
+        method: 'doGenerate' | 'doStream',
+        model: ClaudeCodeLanguageModel
+      ): Promise<void> {
+        const options: LanguageModelV4CallOptions = {
+          prompt: [{ role: 'user', content: [{ type: 'text', text: 'Test' }] }],
+        };
+        if (method === 'doGenerate') {
+          await model.doGenerate(options);
+          return;
+        }
+        const { stream } = await model.doStream(options);
+        const reader = stream.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          expect(value.type).not.toBe('error');
+        }
+      }
+
+      // The CLI sends it as it exits, after the last result, so the provider
+      // only reads it while the post-result drain is running (onSdkMessage or
+      // onPromptSuggestion set).
+      it.each(['doGenerate', 'doStream'] as const)(
+        'warns and forwards the raw message when it follows the result in %s',
+        async (method) => {
+          const warn = vi.fn();
+          const logger: Logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+          const onSdkMessage = vi.fn();
+          const model = new ClaudeCodeLanguageModel({
+            id: 'sonnet',
+            settings: { logger, onSdkMessage },
+          });
+          vi.mocked(mockQuery).mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              yield result;
+              yield writesLost;
+            },
+          } as any);
+
+          await run(method, model);
+
+          await vi.waitFor(() => {
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining(expectedWarning));
+          });
+          expect(warn).toHaveBeenCalledTimes(1);
+          expect(onSdkMessage).toHaveBeenCalledWith(writesLost);
+        }
+      );
+
+      it.each(['doGenerate', 'doStream'] as const)(
+        'keeps draining for the prompt suggestion after warning in %s',
+        async (method) => {
+          const warn = vi.fn();
+          const logger: Logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+          const onPromptSuggestion = vi.fn();
+          const model = new ClaudeCodeLanguageModel({
+            id: 'sonnet',
+            settings: { logger, onPromptSuggestion, promptSuggestions: true },
+          });
+          vi.mocked(mockQuery).mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              yield result;
+              yield writesLost;
+              yield {
+                type: 'prompt_suggestion',
+                suggestion: 'Free some disk space',
+                session_id: 'writes-lost-sess',
+              };
+            },
+          } as any);
+
+          await run(method, model);
+
+          await vi.waitFor(() => {
+            expect(onPromptSuggestion).toHaveBeenCalledWith('Free some disk space');
+          });
+          expect(warn).toHaveBeenCalledTimes(1);
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining(expectedWarning));
+        }
+      );
+
+      it.each(['doGenerate', 'doStream'] as const)(
+        'warns when it arrives before the result in %s',
+        async (method) => {
+          const warn = vi.fn();
+          const logger: Logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+          const model = new ClaudeCodeLanguageModel({ id: 'sonnet', settings: { logger } });
+          vi.mocked(mockQuery).mockReturnValue({
+            async *[Symbol.asyncIterator]() {
+              yield { ...writesLost, lost: ['global_config'], transcript_session_ids: undefined };
+              yield result;
+            },
+          } as any);
+
+          await run(method, model);
+
+          expect(warn).toHaveBeenCalledTimes(1);
+          expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining('Session writes lost (ENOSPC) - Not saved: global_config')
+          );
+          expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('Transcript sessions'));
+        }
+      );
+
+      it('reports unknown losses and no session list when the arrays are empty', async () => {
+        const warn = vi.fn();
+        const logger: Logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+        const model = new ClaudeCodeLanguageModel({ id: 'sonnet', settings: { logger } });
+        vi.mocked(mockQuery).mockReturnValue({
+          async *[Symbol.asyncIterator]() {
+            yield { ...writesLost, lost: [], transcript_session_ids: [] };
+            yield result;
+          },
+        } as any);
+
+        await run('doGenerate', model);
+
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0]?.[0]).toMatch(
+          /Session writes lost \(ENOSPC\) - Not saved: unknown$/
+        );
+      });
     });
 
     it('should accumulate thinking_tokens deltas into estimatedThinkingTokens in doStream finish metadata', async () => {

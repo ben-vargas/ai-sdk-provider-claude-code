@@ -252,6 +252,8 @@ export const claudeCodeSettingsSchema = z
           z.object({
             matcher: z.string().optional(),
             hooks: z.array(z.any()).nonempty(),
+            timeout: z.number().positive().optional(),
+            onFailure: z.enum(['continue', 'block']).optional(),
           })
         )
       )
@@ -288,6 +290,7 @@ export const claudeCodeSettingsSchema = z
         ])
       )
       .optional(),
+    mcpServersDelivery: z.enum(['argv', 'initialize']).optional(),
     verbose: z.boolean().optional(),
     debug: z.boolean().optional(),
     debugFile: z.string().optional(),

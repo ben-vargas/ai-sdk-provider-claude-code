@@ -6,6 +6,7 @@ import {
   validatePrompt,
   validateSessionId,
 } from './validation.js';
+import type { ClaudeCodeSettings } from './types.js';
 import * as fs from 'fs';
 
 // Mock fs module
@@ -214,6 +215,7 @@ describe('claudeCodeSettingsSchema', () => {
   it.each([
     ['permissionPrompts', ['host', 'none']],
     ['pluginDelivery', ['argv', 'initialize']],
+    ['mcpServersDelivery', ['argv', 'initialize']],
   ])('validates %s without materializing an unset default', (key, values) => {
     for (const value of values) {
       const result = claudeCodeSettingsSchema.safeParse({ [key]: value });
@@ -701,6 +703,37 @@ describe('validateSettings', () => {
       hooks: { PreToolUse: [{ hooks: [async () => ({ continue: true })] }] },
     });
     expect(validHooks.valid).toBe(true);
+
+    // SDK matcher options (`timeout`, `onFailure`): typed on the setting,
+    // validated, and kept by the schema.
+    const hooksWithMatcherOptions: ClaudeCodeSettings['hooks'] = {
+      PreToolUse: [
+        {
+          matcher: 'Bash',
+          timeout: 30,
+          onFailure: 'block',
+          hooks: [async () => ({ continue: true })],
+        },
+      ],
+      Stop: [{ onFailure: 'continue', hooks: [async () => ({ continue: true })] }],
+    };
+    expect(validateSettings({ hooks: hooksWithMatcherOptions }).valid).toBe(true);
+    const parsedHooks = claudeCodeSettingsSchema.parse({ hooks: hooksWithMatcherOptions }).hooks;
+    expect(parsedHooks?.PreToolUse?.[0]).toMatchObject({ timeout: 30, onFailure: 'block' });
+    expect(parsedHooks?.Stop?.[0]).toMatchObject({ onFailure: 'continue' });
+
+    for (const matcherOptions of [
+      { onFailure: 'explode' },
+      { timeout: 0 },
+      { timeout: -1 },
+      { timeout: '30' },
+    ]) {
+      const invalid = validateSettings({
+        hooks: { PreToolUse: [{ ...matcherOptions, hooks: [async () => ({})] }] },
+      });
+      expect(invalid.valid).toBe(false);
+      expect(invalid.errors[0]).toContain('hooks');
+    }
   });
 
   it('should validate SDK MCP server configuration (type: sdk)', () => {

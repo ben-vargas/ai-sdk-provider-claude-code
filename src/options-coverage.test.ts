@@ -61,6 +61,7 @@ type MappedKey =
   // --- conditionally-set block (only assigned when the setting is defined) ---
   | 'permissionPrompts'
   | 'pluginDelivery'
+  | 'mcpServersDelivery'
   | 'onUserDialog'
   | 'onElicitation'
   | 'supportedDialogKinds'

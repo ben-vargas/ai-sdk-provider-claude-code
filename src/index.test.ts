@@ -16,12 +16,15 @@ import type {
   ProvenanceEntry,
   ResolvedSettingSource,
   PolicySettingsOrigin,
+  SDKControlSetPermissionModeResponse,
   HookInput,
   PreModelSwitchHookInput,
   PostModelSwitchHookInput,
   DirectoryAddedHookInput,
+  PreSkillShellCommandHookInput,
   PreModelSwitchHookSpecificOutput,
   PostModelSwitchHookSpecificOutput,
+  PreSkillShellCommandHookSpecificOutput,
 } from './index.js';
 
 type SdkCallbackSettingsOptions = Pick<
@@ -46,12 +49,13 @@ type SdkCallbackExportedTypes = [
   ProvenanceEntry,
   ResolvedSettingSource,
   PolicySettingsOrigin,
+  SDKControlSetPermissionModeResponse,
   SdkCallbackSettingsOptions,
 ];
 
 const sdkCallbackExportedTypesCompileCheck: SdkCallbackExportedTypes | null = null;
 
-// Compile-time check that the hook types added through SDK 0.3.251 are
+// Compile-time check that the hook types added through SDK 0.3.332 are
 // re-exported from the package entry point and stay members of the HookInput
 // union (runtime HOOK_EVENTS assertions cannot see type-only exports).
 type MemberOfHookInput<T extends HookInput> = T;
@@ -59,8 +63,10 @@ type HookSurfaceExportedTypes = [
   MemberOfHookInput<PreModelSwitchHookInput>,
   MemberOfHookInput<PostModelSwitchHookInput>,
   MemberOfHookInput<DirectoryAddedHookInput>,
+  MemberOfHookInput<PreSkillShellCommandHookInput>,
   PreModelSwitchHookSpecificOutput,
   PostModelSwitchHookSpecificOutput,
+  PreSkillShellCommandHookSpecificOutput,
 ];
 
 const hookSurfaceExportedTypesCompileCheck: HookSurfaceExportedTypes | null = null;
@@ -120,6 +126,7 @@ describe('index exports', () => {
     expect(indexExports.HOOK_EVENTS).toContain('PreModelSwitch');
     expect(indexExports.HOOK_EVENTS).toContain('PostModelSwitch');
     expect(indexExports.HOOK_EVENTS).toContain('DirectoryAdded');
+    expect(indexExports.HOOK_EVENTS).toContain('PreSkillShellCommand');
     expect(indexExports.AbortError).toBeDefined();
     expect(typeof indexExports.AbortError).toBe('function');
 
@@ -138,6 +145,8 @@ describe('index exports', () => {
     expect(typeof indexExports.renameSession).toBe('function');
     expect(indexExports.tagSession).toBeDefined();
     expect(typeof indexExports.tagSession).toBe('function');
+    expect(typeof indexExports.archiveSession).toBe('function');
+    expect(typeof indexExports.unarchiveSession).toBe('function');
     expect(indexExports.listSubagents).toBeDefined();
     expect(typeof indexExports.listSubagents).toBe('function');
     expect(indexExports.getSubagentMessages).toBeDefined();
@@ -165,7 +174,7 @@ describe('index exports', () => {
     expect(sdkCallbackExportedTypesCompileCheck).toBeNull();
   });
 
-  it('should export the SDK 0.3.251 hook surface types', () => {
+  it('should export the SDK 0.3.332 hook surface types', () => {
     expect(hookSurfaceExportedTypesCompileCheck).toBeNull();
   });
 

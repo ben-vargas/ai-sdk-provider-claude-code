@@ -1,6 +1,7 @@
 // Import types from the SDK
 import type {
   PermissionMode,
+  HookCallbackMatcher,
   McpServerConfig,
   CanUseTool,
   SdkBeta,
@@ -149,6 +150,13 @@ export interface ClaudeCodeMcpStatusEvent {
 export interface ClaudeCodeQueryController {
   readonly rawQuery: Query;
   interrupt(): Promise<void>;
+  /**
+   * Resolves with no value. Since SDK 0.3.332 the raw
+   * `Query.setPermissionMode()` resolves with `{ mode }`, the permission mode
+   * now in effect, which can differ from the one requested, or with
+   * `undefined` when Claude Code's answer names no mode or one outside
+   * `PermissionMode`; call `rawQuery.setPermissionMode()` when you need it.
+   */
   setPermissionMode(mode: PermissionMode): Promise<void>;
   setMcpPermissionModeOverride(
     serverName: string,
@@ -326,6 +334,13 @@ export interface ClaudeCodeSettings {
    * Note: `'delegate'` was removed in Agent SDK 0.3.x — the CLI rejects
    * `--permission-mode delegate` at argv parsing — so it is no longer
    * accepted here either.
+   *
+   * When omitted, the provider explicitly passes `'default'` to the Agent
+   * SDK. Since SDK 0.3.286 an omitted mode is otherwise left to Claude Code,
+   * which uses a `permissions.defaultMode` from settings, else `'auto'` where
+   * that is its default. In `'auto'` mode a model classifier approves or
+   * denies tool calls and consults `canUseTool` only when it cannot decide.
+   * Set this option (or `sdkOptions.permissionMode`) to choose another mode.
    * @default 'default'
    */
   permissionMode?: PermissionMode;
@@ -616,6 +631,31 @@ export interface ClaudeCodeSettings {
   mcpServers?: Record<string, McpServerConfig>;
 
   /**
+   * How the stdio, SSE and HTTP `mcpServers` reach Claude Code. In-process
+   * servers (`createSdkMcpServer`) are not affected.
+   * - 'argv' sends them in one `--mcp-config` flag, which puts each server's
+   *   `env` and `headers` on the command line, where other users of the
+   *   machine can read them.
+   * - 'initialize' sends them over stdin in the initialize request, so `env`
+   *   and `headers` stay off the command line. Requires Claude Code 2.1.326+
+   *   (the bundled binary qualifies); an older binary started through
+   *   `pathToClaudeCodeExecutable` or `spawnClaudeCodeProcess` exits at
+   *   startup or has its session ended with an error.
+   *
+   * A launch given `--sdk-url` (through `extraArgs` or `executableArgs`)
+   * always uses `--mcp-config`, whatever this is set to.
+   *
+   * The SDK has deprecated 'argv' as the default and will switch it to
+   * 'initialize' in a future release. While this is unset, an app that starts
+   * its own Claude Code (`pathToClaudeCodeExecutable` or
+   * `spawnClaudeCodeProcess`) with stdio, SSE or HTTP servers gets a Node
+   * `DeprecationWarning` (code `CLAUDE_SDK_MCP_SERVERS_ARGV_DEPRECATED`) once
+   * per process, except on a `--sdk-url` launch; set either value to stop it.
+   * @default 'argv'
+   */
+  mcpServersDelivery?: Options['mcpServersDelivery'];
+
+  /**
    * Filesystem settings sources to load (CLAUDE.md, settings.json, etc.)
    * When omitted, the provider explicitly passes `[]` to the Agent SDK so that
    * no filesystem settings are loaded (isolation mode).
@@ -644,11 +684,24 @@ export interface ClaudeCodeSettings {
    *   `canUseTool` do NOT trigger it; they surface via the result message's
    *   `permission_denials`, exposed as
    *   `providerMetadata['claude-code'].permissionDenials`.
+   *
+   * Each matcher also takes the SDK's `timeout` (seconds, for all hooks in
+   * the matcher) and `onFailure`. `onFailure: 'block'` (SDK 0.3.317+) makes a
+   * hook that throws or returns invalid output block the action it guards,
+   * instead of the default `'continue'`, which reports the failure and lets
+   * the action go ahead. `'block'` is ignored on `Stop`, `SubagentStop`,
+   * `TaskCompleted` and `TeammateIdle`, and with it the query fails at
+   * startup on a Claude Code that does not support the option.
    */
   hooks?: Partial<
     Record<
       string,
-      Array<{ matcher?: string; hooks: Array<(...args: unknown[]) => Promise<unknown>> }>
+      Array<
+        {
+          matcher?: string;
+          hooks: Array<(...args: unknown[]) => Promise<unknown>>;
+        } & Pick<HookCallbackMatcher, 'timeout' | 'onFailure'>
+      >
     >
   >;
 

@@ -16,7 +16,12 @@ export function createClaudeCodeQueryController(query: Query): ClaudeCodeQueryCo
     interrupt: async () => {
       await query.interrupt();
     },
-    setPermissionMode: (mode) => query.setPermissionMode(mode),
+    // SDK 0.3.332 resolves with `{ mode }` (the mode now in effect, which can
+    // differ from the one asked for) or undefined; the public contract stays
+    // Promise<void>. Call `rawQuery.setPermissionMode()` to read that mode.
+    setPermissionMode: async (mode) => {
+      await query.setPermissionMode(mode);
+    },
     setMcpPermissionModeOverride: (serverName, mode) =>
       query.setMcpPermissionModeOverride(serverName, mode),
     setModel: (model) => query.setModel(model),
