@@ -77,6 +77,26 @@ describe('createClaudeCodeQueryController', () => {
     expect(methods.interrupt).toHaveBeenCalledTimes(1);
   });
 
+  it('delegates setPermissionMode and resolves void when the Query reports the effective mode', async () => {
+    const { query, methods } = createMockQuery();
+    // SDK 0.3.332+: the Query resolves with the mode now in effect, which can
+    // differ from the one asked for.
+    methods.setPermissionMode.mockResolvedValueOnce({ mode: 'default' });
+    const controller = createClaudeCodeQueryController(query);
+
+    await expect(controller.setPermissionMode('auto')).resolves.toBeUndefined();
+    expect(methods.setPermissionMode).toHaveBeenCalledWith('auto');
+  });
+
+  it('propagates a setPermissionMode rejection from the Query', async () => {
+    const { query, methods } = createMockQuery();
+    const refused = new Error('mode refused');
+    methods.setPermissionMode.mockRejectedValueOnce(refused);
+    const controller = createClaudeCodeQueryController(query);
+
+    await expect(controller.setPermissionMode('bypassPermissions')).rejects.toBe(refused);
+  });
+
   it('delegates applyFlagSettings with nullable flag settings to the Query', async () => {
     const { query, methods } = createMockQuery();
     const settings: { [K in keyof Settings]?: Settings[K] | null } = {

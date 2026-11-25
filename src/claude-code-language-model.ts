@@ -2017,7 +2017,14 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
       cwd: this.settings.cwd,
       executable: this.settings.executable,
       executableArgs: this.settings.executableArgs,
-      permissionMode: this.settings.permissionMode,
+      // SDK 0.3.286 stopped sending `--permission-mode default` for an omitted
+      // permissionMode: Claude Code now picks the starting mode itself (a
+      // settings `permissions.defaultMode`, else 'auto' where that is the
+      // default), so tool calls could be approved by the auto-mode classifier
+      // instead of canUseTool. Pin 'default' to preserve the provider's
+      // documented default. Users opt in via settings.permissionMode or
+      // override through sdkOptions (applied after this block).
+      permissionMode: this.settings.permissionMode ?? 'default',
       permissionPromptToolName: this.settings.permissionPromptToolName,
       continue: this.settings.continue,
       allowedTools: this.settings.allowedTools,
@@ -2045,6 +2052,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
     }
     if (this.settings.pluginDelivery !== undefined) {
       opts.pluginDelivery = this.settings.pluginDelivery;
+    }
+    if (this.settings.mcpServersDelivery !== undefined) {
+      opts.mcpServersDelivery = this.settings.mcpServersDelivery;
     }
     // Blocking user-dialog handling (SDK fails closed without these: the CLI
     // never emits a dialog kind that is not declared in supportedDialogKinds,
@@ -2589,6 +2599,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
    *   (`estimatedThinkingTokens`); the estimate is explicitly not the
    *   authoritative billed output tokens, so it is surfaced as metadata
    *   instead of feeding `usage.outputTokens.reasoning`.
+   * - 'session_writes_lost' is warn-logged (see {@link warnSessionWritesLost}
+   *   for why it is not in providerMetadata).
    * - The subtypes in {@link INFORMATIONAL_SYSTEM_SUBTYPES} are intentionally
    *   informational and only debug-logged.
    */
@@ -2775,6 +2787,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
         );
         break;
       }
+      case 'session_writes_lost':
+        // Defensive: normally arrives after the result message (handled by the
+        // post-result drain), but warn here if it arrives early.
+        this.warnSessionWritesLost(message);
+        break;
       case 'model_refusal_fallback': {
         this.logger.debug(
           `[claude-code] Model refusal fallback - ${message.original_model} -> ${message.fallback_model} (direction: ${message.direction})`
@@ -2812,6 +2829,35 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
         }
         break;
     }
+  }
+
+  /**
+   * Warn-logs a `session_writes_lost` system message (SDK 0.3.317+): a full
+   * disk or disk quota kept the CLI from saving the session transcript or
+   * `~/.claude.json`, so resuming a listed session may miss part of its
+   * conversation.
+   *
+   * The CLI sends it after the last result, as it exits. The response is
+   * already finished by then, so it cannot be recorded in providerMetadata
+   * (unlike `mirror_error`), and the provider only sees it while the
+   * post-result drain is reading (see {@link drainPromptSuggestion}). The raw
+   * message also reaches `onSdkMessage` there. The drain closes the SDK
+   * iterator at the first `prompt_suggestion`, so a `session_writes_lost`
+   * that follows a suggestion is not read; Claude Code's stderr line is then
+   * the only report.
+   */
+  private warnSessionWritesLost(
+    message: Extract<SDKSystemMessageVariant, { subtype: 'session_writes_lost' }>
+  ): void {
+    const lost =
+      Array.isArray(message.lost) && message.lost.length > 0 ? message.lost.join(', ') : 'unknown';
+    const sessions =
+      Array.isArray(message.transcript_session_ids) && message.transcript_session_ids.length > 0
+        ? `, Transcript sessions: ${message.transcript_session_ids.join(', ')}`
+        : '';
+    this.logger.warn(
+      `[claude-code] Session writes lost (${message.error_code}) - Not saved: ${lost}${sessions}`
+    );
   }
 
   /**
@@ -2904,6 +2950,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV4 {
         const trailingMessage = winner.value;
         this.logger.debug(`[claude-code] Post-result message type: ${trailingMessage.type}`);
         this.invokeSdkMessageCallback(trailingMessage);
+        if (
+          trailingMessage.type === 'system' &&
+          trailingMessage.subtype === 'session_writes_lost'
+        ) {
+          this.warnSessionWritesLost(trailingMessage);
+        }
         if (trailingMessage.type === 'prompt_suggestion') {
           onPromptSuggestion?.(trailingMessage.suggestion);
           // At most one prompt_suggestion per turn (SDK contract).
