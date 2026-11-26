@@ -307,6 +307,10 @@ const NETWORK_ENV_VARS = [
   'SSL_CERT_DIR',
 ];
 
+// SSH agent socket, so `git`/`ssh` run by the Bash tool can use the user's loaded keys
+// (a socket path and a PID, not secrets).
+const SSH_ENV_VARS = ['SSH_AUTH_SOCK', 'SSH_AGENT_PID'];
+
 // Bedrock/Vertex configuration not covered by the AWS_/GOOGLE_ prefixes.
 const CLOUD_ENV_VARS = ['GCLOUD_PROJECT', 'CLOUD_ML_REGION'];
 
@@ -320,6 +324,7 @@ function getBaseProcessEnv(): Record<string, string> {
     ...DEFAULT_INHERITED_ENV_VARS,
     ...CLAUDE_ENV_VARS,
     ...NETWORK_ENV_VARS,
+    ...SSH_ENV_VARS,
     ...CLOUD_ENV_VARS,
   ]);
 
