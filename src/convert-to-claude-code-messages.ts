@@ -366,6 +366,7 @@ function serializeToolResultOutput(
  * Handles system prompts, user messages, assistant responses, and tool interactions.
  *
  * @param prompt - The AI SDK LanguageModelV4 prompt containing messages
+ * @param allowSlashCommands - Pass a single user-typed slash command directly to Claude Code
  * @returns An object containing the formatted message prompt and optional system prompt
  *
  * @example
@@ -381,7 +382,10 @@ function serializeToolResultOutput(
  *   (inputs truncated at 1000 characters), pairing with `Tool Result (name): ...` lines
  * - JSON schema enforcement is handled natively by the SDK's outputFormat option (v0.1.45+)
  */
-export function convertToClaudeCodeMessages(prompt: LanguageModelV4Prompt): {
+export function convertToClaudeCodeMessages(
+  prompt: LanguageModelV4Prompt,
+  allowSlashCommands = false
+): {
   messagesPrompt: string;
   systemPrompt?: string;
   warnings?: string[];
@@ -461,11 +465,16 @@ export function convertToClaudeCodeMessages(prompt: LanguageModelV4Prompt): {
         }
 
         const textContent = textParts.join('\n');
-        const segmentIndex = addSegment(textContent ? `Human: ${textContent}` : '');
+        const isCommand =
+          allowSlashCommands &&
+          prompt.length === 1 &&
+          message.content.length === 1 &&
+          message.content[0]?.type === 'text' &&
+          textContent.startsWith('/');
+        const formatted = textContent && (isCommand ? textContent : `Human: ${textContent}`);
+        const segmentIndex = addSegment(formatted);
 
-        if (textContent) {
-          messages.push(`Human: ${textContent}`);
-        }
+        if (formatted) messages.push(formatted);
 
         for (const imagePart of imageParts) {
           addImageForSegment(segmentIndex, imagePart);

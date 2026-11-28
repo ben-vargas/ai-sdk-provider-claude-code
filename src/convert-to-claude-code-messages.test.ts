@@ -14,6 +14,28 @@ describe('convertToClaudeCodeMessages', () => {
     expect(result.systemPrompt).toBeUndefined();
   });
 
+  it('preserves a standalone slash command for string and streaming input only when enabled', () => {
+    const text = '/project:review one two';
+    const prompt = [
+      { role: 'user', content: [{ type: 'text', text }] },
+    ] satisfies LanguageModelV4Prompt;
+    expect(convertToClaudeCodeMessages(prompt).messagesPrompt).toBe(`Human: ${text}`);
+    const result = convertToClaudeCodeMessages(prompt, true);
+    expect(result.messagesPrompt).toBe(text);
+    expect(result.streamingContentParts).toEqual([{ type: 'text', text }]);
+    expect(convertToClaudeCodeMessages([...prompt, ...prompt], true).messagesPrompt).toBe(
+      `Human: ${text}\n\nHuman: ${text}`
+    );
+    for (const ordinary of ['Hello', ' /review', 'Write /review']) {
+      expect(
+        convertToClaudeCodeMessages(
+          [{ role: 'user', content: [{ type: 'text', text: ordinary }] }],
+          true
+        ).messagesPrompt
+      ).toBe(`Human: ${ordinary}`);
+    }
+  });
+
   it('should convert a simple assistant message', () => {
     const prompt = [
       {
